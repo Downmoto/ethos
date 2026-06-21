@@ -3,7 +3,6 @@ from contextlib import contextmanager
 
 from openai_codex import TurnResult
 from openai_codex.generated.v2_all import TurnStatus
-
 from providers import CodexProvider
 
 

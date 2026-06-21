@@ -1,9 +1,8 @@
 import json
 from pathlib import Path
 
-from pydantic import SecretStr
-
 from cassiopeia.config import Settings, load_codex_openai_credential
+from pydantic import SecretStr
 
 
 def test_load_codex_openai_credential_prefers_api_key(tmp_path: Path) -> None:

@@ -17,6 +17,8 @@ messages.
 
 - Use `uv` for dependency management and command execution.
 - If dependencies are missing or stale, agents may run `uv sync` without asking.
+- Project-local tool caches should live under `.venv/.project_cache/`; use
+  `scripts/verify` as the reference for cache-related environment variables.
 - Optional local configuration may live in `.env`, usually copied from `.env.example`
   when present.
 - Never commit secrets, `.env` files, API keys, Codex auth files, or generated

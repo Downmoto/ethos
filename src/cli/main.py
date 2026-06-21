@@ -1,5 +1,6 @@
 import click
 
+
 @click.group()
 def main() -> None:
     """Cassiopeia command line interface."""

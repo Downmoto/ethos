@@ -1,7 +1,12 @@
 #!/usr/bin/env sh
 set -eu
 
-export UV_CACHE_DIR="${UV_CACHE_DIR:-.uv-cache}"
+export PROJECT_CACHE_DIR="${PROJECT_CACHE_DIR:-.venv/.project_cache}"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$PROJECT_CACHE_DIR/uv}"
+export RUFF_CACHE_DIR="${RUFF_CACHE_DIR:-$PROJECT_CACHE_DIR/ruff}"
+export MYPY_CACHE_DIR="${MYPY_CACHE_DIR:-$PROJECT_CACHE_DIR/mypy}"
+
+mkdir -p "$PROJECT_CACHE_DIR"
 
 run_step() {
   printf '\n==> %s\n' "$1"
@@ -13,5 +18,5 @@ run_step "Check formatting" uv run ruff format --check .
 run_step "Lint" uv run ruff check .
 run_step "Type check with mypy" uv run mypy
 run_step "Type check with pyright" uv run pyright
-run_step "Test" uv run pytest
+run_step "Test" uv run pytest -o "cache_dir=$PROJECT_CACHE_DIR/pytest"
 run_step "Smoke test CLI" uv run cass run hello
