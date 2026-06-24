@@ -51,7 +51,8 @@ Required for 1.0:
 - hook registries mapping events to workflows
 - CLI administration/debugging surface
 - robust install script suitable for curl-based installation
-- OpenAI and Ollama providers through LangChain
+- OpenAI and Ollama providers through the cassiopeia provider abstraction, backed
+  by Pydantic AI where it fits
 - embeddings as a separate provider abstraction
 - minimal TUI as the local interactive gateway
 - Telegram gateway
@@ -89,8 +90,8 @@ Detailed milestone plans live in `docs/milestones/`. Use
 3. Core domain models: workspaces, personas, sessions, events, permissions,
    memories, workflows, and hooks as typed models.
 4. Storage layer: repository interfaces plus SurrealDB implementation.
-5. Provider layer: OpenAI, Ollama, embeddings, LangChain integration, structured
-   output, and tool calling.
+5. Provider layer: OpenAI, Ollama, embeddings, Pydantic AI integration,
+   structured output, and tool calling.
 6. Agent runtime: persona execution, context packet building, memory retrieval,
    history windowing/summarisation.
 7. Security rings: permission checks, grants, prompts, and audit records.
@@ -679,10 +680,10 @@ Required provider capabilities for cassiopeia 1.0:
 - tool calling
 - structured output
 
-LangChain should handle most provider adaptation, so cassiopeia should not build
-provider-specific orchestration unless necessary. Providers and models may still
-need capability metadata so cassiopeia can fail clearly or degrade gracefully when
-a selected model does not support a required capability well.
+Pydantic AI should handle most provider adaptation, so cassiopeia should not
+build provider-specific orchestration unless necessary. Providers and models may
+still need capability metadata so cassiopeia can fail clearly or degrade
+gracefully when a selected model does not support a required capability well.
 
 Embeddings should use a separate provider abstraction from chat/model calls.
 Embedding providers vary by provider and model, and the best chat model is not

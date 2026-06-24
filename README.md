@@ -5,8 +5,10 @@ A general purpose agent harness for local workflow automation.
 ## Stack
 
 - Python managed by `uv`
-- LangGraph for agent control flow
-- LangChain integrations for model/tool adapters
+- Pydantic AI for agent runtime primitives and model/tool adapters
+- Pydantic Graph for control flow
+- Pydantic Evals for LLM testing
+- Pydantic AI Harness for shell execution and filesystem traversal utilities
 - Click for the CLI
 - Textual for limited TUI convenience screens
 - Pydantic Settings and `.env` for configuration

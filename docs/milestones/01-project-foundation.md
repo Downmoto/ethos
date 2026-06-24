@@ -22,7 +22,7 @@ should not implement the agent runtime.
 ### Out of Scope
 
 - SurrealDB runtime storage implementation.
-- Agent execution, model calls, and LangChain orchestration.
+- Agent execution, model calls, and Pydantic AI/Pydantic Graph orchestration.
 - Full workspace/persona/workflow semantics.
 - Telegram, Discord, and TUI gateways.
 - Permission prompt UX beyond any placeholder types required for later work.
