@@ -1,19 +1,20 @@
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class CassiopeiaSettings(BaseSettings):
-    """Runtime settings loaded from environment variables and optional .env files."""
+    """cassiopeia settings loaded from config files, environment variables, and .env files."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
         env_prefix="CASSIOPEIA_",
-        extra="ignore",
+        extra="forbid",
     )
 
+    version: Annotated[Literal[1], Field(default=1)]
     home: Annotated[
         Path,
         Field(
@@ -36,3 +37,9 @@ def load_settings(*, env_file: str | Path | None = ".env") -> CassiopeiaSettings
     """Load cassiopeia settings from the process environment and an optional .env file."""
 
     return CassiopeiaSettings(_env_file=env_file)  # type: ignore[call-arg]
+
+
+def load_settings_file(path: Path) -> CassiopeiaSettings:
+    """Load and validate a cassiopeia settings JSON file."""
+
+    return CassiopeiaSettings.model_validate_json(path.read_text(encoding="utf-8"))

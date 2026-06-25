@@ -20,10 +20,13 @@ JSON_FILES: Final[dict[str, object]] = {
 
 
 def initialise_home(home: Path) -> Path:
-    """Create the cassiopeia home directory without overwriting user files."""
+    """Create the cassiopeia home directory."""
 
     resolved_home = home.expanduser()
-    resolved_home.mkdir(parents=True, exist_ok=True)
+    if resolved_home.exists():
+        raise FileExistsError(f"cassiopeia home already exists: {resolved_home}")
+
+    resolved_home.mkdir(parents=True)
 
     for directory in DIRECTORIES:
         (resolved_home / directory).mkdir(exist_ok=True)

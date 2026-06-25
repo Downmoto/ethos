@@ -1,8 +1,10 @@
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
 from pytest import MonkeyPatch
 
-from cassiopeia.config import load_settings
+from cassiopeia.config import CassiopeiaSettings, load_settings, load_settings_file
 
 
 def test_settings_default_home(monkeypatch: MonkeyPatch) -> None:
@@ -44,3 +46,25 @@ def test_settings_loads_dotenv(tmp_path: Path, monkeypatch: MonkeyPatch) -> None
     settings = load_settings(env_file=env_file)
 
     assert settings.home == home
+
+
+def test_settings_file_accepts_initial_shape(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text('{"version": 1}\n', encoding="utf-8")
+
+    settings = load_settings_file(config_path)
+
+    assert settings.version == 1
+
+
+def test_settings_rejects_invalid_version() -> None:
+    with pytest.raises(ValidationError, match="Input should be 1"):
+        CassiopeiaSettings.model_validate({"version": 2})
+
+
+def test_load_settings_file_rejects_extra_keys(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text('{"version": 1, "secret": "nope"}\n', encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        load_settings_file(config_path)

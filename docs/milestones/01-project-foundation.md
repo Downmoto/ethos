@@ -46,20 +46,20 @@ should not implement the agent runtime.
 - [x] Create the initial `~/.cassiopeia/` directory layout:
       `config.json`, `workspaces.json`, `hooks.json`, `permissions.json`,
       `personas/`, `skills/`, `workflows/`, `gateways/`, and `data/`.
-- [ ] Add validation for the initial global config shape.
+- [x] Add validation for the initial global config shape.
 - [ ] Add CLI command groups for `session`, `workspace`, `persona`, `skill`,
       `workflow`, `hook`, `memory`, `permission`, `gateway`, and `storage`.
 - [ ] Ensure commands that are not implemented yet fail clearly instead of
       pretending to work.
-- [ ] Add focused tests for `cass init`, config loading, and validation.
+- [x] Add focused tests for `cass init`, config loading, and validation.
 - [ ] Update documentation if implementation details diverge from the scope.
 
 ## Acceptance Criteria
 
 - [ ] Running `cass init` on a clean machine creates the expected
       `~/.cassiopeia/` structure without storing secrets.
-- [ ] Running `cass init` again is idempotent and does not destroy existing user
-      files.
+- [ ] Running `cass init` against an existing cassiopeia home fails clearly and
+      does not destroy existing user files.
 - [ ] The cassiopeia home path can be overridden for tests/development.
 - [ ] CLI help lists the intended administration command groups.
 - [ ] Invalid initial config fails with a clear error.

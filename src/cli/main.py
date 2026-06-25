@@ -31,6 +31,9 @@ def ask(message: str) -> None:
 def init(home: Path | None) -> None:
     """Initialise the cassiopeia home directory."""
     settings = load_settings()
-    home_dir = initialise_home(home if home is not None else settings.home)
+    try:
+        home_dir = initialise_home(home if home is not None else settings.home)
+    except FileExistsError as error:
+        raise click.ClickException(str(error)) from error
 
     click.echo(home_dir)
