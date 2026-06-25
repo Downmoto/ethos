@@ -19,4 +19,4 @@ run_step "Lint" uv run ruff check .
 run_step "Type check with mypy" uv run mypy
 run_step "Type check with pyright" uv run pyright
 run_step "Test" uv run pytest -o "cache_dir=$PROJECT_CACHE_DIR/pytest"
-run_step "Smoke test CLI" uv run cass run hello
+run_step "Smoke test CLI" uv run cass ask hello

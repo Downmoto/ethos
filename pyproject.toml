@@ -1,7 +1,7 @@
 [project]
 name = "cassiopeia"
 version = "0.1.0"
-description = "Add your description here"
+description = "Another ai harnessss"
 readme = "README.md"
 authors = [
     { name = "Arad Fadaei", email = "arad@fadaei.dev" }
@@ -17,6 +17,7 @@ dependencies = [
     "pydantic-graph>=2.0.0",
     "pydantic-settings>=2.14.1",
     "python-dotenv>=1.2.2",
+    "pyturso>=0.6.1",
     "textual>=8.2.7",
 ]
 

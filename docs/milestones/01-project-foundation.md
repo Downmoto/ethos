@@ -40,10 +40,10 @@ should not implement the agent runtime.
 ## Tasks
 
 - [ ] Define the initial module layout under `src/cassiopeia/`.
-- [ ] Add settings for cassiopeia home, environment loading, and cache-safe local
+- [x] Add settings for cassiopeia home, environment loading, and cache-safe local
       development.
-- [ ] Implement `cass init`.
-- [ ] Create the initial `~/.cassiopeia/` directory layout:
+- [x] Implement `cass init`.
+- [x] Create the initial `~/.cassiopeia/` directory layout:
       `config.json`, `workspaces.json`, `hooks.json`, `permissions.json`,
       `personas/`, `skills/`, `workflows/`, `gateways/`, and `data/`.
 - [ ] Add validation for the initial global config shape.

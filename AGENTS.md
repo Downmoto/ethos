@@ -22,8 +22,6 @@ headings and prose.
 
 - Use `uv` for dependency management and command execution.
 - If dependencies are missing or stale, agents may run `uv sync` without asking.
-- Project-local tool caches should live under `.venv/.project_cache/`; use
-  `scripts/verify` as the reference for cache-related environment variables.
 - Optional local configuration may live in `.env`, usually copied from `.env.example`
   when present.
 - Never commit secrets, `.env` files, API keys, Codex auth files, or generated
@@ -32,8 +30,7 @@ headings and prose.
 ## Common Commands
 
 - Install or refresh dependencies: `uv sync`
-- Run the local CLI: `uv run cass run "hello"`
-- Make a Codex-backed request: `uv run cass ask "Write one short sentence about cassiopeia."`
+- Run the local CLI: `uv run cass ask "hello"`
 - Run all checks: `scripts/verify`
 
 Agents must run `scripts/verify` before finishing any code change. If verification

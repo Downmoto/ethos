@@ -159,6 +159,7 @@ dependencies = [
     { name = "pydantic-graph" },
     { name = "pydantic-settings" },
     { name = "python-dotenv" },
+    { name = "pyturso" },
     { name = "textual" },
 ]
 
@@ -181,6 +182,7 @@ requires-dist = [
     { name = "pydantic-graph", specifier = ">=2.0.0" },
     { name = "pydantic-settings", specifier = ">=2.14.1" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
+    { name = "pyturso", specifier = ">=0.6.1" },
     { name = "textual", specifier = ">=8.2.7" },
 ]
 
@@ -1482,6 +1484,25 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/5b/42/55c32bb9b12693c092ad250a0e82edb5b31ddeda6eb772de5f308b3804ad/python_multipart-0.0.32.tar.gz", hash = "sha256:be54b7f3fa167bb83e4fcd936b887b708f4e57fe75911c02aebf53efaf8d938e", size = 46881, upload-time = "2026-06-04T16:18:58.647Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e1/04/e8135ebd1ad02c56ec633277529b2602ff99ff634be76cdba5744cf554fd/python_multipart-0.0.32-py3-none-any.whl", hash = "sha256:ff6d3f776f16878c894e52e107296ffc890e913c611b1a4ec6c44e2821fe2e23", size = 30042, upload-time = "2026-06-04T16:18:57.319Z" },
+]
+
+[[package]]
+name = "pyturso"
+version = "0.6.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a8/67/49879858c34e5c861084c611807a56392a15fa0bc7a2c6c43dd88317a919/pyturso-0.6.1.tar.gz", hash = "sha256:f33b2faad0f38af5256fb54457a8cd14aa0c6c17c846e850d7f8e6c5c9d29044", size = 2388457, upload-time = "2026-05-22T15:43:12.435Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/87/41/e0fa9fb527759028df080953a276b89811cd3e1ccf5275901caeb7d132c4/pyturso-0.6.1-cp312-cp312-macosx_10_12_x86_64.whl", hash = "sha256:b9e0c693b49ff733f7cb77518b21c3794a67955d6bd1d632a6abdd4b5eb0816f", size = 5901914, upload-time = "2026-05-22T15:42:30.277Z" },
+    { url = "https://files.pythonhosted.org/packages/99/9f/5aab0366e7f43d9069488d771597f631264dd3ab52c224306440fb11b6b8/pyturso-0.6.1-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:99dcf2a0914776abdfacad213a9bf279999bbc3b58935d10db0258e5d2082dbc", size = 5187249, upload-time = "2026-05-22T15:42:32.033Z" },
+    { url = "https://files.pythonhosted.org/packages/22/5c/7c63e78258686f700526504786f49af9ed58d4804c6e0f0560cea559199c/pyturso-0.6.1-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:c93f389c5639b1758fbfec924d9d0950869915924bb1280f1db1da40e625fdab", size = 16232544, upload-time = "2026-05-22T15:42:34.362Z" },
+    { url = "https://files.pythonhosted.org/packages/7a/42/55a2f42709f7b2d99025b83db163c1ca1aceebf7ad6d7e8ec6343e583c3b/pyturso-0.6.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:013638e8ba1f7bd56efe7d6c01e5c271631c27463392f9f243292ece81efa3f0", size = 16362706, upload-time = "2026-05-22T15:42:38.084Z" },
+    { url = "https://files.pythonhosted.org/packages/85/1d/fa6963dd4d2b23a2b2d07e12b0a87e0df417770a16b8c66826c19b601961/pyturso-0.6.1-cp313-cp313-macosx_10_12_x86_64.whl", hash = "sha256:847d13b91ad502b401bf7a23536d441197fd82c16010327954e453044032e8ec", size = 5901619, upload-time = "2026-05-22T15:42:40.607Z" },
+    { url = "https://files.pythonhosted.org/packages/15/95/456c8ffed65a6a964e1ca6880a244588db4729f0c79abe42c037d5c40d4a/pyturso-0.6.1-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:be94ba46332d2a7f01f4c29dfa30f472f51f893c828ee3af794190c630dea157", size = 5186429, upload-time = "2026-05-22T15:42:42.526Z" },
+    { url = "https://files.pythonhosted.org/packages/e1/a4/045ccaff725e5d3f3d78265ac56ff11cab793adc2ccdbfb441d96e534f81/pyturso-0.6.1-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:d76b1cb2afef9bd785ebdaa6d04f43f500eac0c7648e62514ac52b0c545ec1b6", size = 16232575, upload-time = "2026-05-22T15:42:44.84Z" },
+    { url = "https://files.pythonhosted.org/packages/00/04/ad7c9529273d664cf059dd6ad80b507b32caa7d2bcbe06da6d0264653108/pyturso-0.6.1-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a93a304eb883a66fd82411f68943c427f18c26264a3d009d92b0ee639ea7f811", size = 16361020, upload-time = "2026-05-22T15:42:47.588Z" },
 ]
 
 [[package]]
