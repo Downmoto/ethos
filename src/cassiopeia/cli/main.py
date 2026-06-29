@@ -113,7 +113,6 @@ def ask(message: str) -> None:
 @click.option(
     "--home",
     "home",
-    envvar="CASSIOPEIA_HOME",
     type=click.Path(path_type=Path),
 )
 def init(home: Path | None) -> None:

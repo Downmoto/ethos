@@ -2,7 +2,10 @@
 
 cassiopeia is a local-first agent persona and workflow runtime for workflow
 automation. Its 1.0 scope is defined in `docs/cassiopeia-1.0-scope.md`; read that
-document before making product, architecture, or roadmap decisions.
+document before making product, architecture, or roadmap decisions. The intended
+source layout and package ownership rules are defined in
+`docs/project-structure.md`; read that document before changing source layout,
+package boundaries, or feature ownership.
 
 Gateways such as the TUI, Telegram, Discord, and future integrations are access
 points into the same core system. The CLI is an administration and debugging
@@ -42,6 +45,8 @@ cannot be run, explain why and identify the remaining risk.
 - Keep changes consistent with the existing project structure under `src/`, `tests/`,
   and `scripts/`.
 - Use `docs/cassiopeia-1.0-scope.md` as the product/architecture source of truth.
+- Use `docs/project-structure.md` as the source layout and package ownership
+  reference.
 - Use `docs/milestones/` for implementation sequencing. New milestone plans
   should follow `docs/milestones/template.md`.
 - Keep CLI work framed as administration/debugging unless the scope document says

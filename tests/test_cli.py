@@ -2,7 +2,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from cli.main import PLACEHOLDER_GROUPS, main
+from cassiopeia.cli.main import PLACEHOLDER_GROUPS, main
 
 
 def test_ask_command_smoke() -> None:

@@ -80,6 +80,8 @@ Post-1.0:
 
 Detailed milestone plans live in `docs/milestones/`. Use
 `docs/milestones/template.md` when defining later milestones.
+The intended 1.0+ source layout and package ownership rules live in
+`docs/project-structure.md`.
 
 1. Project foundation: package layout, config loading, `~/.cassiopeia/` init,
    JSON schema validation, and CLI skeleton. See
@@ -88,24 +90,29 @@ Detailed milestone plans live in `docs/milestones/`. Use
    search, relational relationship queries, and concurrent local writes. Decide
    pass/fail before building the real storage layer. See
    `docs/milestones/02-storage-spike.md`.
-3. Core domain models: workspaces, personas, sessions, events, permissions,
-   memories, workflows, and hooks as typed models.
-4. Storage layer: repository interfaces plus Turso/libSQL implementation.
-5. Provider layer: OpenAI, Ollama, embeddings, Pydantic AI integration,
+3. Event API and minimal hook listener shell: define the typed event envelope,
+   event catalogue, emitter interface, persistence boundary, and enough listener
+   registration plumbing that later app logic can emit events as it is built.
+   See `docs/milestones/03-event-api-and-minimal-hooks.md`.
+4. Core domain models: workspaces, personas, sessions, permissions, memories,
+   workflows, hooks, and remaining event-adjacent records as typed models.
+5. Storage layer: repository interfaces plus Turso/libSQL implementation.
+6. Provider layer: OpenAI, Ollama, embeddings, Pydantic AI integration,
    structured output, and tool calling.
-6. Agent runtime: persona execution, context packet building, memory retrieval,
+7. Agent runtime: persona execution, context packet building, memory retrieval,
    history windowing/summarisation.
-7. Security rings: permission checks, grants, prompts, and audit records.
-8. Workflow runtime: JSON workflow loading/validation, graph execution, node
+8. Security rings: permission checks, grants, prompts, and audit records.
+9. Workflow runtime: JSON workflow loading/validation, graph execution, node
    types, and script node security.
-9. Hooks: event-to-workflow hook registry and event dispatch.
-10. Subagents: task-scoped delegation, persona matching, and generic worker
+10. Hooks: complete event-to-workflow hook registry matching, filtering,
+    ordering, blocking semantics, and workflow dispatch.
+11. Subagents: task-scoped delegation, persona matching, and generic worker
     promotion flow.
-11. CLI completion: administration commands for all core concepts.
-12. Gateways: Telegram first, then Discord or another second external gateway.
-13. Minimal TUI: local interactive gateway plus permission, memory, and workflow
+12. CLI completion: administration commands for all core concepts.
+13. Gateways: Telegram first, then Discord or another second external gateway.
+14. Minimal TUI: local interactive gateway plus permission, memory, and workflow
     review.
-14. 1.0 hardening: verification, docs, examples, migration/doctor commands, and
+15. 1.0 hardening: verification, docs, examples, migration/doctor commands, and
     cleanup.
 
 ## Definition of Done
@@ -374,6 +381,19 @@ can run for several reasons, including:
 - scheduled or gateway event trigger
 
 Hooks connect typed cassiopeia events to workflows.
+
+cassiopeia should define its event API before broad application logic is built.
+The early API should provide stable event names, typed payload models, an event
+envelope, an emitter interface, and a clear boundary for persistence. Core
+runtime, storage, gateway, memory, permission, workflow, and subagent code should
+emit lifecycle events as those features are implemented instead of requiring a
+large retrofit late in 1.0.
+
+The early hook listener implementation should stay deliberately limited. It
+should allow in-process listener registration and deterministic delivery for
+tests and internal integration points, but full user-authored hook registry
+loading, filtering, priority ordering, blocking semantics, and event-to-workflow
+dispatch belong to the later hooks milestone.
 
 A workflow should have:
 
@@ -987,7 +1007,7 @@ Example:
 ```json
 {
   "telegram": {
-    "bot_token_env": "CASS_TELEGRAM_BOT_TOKEN"
+    "bot_token_env": "CASSIOPEIA_TELEGRAM_BOT_TOKEN"
   },
   "openai": {
     "api_key_env": "OPENAI_API_KEY"

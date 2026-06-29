@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,7 +21,6 @@ class CassiopeiaSettings(BaseSettings):
         Path,
         Field(
             default_factory=lambda: Path.home() / ".cassiopeia",
-            validation_alias=AliasChoices("CASSIOPEIA_HOME", "CASS_HOME"),
         ),
     ]
 
