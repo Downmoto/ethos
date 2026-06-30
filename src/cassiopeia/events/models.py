@@ -1,58 +1,12 @@
-"""Typed cassiopeia event names and catalogue definitions."""
+"""Event envelope and payload models."""
 
-import re
 from datetime import UTC, datetime
-from enum import StrEnum
-from typing import Annotated, Any, Final, Literal, Protocol
+from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-EVENT_TYPE_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$")
-NonEmptyString = Annotated[str, Field(min_length=1)]
-
-
-class EventType(StrEnum):
-    """Canonical event type names for cassiopeia lifecycle events."""
-
-    SESSION_CREATED = "session.created"
-    SESSION_CLOSED = "session.closed"
-    MESSAGE_RECEIVED = "message.received"
-    MESSAGE_SENT = "message.sent"
-    MEMORY_CREATED = "memory.created"
-    MEMORY_UPDATED = "memory.updated"
-    MEMORY_DELETED = "memory.deleted"
-    MEMORY_REJECTED = "memory.rejected"
-    PERMISSION_REQUESTED = "permission.requested"
-    PERMISSION_GRANTED = "permission.granted"
-    PERMISSION_DENIED = "permission.denied"
-    WORKFLOW_STARTED = "workflow.started"
-    WORKFLOW_COMPLETED = "workflow.completed"
-    WORKFLOW_FAILED = "workflow.failed"
-    SUBAGENT_CREATED = "subagent.created"
-    SUBAGENT_COMPLETED = "subagent.completed"
-    SUBAGENT_FAILED = "subagent.failed"
-    GATEWAY_CONNECTED = "gateway.connected"
-    GATEWAY_DISCONNECTED = "gateway.disconnected"
-    GATEWAY_ERROR = "gateway.error"
-    WORKSPACE_CREATED = "workspace.created"
-    WORKSPACE_UPDATED = "workspace.updated"
-
-
-class EventTypeDefinition(BaseModel):
-    """Pydantic-validated event catalogue entry."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    type: EventType
-    description: str = Field(min_length=1)
-
-    @field_validator("type")
-    @classmethod
-    def type_uses_dot_format(cls, value: EventType) -> EventType:
-        if not EVENT_TYPE_PATTERN.fullmatch(value.value):
-            raise ValueError(f"event type must use dot format: {value.value}")
-        return value
+from cassiopeia.events.types import EventType, NonEmptyString
 
 
 class EventSource(BaseModel):
@@ -217,76 +171,3 @@ class EventCreate(BaseModel):
     causation_id: UUID | None = None
     tags: tuple[NonEmptyString, ...] = ()
     payload: EventPayload = Field(default_factory=EventPayload)
-
-
-class EventEmitter(Protocol):
-    """Async event emitter interface for application code."""
-
-    async def emit(self, event: EventCreate) -> EventEnvelope:
-        """Validate, emit, and return the resulting event envelope."""
-        ...
-
-
-class EnvelopeEventEmitter:
-    """Emitter that only builds validated event envelopes.
-
-    This is the smallest useful emitter implementation for early integration and
-    tests. Later milestone tasks can wrap or replace it with storage and
-    listener delivery without changing the public `emit` call shape.
-    """
-
-    async def emit(self, event: EventCreate) -> EventEnvelope:
-        """Return a new envelope for an already validated event request."""
-
-        return EventEnvelope(
-            type=event.type,
-            source=event.source,
-            workspace_id=event.workspace_id,
-            session_id=event.session_id,
-            persona_id=event.persona_id,
-            gateway_id=event.gateway_id,
-            correlation_id=event.correlation_id,
-            causation_id=event.causation_id,
-            tags=event.tags,
-            payload=event.payload,
-        )
-
-
-def _definition(event_type: EventType, description: str) -> EventTypeDefinition:
-    return EventTypeDefinition(type=event_type, description=description)
-
-
-EVENT_TYPE_CATALOGUE: Final[tuple[EventTypeDefinition, ...]] = (
-    _definition(EventType.SESSION_CREATED, "A session was created."),
-    _definition(EventType.SESSION_CLOSED, "A session was closed."),
-    _definition(EventType.MESSAGE_RECEIVED, "A message was received from a user or gateway."),
-    _definition(EventType.MESSAGE_SENT, "A message was sent by cassiopeia."),
-    _definition(EventType.MEMORY_CREATED, "A memory record was created."),
-    _definition(EventType.MEMORY_UPDATED, "A memory record was updated."),
-    _definition(EventType.MEMORY_DELETED, "A memory record was deleted."),
-    _definition(EventType.MEMORY_REJECTED, "A memory record was rejected."),
-    _definition(EventType.PERMISSION_REQUESTED, "A permission prompt was requested."),
-    _definition(EventType.PERMISSION_GRANTED, "A permission request was granted."),
-    _definition(EventType.PERMISSION_DENIED, "A permission request was denied."),
-    _definition(EventType.WORKFLOW_STARTED, "A workflow run was started."),
-    _definition(EventType.WORKFLOW_COMPLETED, "A workflow run completed successfully."),
-    _definition(EventType.WORKFLOW_FAILED, "A workflow run failed."),
-    _definition(EventType.SUBAGENT_CREATED, "A task-scoped subagent was created."),
-    _definition(EventType.SUBAGENT_COMPLETED, "A task-scoped subagent completed successfully."),
-    _definition(EventType.SUBAGENT_FAILED, "A task-scoped subagent failed."),
-    _definition(EventType.GATEWAY_CONNECTED, "A gateway connected."),
-    _definition(EventType.GATEWAY_DISCONNECTED, "A gateway disconnected."),
-    _definition(EventType.GATEWAY_ERROR, "A gateway reported an error."),
-    _definition(EventType.WORKSPACE_CREATED, "A workspace was created."),
-    _definition(EventType.WORKSPACE_UPDATED, "A workspace was updated."),
-)
-
-_catalogue_types = frozenset(definition.type for definition in EVENT_TYPE_CATALOGUE)
-
-if _catalogue_types != set(EventType):
-    missing = set(EventType) - _catalogue_types
-    extra = _catalogue_types - set(EventType)
-    raise ValueError(f"event catalogue mismatch; missing={missing!r}; extra={extra!r}")
-
-if len(EVENT_TYPE_CATALOGUE) != len(_catalogue_types):
-    raise ValueError("event catalogue contains duplicate event types")

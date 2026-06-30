@@ -8,12 +8,17 @@ from cassiopeia.events import (
     EVENT_TYPE_PATTERN,
     EnvelopeEventEmitter,
     EventCreate,
+    EventDispatcher,
     EventEmitter,
     EventEnvelope,
+    EventListener,
     EventPayload,
+    EventSink,
     EventSource,
     EventType,
     GatewayEventPayload,
+    InMemoryEventSink,
+    InProcessEventListenerRegistry,
     MemoryEventPayload,
     MessageEventPayload,
     PermissionEventPayload,
@@ -219,3 +224,62 @@ def test_envelope_event_emitter_returns_validated_envelope() -> None:
     assert emitted.correlation_id == emitted.causation_id
     assert emitted.tags == ("inbound",)
     assert emitted.payload == MessageEventPayload(direction="received", text="hello")
+
+
+def test_envelope_event_emitter_appends_emitted_event_to_sink() -> None:
+    async def emit_event(sink: EventSink) -> EventEnvelope:
+        return await EnvelopeEventEmitter(sink=sink).emit(
+            EventCreate(
+                type=EventType.SESSION_CREATED,
+                source=EventSource(name="test"),
+                payload=SessionEventPayload(session_id="session-1"),
+            )
+        )
+
+    sink = InMemoryEventSink()
+    emitted = asyncio.run(emit_event(sink))
+
+    assert sink.events == (emitted,)
+    assert sink.events[0].payload == SessionEventPayload(session_id="session-1")
+
+
+def test_listener_registry_delivers_events_in_registration_order() -> None:
+    async def emit_event(dispatcher: EventDispatcher) -> EventEnvelope:
+        return await EnvelopeEventEmitter(dispatcher=dispatcher).emit(
+            EventCreate(type=EventType.MESSAGE_SENT, source=EventSource(name="test"))
+        )
+
+    seen: list[str] = []
+
+    async def first(event: EventEnvelope) -> None:
+        seen.append(f"first:{event.type.value}")
+
+    async def second(event: EventEnvelope) -> None:
+        seen.append(f"second:{event.type.value}")
+
+    registry = InProcessEventListenerRegistry()
+    registry.register(first)
+    registry.register(second)
+    emitted = asyncio.run(emit_event(registry))
+
+    assert registry.listeners == (first, second)
+    assert seen == [f"first:{emitted.type.value}", f"second:{emitted.type.value}"]
+
+
+def test_listener_registry_supports_protocol_typed_listeners() -> None:
+    async def emit_event(dispatcher: EventDispatcher) -> EventEnvelope:
+        return await EnvelopeEventEmitter(dispatcher=dispatcher).emit(
+            EventCreate(type=EventType.WORKSPACE_UPDATED, source=EventSource(name="test"))
+        )
+
+    seen: list[EventType] = []
+
+    async def listener(event: EventEnvelope) -> None:
+        seen.append(event.type)
+
+    typed_listener: EventListener = listener
+    registry = InProcessEventListenerRegistry()
+    registry.register(typed_listener)
+    emitted = asyncio.run(emit_event(registry))
+
+    assert seen == [emitted.type]

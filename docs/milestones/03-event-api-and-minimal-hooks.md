@@ -67,9 +67,9 @@ event-to-workflow dispatch to the later hooks milestone.
       breaking validation for stored historical events.
 - [x] Add an emitter interface that accepts validated event creation requests
       and returns the emitted envelope.
-- [ ] Add a storage sink or repository protocol for appending events without
+- [x] Add a storage sink or repository protocol for appending events without
       depending on the production storage implementation.
-- [ ] Add a minimal in-process listener registry with deterministic registration
+- [x] Add a minimal in-process listener registry with deterministic registration
       and delivery order.
 - [ ] Define listener failure behaviour for this early shell, including whether
       one failed listener prevents later listeners from running.
