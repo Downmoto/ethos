@@ -68,19 +68,18 @@ src/cassiopeia/
   events/
   gateways/
   home/
-  ids.py
   memory/
   personas/
   permissions/
   providers/
   runtime/
+  shared.py
   sessions/
   skills/
   storage/
   subagents/
   tools/
   tui/
-  types.py
   workspaces/
   workflows/
 ```
@@ -128,12 +127,12 @@ Feature packages emit meaningful lifecycle events through this package. Full
 user-authored hook matching and workflow dispatch belong in `workflows/` and
 `workflows/hooks` once that milestone is reached.
 
-### `ids.py` and `types.py`
+### `shared.py`
 
 Small shared primitives that are genuinely cross-cutting, such as common id
-types, timestamp helpers, slugs, pagination values, or result types.
+types, timestamp helpers, slugs, scopes, pagination values, or result types.
 
-These files are not a dumping ground for feature models. If a type belongs to a
+This file is not a dumping ground for feature models. If a type belongs to a
 specific concept, keep it with that feature package:
 
 - workspace records and workspace policy live in `workspaces/`

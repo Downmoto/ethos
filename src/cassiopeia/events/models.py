@@ -6,7 +6,8 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from cassiopeia.events.types import EventType, NonEmptyString
+from cassiopeia.events.types import EventType
+from cassiopeia.shared import NonEmptyString
 
 
 class EventSource(BaseModel):
