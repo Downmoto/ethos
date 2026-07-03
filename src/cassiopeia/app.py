@@ -1,10 +1,10 @@
 import asyncio
 
-from cassiopeia.events.listeners import EventListenerRegistry
 from cassiopeia.events.emitters import EnvelopeEventEmitter
-from cassiopeia.events.models import event_factory, EventSource, EventPayload, EventEnvelope
-from cassiopeia.events.types import EventType
+from cassiopeia.events.listeners import EventListenerRegistry
+from cassiopeia.events.models import EventEnvelope, EventPayload, EventSource, event_factory
 from cassiopeia.events.sinks import InMemoryEventSink
+from cassiopeia.events.types import EventType
 
 
 def _register_event_listener_registry() -> EventListenerRegistry:

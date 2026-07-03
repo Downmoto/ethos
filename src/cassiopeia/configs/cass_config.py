@@ -1,4 +1,6 @@
+import pathlib
 from functools import lru_cache
+
 from pydantic import Field
 from pydantic_settings import (
     BaseSettings,
@@ -6,8 +8,6 @@ from pydantic_settings import (
     SettingsConfigDict,
     YamlConfigSettingsSource,
 )
-import pathlib
-
 
 from cassiopeia.configs.events_config import EventsConfig
 
@@ -33,8 +33,8 @@ class CassiopeiaSettings(BaseSettings):
         settings_cls: type[BaseSettings],
         init_settings: PydanticBaseSettingsSource,
         env_settings: PydanticBaseSettingsSource,
-        _dotenv_settings: PydanticBaseSettingsSource,
-        _file_secret_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         return (
             env_settings,
