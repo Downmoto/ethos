@@ -56,12 +56,3 @@ class EventEnvelope(BaseModel):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("event timestamp must be timezone-aware")
         return value
-
-
-def event_factory(
-    event_type: EventType,
-    source: EventSource,
-    payload: EventPayload,
-    tags: tuple[NonEmptyString, ...] = (),
-) -> EventEnvelope:
-    return EventEnvelope(type=event_type, source=source, tags=tags, payload=payload)

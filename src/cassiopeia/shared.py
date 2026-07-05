@@ -1,6 +1,7 @@
 """Shared primitives for cassiopeia domain models."""
 
-from typing import Annotated
+from pathlib import Path
+from typing import Annotated, Final
 
 from pydantic import AwareDatetime, Field
 
@@ -9,3 +10,5 @@ type Slug = Annotated[str, Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")]
 type AwareTimestamp = AwareDatetime
 type EntityId = NonEmptyString
 type ExternalId = NonEmptyString
+
+HOME_PATH: Final[Path] = Path.home() / ".cassiopeia/config.yaml"
