@@ -51,11 +51,15 @@ def test_event_envelope_accepts_timezone_aware_created_at() -> None:
 
 def test_event_source_rejects_extra_fields() -> None:
     with pytest.raises(ValidationError):
-        EventSource.model_validate({"name": "test", "extra_field": "not allowed"})
+        EventSource.model_validate(
+            {"name": "test", "extra_field": "not allowed"}
+        )
 
 
 def test_event_payload_allows_extra_fields() -> None:
-    payload = EventPayload.model_validate({"schema_name": "test.payload", "value": 42})
+    payload = EventPayload.model_validate(
+        {"schema_name": "test.payload", "value": 42}
+    )
 
     assert payload.model_extra == {"value": 42}
 
@@ -67,7 +71,7 @@ def test_event_payload_rejects_invalid_schema_version() -> None:
 
 def test_emitter_appends_event_to_sink() -> None:
     sink = InMemoryEventSink(flush_rate=5)
-    emitter = EnvelopeEventEmitter(sink=sink)
+    emitter = EnvelopeEventEmitter(enabled=True, sink=sink)
     event = EventEnvelope(
         type=EventType.APP_STARTED,
         source=EventSource(name="test"),
@@ -76,12 +80,12 @@ def test_emitter_appends_event_to_sink() -> None:
     emitted = asyncio.run(emitter.emit(event))
 
     assert emitted == event
-    assert emitted is not event
+    assert emitted is event
     assert sink.events == (emitted,)
 
 
 def test_emitter_works_without_sink_or_dispatcher() -> None:
-    emitter = EnvelopeEventEmitter()
+    emitter = EnvelopeEventEmitter(enabled=True)
     event = EventEnvelope(
         type=EventType.APP_STARTED,
         source=EventSource(name="test"),
@@ -90,12 +94,12 @@ def test_emitter_works_without_sink_or_dispatcher() -> None:
     emitted = asyncio.run(emitter.emit(event))
 
     assert emitted == event
-    assert emitted is not event
+    assert emitted is event
 
 
 def test_emitter_dispatches_event_to_listener() -> None:
     registry = EventListenerRegistry()
-    emitter = EnvelopeEventEmitter(dispatcher=registry)
+    emitter = EnvelopeEventEmitter(enabled=True, dispatcher=registry)
     delivered: list[EventEnvelope] = []
     event = EventEnvelope(
         type=EventType.APP_STARTED,
@@ -115,7 +119,7 @@ def test_emitter_dispatches_event_to_listener() -> None:
 def test_emitter_appends_before_dispatching() -> None:
     sink = InMemoryEventSink(flush_rate=5)
     registry = EventListenerRegistry()
-    emitter = EnvelopeEventEmitter(sink=sink, dispatcher=registry)
+    emitter = EnvelopeEventEmitter(enabled=True, sink=sink, dispatcher=registry)
     sink_events_seen_by_listener: list[tuple[EventEnvelope, ...]] = []
     event = EventEnvelope(
         type=EventType.APP_STARTED,
@@ -134,8 +138,12 @@ def test_emitter_appends_before_dispatching() -> None:
 
 def test_in_memory_event_sink_preserves_append_order() -> None:
     sink = InMemoryEventSink(flush_rate=3)
-    first = EventEnvelope(type=EventType.APP_STARTED, source=EventSource(name="test"))
-    second = EventEnvelope(type=EventType.APP_INITIALISED, source=EventSource(name="test"))
+    first = EventEnvelope(
+        type=EventType.APP_STARTED, source=EventSource(name="test")
+    )
+    second = EventEnvelope(
+        type=EventType.APP_INITIALISED, source=EventSource(name="test")
+    )
 
     asyncio.run(sink.append(first))
     asyncio.run(sink.append(second))
@@ -145,7 +153,9 @@ def test_in_memory_event_sink_preserves_append_order() -> None:
 
 def test_in_memory_event_sink_events_are_returned_as_tuple() -> None:
     sink = InMemoryEventSink(flush_rate=2)
-    event = EventEnvelope(type=EventType.APP_STARTED, source=EventSource(name="test"))
+    event = EventEnvelope(
+        type=EventType.APP_STARTED, source=EventSource(name="test")
+    )
 
     asyncio.run(sink.append(event))
 
@@ -154,8 +164,12 @@ def test_in_memory_event_sink_events_are_returned_as_tuple() -> None:
 
 def test_in_memory_event_sink_flushes_at_flush_rate() -> None:
     sink = InMemoryEventSink(flush_rate=2)
-    first = EventEnvelope(type=EventType.APP_STARTED, source=EventSource(name="test"))
-    second = EventEnvelope(type=EventType.APP_INITIALISED, source=EventSource(name="test"))
+    first = EventEnvelope(
+        type=EventType.APP_STARTED, source=EventSource(name="test")
+    )
+    second = EventEnvelope(
+        type=EventType.APP_INITIALISED, source=EventSource(name="test")
+    )
 
     asyncio.run(sink.append(first))
     asyncio.run(sink.append(second))
@@ -200,7 +214,9 @@ def test_listener_registry_delivers_only_matching_event_type() -> None:
         delivered_to.append("initialised")
 
     registry.register(started_listener, event_type=[EventType.APP_STARTED])
-    registry.register(initialised_listener, event_type=[EventType.APP_INITIALISED])
+    registry.register(
+        initialised_listener, event_type=[EventType.APP_INITIALISED]
+    )
 
     asyncio.run(registry.deliver(event))
 

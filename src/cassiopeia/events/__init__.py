@@ -17,16 +17,16 @@ def event_factory(
     tags: tuple[NonEmptyString, ...] = (),
 ) -> EventEnvelope:
     source = EventSource(name=location, detail=details)
-    return EventEnvelope(type=event_type, source=source, tags=tags, payload=payload)
+    return EventEnvelope(
+        type=event_type, source=source, tags=tags, payload=payload
+    )
 
 
-# TODO: replace with actual listener, use for manual testing
 async def _global_print_event_listener(event: EventEnvelope) -> None:
-    print("=== FROM PRINT LISTENER ===")
-    print(f"event::<{event.type}>")
-    print(f"id::<{event.id}>")
-    print(f"source.name::<{event.source.name}>, source.detail::<{event.source.detail}>")
-    print()
+    print(
+        f"event type={event.type.value} source={event.source.name} "
+        f"detail={event.source.detail or '-'} tags={','.join(event.tags)}"
+    )
 
 
 _SETTINGS = get_settings().events
@@ -34,10 +34,13 @@ _SETTINGS = get_settings().events
 _EVENT_LISTENER_REGISTRY = EventListenerRegistry()
 _EVENT_TEMP_INMEM_SINK = InMemoryEventSink(flush_rate=_SETTINGS.flush_rate)
 
-_EVENT_LISTENER_REGISTRY.register(_global_print_event_listener)
+if _SETTINGS.print_events:
+    _EVENT_LISTENER_REGISTRY.register(_global_print_event_listener)
 
 
 EVENT_EMITTER = EnvelopeEventEmitter(
-    sink=_EVENT_TEMP_INMEM_SINK, dispatcher=_EVENT_LISTENER_REGISTRY
+    enabled=_SETTINGS.enabled,
+    sink=_EVENT_TEMP_INMEM_SINK,
+    dispatcher=_EVENT_LISTENER_REGISTRY,
 )
 __all__ = ["event_factory", "EVENT_EMITTER"]

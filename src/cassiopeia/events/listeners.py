@@ -20,7 +20,9 @@ class EventListenerRegistry:
             event_type: [] for event_type in EventType
         }
 
-    def register(self, listener: EventListener, event_type: list[EventType] | None = None) -> None:
+    def register(
+        self, listener: EventListener, event_type: list[EventType] | None = None
+    ) -> None:
         """Register a listener after previously registered listeners."""
 
         if event_type is not None:
@@ -44,6 +46,7 @@ class EventListenerRegistry:
 
         if failures:
             raise ExceptionGroup(
-                f"{len(failures)} event listener(s) failed while handling {event.type.value}",
+                f"{len(failures)} event listener(s) "
+                f"failed while handling {event.type.value}",
                 failures,
             )

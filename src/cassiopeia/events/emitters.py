@@ -15,21 +15,23 @@ class EnvelopeEventEmitter:
 
     def __init__(
         self,
+        enabled: bool,
         sink: EventSink | None = None,
         dispatcher: EventListenerRegistry | None = None,
     ) -> None:
+        self.enabled = enabled
         self._sink = sink
         self._dispatcher = dispatcher
 
-    async def emit(self, event: EventEnvelope) -> EventEnvelope:
+    async def emit(self, event: EventEnvelope) -> EventEnvelope | None:
         """Return a new envelope for an already validated event request."""
 
-        envelope = EventEnvelope(**event.model_dump(exclude={"payload"}), payload=event.payload)
-
+        if not self.enabled:
+            return None
         if self._sink is not None:
-            await self._sink.append(envelope)
+            await self._sink.append(event)
 
         if self._dispatcher is not None:
-            await self._dispatcher.deliver(envelope)
+            await self._dispatcher.deliver(event)
 
-        return envelope
+        return event
