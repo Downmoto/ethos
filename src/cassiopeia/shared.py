@@ -12,5 +12,11 @@ type EntityId = NonEmptyString
 type ExternalId = NonEmptyString
 
 CONFIG_FILE: Final[str] = "config.yaml"
+DB_FILE: Final[str] = "cass.db"
+WORKSPACES_PATH: Final[Path] = Path("workspaces")
+DEFAULT_WORKSPACE_PATH: Final[Path] = WORKSPACES_PATH / "default"
+WORKFLOWS_PATH: Final[Path] = Path("workflows")
+DATA_PATH: Final[Path] = Path("data")
 HOME_PATH: Final[Path] = Path.home() / ".cassiopeia"
-CONFIG_PATH: Final[Path] = HOME_PATH / CONFIG_FILE
+CONFIG_FILE_PATH: Final[Path] = HOME_PATH / CONFIG_FILE
+DB_FILE_PATH: Final[Path] = HOME_PATH / DATA_PATH / DB_FILE

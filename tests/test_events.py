@@ -1,15 +1,19 @@
 import asyncio
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
+import turso
 from pydantic import ValidationError
 
-from cassiopeia.events import event_factory
+from cassiopeia.events import EVENT_EMITTER, event_factory
 from cassiopeia.events.emitters import EnvelopeEventEmitter
 from cassiopeia.events.listeners import EventListenerRegistry
 from cassiopeia.events.models import EventEnvelope, EventPayload, EventSource
 from cassiopeia.events.sinks import InMemoryEventSink
 from cassiopeia.events.types import EventType
+from cassiopeia.storage import TursoEventSink
 
 
 def test_event_factory_returns_correct_EventEnvelope() -> None:
@@ -82,6 +86,10 @@ def test_emitter_appends_event_to_sink() -> None:
     assert emitted == event
     assert emitted is event
     assert sink.events == (emitted,)
+
+
+def test_global_emitter_uses_storage_sink() -> None:
+    assert isinstance(EVENT_EMITTER._sink, TursoEventSink)
 
 
 def test_emitter_works_without_sink_or_dispatcher() -> None:
@@ -175,6 +183,52 @@ def test_in_memory_event_sink_flushes_at_flush_rate() -> None:
     asyncio.run(sink.append(second))
 
     assert sink.events == ()
+
+
+def test_turso_event_sink_persists_events_at_flush_rate(
+    tmp_path: Path,
+) -> None:
+    db = turso.connect(str(tmp_path / "events.db"))
+    sink = TursoEventSink(db, flush_rate=2)
+    first = EventEnvelope(
+        type=EventType.APP_STARTED,
+        source=EventSource(name="test", detail="first"),
+        tags=("storage",),
+        payload=EventPayload(schema_name="test.payload"),
+    )
+    second = EventEnvelope(
+        type=EventType.APP_INITIALISED,
+        source=EventSource(name="test", detail="second"),
+    )
+
+    asyncio.run(sink.append(first))
+    assert db.execute("SELECT COUNT(*) FROM event_envelopes").fetchone() == (0,)
+
+    asyncio.run(sink.append(second))
+
+    rows = db.execute(
+        """
+        SELECT id, event_type, source_detail, tags, payload
+        FROM event_envelopes
+        ORDER BY created_at
+        """
+    ).fetchall()
+    assert rows == [
+        (
+            str(first.id),
+            EventType.APP_STARTED.value,
+            "first",
+            json.dumps(first.tags),
+            first.payload.model_dump_json(),
+        ),
+        (
+            str(second.id),
+            EventType.APP_INITIALISED.value,
+            "second",
+            json.dumps(second.tags),
+            second.payload.model_dump_json(),
+        ),
+    ]
 
 
 def test_listener_registry_delivers_events_in_registration_order() -> None:

@@ -16,6 +16,14 @@ def test_initialise_home_creates_config_file(tmp_path: Path) -> None:
     )
 
 
+def test_initialise_home_creates_empty_db_file(tmp_path: Path) -> None:
+    home = initialise_home(tmp_path / ".cassiopeia")
+
+    db = home / "data" / "cass.db"
+    assert db.exists()
+    assert db.read_bytes() == b""
+
+
 def test_initialise_home_rejects_existing_home(tmp_path: Path) -> None:
     home = tmp_path / ".cassiopeia"
     home.mkdir()

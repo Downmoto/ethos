@@ -4,9 +4,9 @@ from cassiopeia.configs import get_settings
 from cassiopeia.events.emitters import EnvelopeEventEmitter
 from cassiopeia.events.listeners import EventListenerRegistry
 from cassiopeia.events.models import EventEnvelope, EventPayload, EventSource
-from cassiopeia.events.sinks import InMemoryEventSink
 from cassiopeia.events.types import EventType
 from cassiopeia.shared import NonEmptyString
+from cassiopeia.storage import create_event_sink
 
 
 def event_factory(
@@ -32,7 +32,7 @@ async def _global_print_event_listener(event: EventEnvelope) -> None:
 _SETTINGS = get_settings().events
 
 _EVENT_LISTENER_REGISTRY = EventListenerRegistry()
-_EVENT_TEMP_INMEM_SINK = InMemoryEventSink(flush_rate=_SETTINGS.flush_rate)
+_EVENT_SINK = create_event_sink(flush_rate=_SETTINGS.flush_rate)
 
 if _SETTINGS.print_events:
     _EVENT_LISTENER_REGISTRY.register(_global_print_event_listener)
@@ -40,7 +40,7 @@ if _SETTINGS.print_events:
 
 EVENT_EMITTER = EnvelopeEventEmitter(
     enabled=_SETTINGS.enabled,
-    sink=_EVENT_TEMP_INMEM_SINK,
+    sink=_EVENT_SINK,
     dispatcher=_EVENT_LISTENER_REGISTRY,
 )
 __all__ = ["event_factory", "EVENT_EMITTER"]

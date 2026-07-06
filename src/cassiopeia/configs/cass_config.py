@@ -9,7 +9,7 @@ from pydantic_settings import (
 )
 
 from cassiopeia.configs.events_config import EventsConfig
-from cassiopeia.shared import CONFIG_PATH
+from cassiopeia.shared import CONFIG_FILE_PATH
 
 
 class CassiopeiaSettings(BaseSettings):
@@ -22,7 +22,7 @@ class CassiopeiaSettings(BaseSettings):
         env_prefix="CASS_",
         env_file_encoding="utf-8",
         env_nested_delimiter="__",
-        yaml_file=CONFIG_PATH,
+        yaml_file=CONFIG_FILE_PATH,
         yaml_file_encoding="utf-8",
         extra="ignore",
     )
