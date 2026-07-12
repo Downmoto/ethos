@@ -12,16 +12,16 @@ def test_initialise_home_creates_config_file(tmp_path: Path) -> None:
 
     assert home == tmp_path / ".cassiopeia"
     assert (home / "config.yaml").read_text() == (
-        "events:\n  enabled: true\n  print_events: false\n  flush_rate: 5\n"
+        "events:\n  enabled: true\n  print_events: false\n"
     )
 
 
-def test_initialise_home_creates_empty_db_file(tmp_path: Path) -> None:
+def test_initialise_home_creates_database(tmp_path: Path) -> None:
     home = initialise_home(tmp_path / ".cassiopeia")
 
     db = home / "data" / "cass.db"
     assert db.exists()
-    assert db.read_bytes() == b""
+    assert db.stat().st_size > 0
 
 
 def test_initialise_home_rejects_existing_home(tmp_path: Path) -> None:
@@ -52,6 +52,7 @@ def test_init_command_initialises_default_home(
 
     assert result.exit_code == 0
     assert (tmp_path / ".cassiopeia" / "config.yaml").exists()
+    assert (tmp_path / ".cassiopeia" / "data" / "cass.db").exists()
 
 
 def test_init_command_reports_existing_home_without_traceback(

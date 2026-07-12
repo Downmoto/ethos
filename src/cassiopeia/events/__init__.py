@@ -1,11 +1,17 @@
 """Typed cassiopeia event APIs."""
 
-from cassiopeia.configs import get_settings
+from pathlib import Path
+
+from cassiopeia.config import EventsConfig
 from cassiopeia.events.emitters import EnvelopeEventEmitter
 from cassiopeia.events.listeners import EventListenerRegistry
-from cassiopeia.events.models import EventEnvelope, EventPayload, EventSource
+from cassiopeia.events.models import (
+    EventEnvelope,
+    EventPayload,
+    EventSource,
+    NonEmptyString,
+)
 from cassiopeia.events.types import EventType
-from cassiopeia.shared import NonEmptyString
 from cassiopeia.storage import create_event_sink
 
 
@@ -29,18 +35,19 @@ async def _global_print_event_listener(event: EventEnvelope) -> None:
     )
 
 
-_SETTINGS = get_settings().events
+def create_event_emitter(
+    db_path: Path, config: EventsConfig
+) -> EnvelopeEventEmitter:
+    """Create an event emitter without performing work during import."""
+    listeners = EventListenerRegistry()
+    if config.print_events:
+        listeners.register(_global_print_event_listener)
 
-_EVENT_LISTENER_REGISTRY = EventListenerRegistry()
-_EVENT_SINK = create_event_sink(flush_rate=_SETTINGS.flush_rate)
+    return EnvelopeEventEmitter(
+        enabled=config.enabled,
+        sink=create_event_sink(db_path),
+        dispatcher=listeners,
+    )
 
-if _SETTINGS.print_events:
-    _EVENT_LISTENER_REGISTRY.register(_global_print_event_listener)
 
-
-EVENT_EMITTER = EnvelopeEventEmitter(
-    enabled=_SETTINGS.enabled,
-    sink=_EVENT_SINK,
-    dispatcher=_EVENT_LISTENER_REGISTRY,
-)
-__all__ = ["event_factory", "EVENT_EMITTER"]
+__all__ = ["create_event_emitter", "event_factory"]

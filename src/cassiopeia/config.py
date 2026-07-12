@@ -1,6 +1,10 @@
-from functools import lru_cache
+"""Cassiopeia paths and settings."""
 
-from pydantic import Field
+from functools import lru_cache
+from pathlib import Path
+from typing import Final
+
+from pydantic import BaseModel
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -8,21 +12,25 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
-from cassiopeia.configs.events_config import EventsConfig
-from cassiopeia.shared import CONFIG_FILE_PATH
+HOME_PATH: Final = Path.home() / ".cassiopeia"
+CONFIG_FILE: Final = "config.yaml"
+DB_PATH: Final = HOME_PATH / "data" / "cass.db"
+
+
+class EventsConfig(BaseModel):
+    enabled: bool = True
+    print_events: bool = False
 
 
 class CassiopeiaSettings(BaseSettings):
-    """enitre cassiopeia settings class"""
-
-    events: EventsConfig = Field(default_factory=EventsConfig)
+    events: EventsConfig = EventsConfig()
 
     model_config = SettingsConfigDict(
         env_file=".env",
         env_prefix="CASS_",
         env_file_encoding="utf-8",
         env_nested_delimiter="__",
-        yaml_file=CONFIG_FILE_PATH,
+        yaml_file=HOME_PATH / CONFIG_FILE,
         yaml_file_encoding="utf-8",
         extra="ignore",
     )

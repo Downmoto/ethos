@@ -158,7 +158,6 @@ dependencies = [
     { name = "pydantic-evals" },
     { name = "pydantic-graph" },
     { name = "pydantic-settings" },
-    { name = "python-dotenv" },
     { name = "pyturso" },
     { name = "textual" },
 ]
@@ -181,7 +180,6 @@ requires-dist = [
     { name = "pydantic-evals", specifier = ">=2.0.0" },
     { name = "pydantic-graph", specifier = ">=2.0.0" },
     { name = "pydantic-settings", specifier = ">=2.14.1" },
-    { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "pyturso", specifier = ">=0.6.1" },
     { name = "textual", specifier = ">=8.2.7" },
 ]

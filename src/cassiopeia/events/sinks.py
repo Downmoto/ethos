@@ -12,16 +12,11 @@ class EventSink(Protocol):
         """Append an emitted event to the storage boundary."""
         ...
 
-    async def flush(self) -> None:
-        """flush sink out"""
 
-
-# TODO: Remove this once the storage module provides a real event sink.
 class InMemoryEventSink:
     """In-memory event sink for tests and early internal integration."""
 
-    def __init__(self, flush_rate: int) -> None:
-        self.flush_rate = flush_rate
+    def __init__(self) -> None:
         self._events: list[EventEnvelope] = []
 
     @property
@@ -34,9 +29,3 @@ class InMemoryEventSink:
         """Append an emitted event to memory."""
 
         self._events.append(event)
-
-        if len(self._events) == self.flush_rate:
-            await self.flush()
-
-    async def flush(self) -> None:
-        self._events.clear()

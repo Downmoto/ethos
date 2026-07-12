@@ -7,13 +7,14 @@ import pytest
 import turso
 from pydantic import ValidationError
 
-from cassiopeia.events import EVENT_EMITTER, event_factory
+from cassiopeia.config import EventsConfig
+from cassiopeia.events import create_event_emitter, event_factory
 from cassiopeia.events.emitters import EnvelopeEventEmitter
 from cassiopeia.events.listeners import EventListenerRegistry
 from cassiopeia.events.models import EventEnvelope, EventPayload, EventSource
 from cassiopeia.events.sinks import InMemoryEventSink
 from cassiopeia.events.types import EventType
-from cassiopeia.storage import TursoEventSink
+from cassiopeia.storage import StorageEventSink, initialise_database
 
 
 def test_event_factory_returns_correct_EventEnvelope() -> None:
@@ -74,7 +75,7 @@ def test_event_payload_rejects_invalid_schema_version() -> None:
 
 
 def test_emitter_appends_event_to_sink() -> None:
-    sink = InMemoryEventSink(flush_rate=5)
+    sink = InMemoryEventSink()
     emitter = EnvelopeEventEmitter(enabled=True, sink=sink)
     event = EventEnvelope(
         type=EventType.APP_STARTED,
@@ -88,8 +89,12 @@ def test_emitter_appends_event_to_sink() -> None:
     assert sink.events == (emitted,)
 
 
-def test_global_emitter_uses_storage_sink() -> None:
-    assert isinstance(EVENT_EMITTER._sink, TursoEventSink)
+def test_event_emitter_is_created_with_explicit_storage(
+    tmp_path: Path,
+) -> None:
+    emitter = create_event_emitter(tmp_path / "events.db", EventsConfig())
+
+    assert isinstance(emitter._sink, StorageEventSink)
 
 
 def test_emitter_works_without_sink_or_dispatcher() -> None:
@@ -125,7 +130,7 @@ def test_emitter_dispatches_event_to_listener() -> None:
 
 
 def test_emitter_appends_before_dispatching() -> None:
-    sink = InMemoryEventSink(flush_rate=5)
+    sink = InMemoryEventSink()
     registry = EventListenerRegistry()
     emitter = EnvelopeEventEmitter(enabled=True, sink=sink, dispatcher=registry)
     sink_events_seen_by_listener: list[tuple[EventEnvelope, ...]] = []
@@ -145,7 +150,7 @@ def test_emitter_appends_before_dispatching() -> None:
 
 
 def test_in_memory_event_sink_preserves_append_order() -> None:
-    sink = InMemoryEventSink(flush_rate=3)
+    sink = InMemoryEventSink()
     first = EventEnvelope(
         type=EventType.APP_STARTED, source=EventSource(name="test")
     )
@@ -160,7 +165,7 @@ def test_in_memory_event_sink_preserves_append_order() -> None:
 
 
 def test_in_memory_event_sink_events_are_returned_as_tuple() -> None:
-    sink = InMemoryEventSink(flush_rate=2)
+    sink = InMemoryEventSink()
     event = EventEnvelope(
         type=EventType.APP_STARTED, source=EventSource(name="test")
     )
@@ -170,26 +175,12 @@ def test_in_memory_event_sink_events_are_returned_as_tuple() -> None:
     assert isinstance(sink.events, tuple)
 
 
-def test_in_memory_event_sink_flushes_at_flush_rate() -> None:
-    sink = InMemoryEventSink(flush_rate=2)
-    first = EventEnvelope(
-        type=EventType.APP_STARTED, source=EventSource(name="test")
-    )
-    second = EventEnvelope(
-        type=EventType.APP_INITIALISED, source=EventSource(name="test")
-    )
-
-    asyncio.run(sink.append(first))
-    asyncio.run(sink.append(second))
-
-    assert sink.events == ()
-
-
-def test_turso_event_sink_persists_events_at_flush_rate(
+def test_turso_event_sink_persists_each_event(
     tmp_path: Path,
 ) -> None:
+    initialise_database(tmp_path / "events.db")
     db = turso.connect(str(tmp_path / "events.db"))
-    sink = TursoEventSink(db, flush_rate=2)
+    sink = StorageEventSink(db)
     first = EventEnvelope(
         type=EventType.APP_STARTED,
         source=EventSource(name="test", detail="first"),
@@ -202,7 +193,7 @@ def test_turso_event_sink_persists_events_at_flush_rate(
     )
 
     asyncio.run(sink.append(first))
-    assert db.execute("SELECT COUNT(*) FROM event_envelopes").fetchone() == (0,)
+    assert db.execute("SELECT COUNT(*) FROM event_envelopes").fetchone() == (1,)
 
     asyncio.run(sink.append(second))
 

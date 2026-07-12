@@ -7,7 +7,8 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from cassiopeia.events.types import EventType
-from cassiopeia.shared import NonEmptyString
+
+type NonEmptyString = Annotated[str, Field(min_length=1)]
 
 
 class EventSource(BaseModel):

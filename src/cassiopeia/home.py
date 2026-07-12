@@ -7,14 +7,12 @@ from typing import Final, cast
 
 import yaml  # type: ignore[import-untyped]
 
-from cassiopeia.configs.cass_config import CassiopeiaSettings
-from cassiopeia.shared import (
-    CONFIG_FILE,
-    DATA_PATH,
-    DB_FILE,
-    DEFAULT_WORKSPACE_PATH,
-    WORKFLOWS_PATH,
-)
+from cassiopeia.config import CONFIG_FILE, CassiopeiaSettings
+from cassiopeia.storage import initialise_database
+
+DB_PATH: Final = Path("data/cass.db")
+DEFAULT_WORKSPACE_PATH: Final = Path("workspaces/default")
+WORKFLOWS_PATH: Final = Path("workflows")
 
 
 def _dump_default_settings() -> str:
@@ -31,8 +29,6 @@ def _dump_default_settings() -> str:
 _FILES: Final[tuple[tuple[Path, Callable[[], str]], ...]] = (
     (Path(CONFIG_FILE), _dump_default_settings),
 )
-
-_EMPTY_FILES: Final[tuple[Path, ...]] = (DATA_PATH / DB_FILE,)
 
 _EMPTY_DIRS: Final[tuple[Path, ...]] = (
     # create general workspaces; default workspace houses generic sessions
@@ -67,9 +63,6 @@ def initialise_home(home: Path, reinitialise: bool = False) -> Path:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(contents())
 
-    for file in _EMPTY_FILES:
-        target = resolved_home / file
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.touch()
+    initialise_database(resolved_home / DB_PATH)
 
     return resolved_home
