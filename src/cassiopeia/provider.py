@@ -35,7 +35,9 @@ class AIProvider:
         }[settings.provider.name]
 
         if api_key is None:
-            variable = f"{settings.provider.name.value.upper()}_API_KEY"
+            variable = (
+                f"CASS_KEYS__{settings.provider.name.value.upper()}_API_KEY"
+            )
             raise ValueError(f"{variable} is required")
 
         return cls(settings.provider.name, api_key)

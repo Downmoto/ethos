@@ -41,10 +41,11 @@ class KeysConfig(BaseModel):
         exclude=True,
     )
 
+
 class CassiopeiaSettings(BaseSettings):
-    events: EventsConfig = EventsConfig()
-    provider: ProviderConfig = ProviderConfig()
-    keys: KeysConfig = KeysConfig()
+    events: EventsConfig = Field(default_factory=EventsConfig)
+    provider: ProviderConfig = Field(default_factory=ProviderConfig)
+    keys: KeysConfig = Field(default_factory=KeysConfig, exclude=True)
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -75,10 +76,10 @@ class CassiopeiaSettings(BaseSettings):
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         return (
+            init_settings,
             env_settings,
             dotenv_settings,
             YamlConfigSettingsSource(settings_cls),
-            init_settings,
         )
 
 

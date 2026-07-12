@@ -37,7 +37,7 @@ def test_provider_uses_selected_key_from_settings() -> None:
     settings = CassiopeiaSettings.model_validate(
         {
             "provider": {"name": "google"},
-            "GOOGLE_API_KEY": "google-key",
+            "keys": {"GOOGLE_API_KEY": "google-key"},
         }
     )
 
@@ -52,16 +52,18 @@ def test_provider_requires_key_for_selected_provider() -> None:
         {"provider": {"name": "google"}}
     )
 
-    with pytest.raises(ValueError, match="GOOGLE_API_KEY is required"):
+    with pytest.raises(
+        ValueError, match="CASS_KEYS__GOOGLE_API_KEY is required"
+    ):
         AIProvider.from_settings(settings)
 
 
 def test_settings_exclude_api_keys_from_serialisation() -> None:
     settings = CassiopeiaSettings.model_validate(
-        {"OPENAI_API_KEY": "secret-key"}
+        {"keys": {"OPENAI_API_KEY": "secret-key"}}
     )
 
-    assert "openai_api_key" not in settings.model_dump()
+    assert "keys" not in settings.model_dump()
     assert "secret-key" not in settings.model_dump_json()
 
 
@@ -70,7 +72,7 @@ def test_settings_load_provider_from_dotenv(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text(
-        "GOOGLE_API_KEY=google-key\n"
+        "CASS_KEYS__GOOGLE_API_KEY=google-key\n"
         "CASS_PROVIDER__NAME=google\n"
         "CASS_PROVIDER__MODEL_NAME=gemini-2.5-flash\n"
     )
@@ -79,4 +81,4 @@ def test_settings_load_provider_from_dotenv(
 
     assert settings.provider.name is ProviderName.GOOGLE
     assert settings.provider.model_name == "gemini-2.5-flash"
-    assert settings.google_api_key == SecretStr("google-key")
+    assert settings.keys.google_api_key == SecretStr("google-key")
