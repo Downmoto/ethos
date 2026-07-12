@@ -30,27 +30,17 @@ class ProviderConfig(BaseModel):
 
 
 class KeysConfig(BaseModel):
-    openai_api_key: SecretStr | None = Field(
-        default=None,
-        validation_alias="OPENAI_API_KEY",
-        exclude=True,
-    )
-    google_api_key: SecretStr | None = Field(
-        default=None,
-        validation_alias="GOOGLE_API_KEY",
-        exclude=True,
-    )
+    openai_api_key: SecretStr | None = None
+    google_api_key: SecretStr | None = None
 
 
 class CassiopeiaSettings(BaseSettings):
     events: EventsConfig = Field(default_factory=EventsConfig)
     provider: ProviderConfig = Field(default_factory=ProviderConfig)
-    keys: KeysConfig = Field(default_factory=KeysConfig, exclude=True)
+    keys: KeysConfig = Field(default_factory=KeysConfig)
 
     model_config = SettingsConfigDict(
-        env_file=".env",
         env_prefix="CASS_",
-        env_file_encoding="utf-8",
         env_nested_delimiter="__",
         yaml_file=HOME_PATH / CONFIG_FILE,
         yaml_file_encoding="utf-8",
@@ -78,7 +68,6 @@ class CassiopeiaSettings(BaseSettings):
         return (
             init_settings,
             env_settings,
-            dotenv_settings,
             YamlConfigSettingsSource(settings_cls),
         )
 

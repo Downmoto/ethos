@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 from pydantic import SecretStr
 from pydantic_ai.models.google import GoogleModel
@@ -37,7 +35,7 @@ def test_provider_uses_selected_key_from_settings() -> None:
     settings = CassiopeiaSettings.model_validate(
         {
             "provider": {"name": "google"},
-            "keys": {"GOOGLE_API_KEY": "google-key"},
+            "keys": {"google_api_key": "google-key"},
         }
     )
 
@@ -58,24 +56,20 @@ def test_provider_requires_key_for_selected_provider() -> None:
         AIProvider.from_settings(settings)
 
 
-def test_settings_exclude_api_keys_from_serialisation() -> None:
+def test_settings_accept_nested_api_keys() -> None:
     settings = CassiopeiaSettings.model_validate(
-        {"keys": {"OPENAI_API_KEY": "secret-key"}}
+        {"keys": {"openai_api_key": "secret-key"}}
     )
 
-    assert "keys" not in settings.model_dump()
-    assert "secret-key" not in settings.model_dump_json()
+    assert settings.keys.openai_api_key == SecretStr("secret-key")
 
 
-def test_settings_load_provider_from_dotenv(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_settings_load_provider_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / ".env").write_text(
-        "CASS_KEYS__GOOGLE_API_KEY=google-key\n"
-        "CASS_PROVIDER__NAME=google\n"
-        "CASS_PROVIDER__MODEL_NAME=gemini-2.5-flash\n"
-    )
+    monkeypatch.setenv("CASS_KEYS__GOOGLE_API_KEY", "google-key")
+    monkeypatch.setenv("CASS_PROVIDER__NAME", "google")
+    monkeypatch.setenv("CASS_PROVIDER__MODEL_NAME", "gemini-2.5-flash")
 
     settings = CassiopeiaSettings()
 

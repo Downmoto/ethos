@@ -18,6 +18,9 @@ def test_initialise_home_creates_config_file(tmp_path: Path) -> None:
         "provider:\n"
         "  name: openai\n"
         "  model_name: gpt-4.1-mini\n"
+        "keys:\n"
+        "  openai_api_key: null\n"
+        "  google_api_key: null\n"
     )
 
 

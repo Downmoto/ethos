@@ -11,19 +11,13 @@ A general purpose agent harness for local workflow automation.
 - Pydantic AI Harness for shell execution and filesystem traversal utilities
 - Click for the CLI
 - Textual for limited TUI convenience screens
-- Pydantic Settings and `.env` for configuration
+- Pydantic Settings and YAML for configuration
 - Ruff, mypy, pyright, and pytest for quality checks
 
 ## Setup
 
 ```sh
 uv sync
-```
-
-Optional model configuration can be copied from `.env.example`:
-
-```sh
-cp .env.example .env
 ```
 
 ## Usage
