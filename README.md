@@ -23,7 +23,7 @@ uv sync
 ## Usage
 
 ```sh
-uv run cass run "hello"
+uv run cass ask "hello"
 ```
 
 ## Checks

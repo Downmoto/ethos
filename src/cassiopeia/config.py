@@ -25,13 +25,15 @@ class EventsConfig(BaseModel):
 
 
 class ProviderConfig(BaseModel):
-    name: ProviderName = ProviderName.OPENAI
-    model_name: str = "gpt-4.1-mini"
+    name: ProviderName | None = None
+    model_name: str | None = None
+    ollama_base_url: str = "http://localhost:11434/v1"
 
 
 class KeysConfig(BaseModel):
     openai_api_key: SecretStr | None = None
     google_api_key: SecretStr | None = None
+    ollama_api_key: SecretStr | None = None
 
 
 class CassiopeiaSettings(BaseSettings):
