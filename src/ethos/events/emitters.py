@@ -2,25 +2,20 @@
 
 from ethos.events.listeners import EventListenerRegistry
 from ethos.events.models import EventEnvelope
-from ethos.events.sinks import EventSink
+from ethos.storage import Storage
 
 
 class EnvelopeEventEmitter:
-    """Emitter that builds validated event envelopes and optionally stores them.
-
-    This is the smallest useful emitter implementation for early integration and
-    tests. Later milestone tasks can wrap or replace it with storage and
-    listener delivery without changing the public `emit` call shape.
-    """
+    """Store and dispatch validated event envelopes when enabled."""
 
     def __init__(
         self,
         enabled: bool,
-        sink: EventSink | None = None,
+        storage: Storage | None = None,
         dispatcher: EventListenerRegistry | None = None,
     ) -> None:
         self.enabled = enabled
-        self._sink = sink
+        self._storage = storage
         self._dispatcher = dispatcher
 
     async def emit(self, event: EventEnvelope) -> EventEnvelope | None:
@@ -29,8 +24,8 @@ class EnvelopeEventEmitter:
         if not self.enabled:
             return None
 
-        if self._sink is not None:
-            await self._sink.append(event)
+        if self._storage is not None:
+            self._storage.write_event(event)
 
         if self._dispatcher is not None:
             await self._dispatcher.deliver(event)

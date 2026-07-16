@@ -1,7 +1,5 @@
 """Typed ethos event APIs."""
 
-from pathlib import Path
-
 from ethos.config import EventsConfig
 from ethos.events.emitters import EnvelopeEventEmitter
 from ethos.events.listeners import EventListenerRegistry
@@ -12,7 +10,7 @@ from ethos.events.models import (
     NonEmptyString,
 )
 from ethos.events.types import EventType
-from ethos.storage import create_event_sink
+from ethos.storage import Storage
 
 
 def event_factory(
@@ -36,7 +34,7 @@ async def _global_print_event_listener(event: EventEnvelope) -> None:
 
 
 def create_event_emitter(
-    db_path: Path, config: EventsConfig
+    storage: Storage, config: EventsConfig
 ) -> EnvelopeEventEmitter:
     """Create an event emitter without performing work during import."""
     listeners = EventListenerRegistry()
@@ -45,7 +43,7 @@ def create_event_emitter(
 
     return EnvelopeEventEmitter(
         enabled=config.enabled,
-        sink=create_event_sink(db_path),
+        storage=storage,
         dispatcher=listeners,
     )
 

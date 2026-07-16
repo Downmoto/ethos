@@ -1,4 +1,4 @@
-"""Turso-backed event storage."""
+"""Turso-backed application storage."""
 
 from __future__ import annotations
 
@@ -7,39 +7,34 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import turso
-from turso import Connection
 
 if TYPE_CHECKING:
     from ethos.events.models import EventEnvelope
 
 
-def initialise_database(db_path: Path) -> None:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    db = turso.connect(str(db_path))
-    db.execute(
-        """
-        CREATE TABLE IF NOT EXISTS event_envelopes (
-            id TEXT PRIMARY KEY,
-            created_at TEXT NOT NULL,
-            event_type TEXT NOT NULL,
-            source_name TEXT NOT NULL,
-            source_detail TEXT,
-            tags TEXT NOT NULL,
-            payload TEXT NOT NULL
+class Storage:
+    """Own the application database connection and its reads and writes."""
+
+    def __init__(self, db_path: Path) -> None:
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._db = turso.connect(str(db_path))
+        self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS event_envelopes (
+                id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                source_name TEXT NOT NULL,
+                source_detail TEXT,
+                tags TEXT NOT NULL,
+                payload TEXT NOT NULL
+            )
+            """
         )
-        """
-    )
-    db.commit()
-    db.close()
+        self._db.commit()
 
-
-class StorageEventSink:
-    """Persist emitted events immediately in append order."""
-
-    def __init__(self, db: Connection) -> None:
-        self._db = db
-
-    async def append(self, event: EventEnvelope) -> None:
+    def write_event(self, event: EventEnvelope) -> None:
+        """Persist an emitted event immediately."""
         self._db.execute(
             """
             INSERT INTO event_envelopes (
@@ -62,8 +57,3 @@ class StorageEventSink:
 
     def close(self) -> None:
         self._db.close()
-
-
-def create_event_sink(db_path: Path) -> StorageEventSink:
-    initialise_database(db_path)
-    return StorageEventSink(turso.connect(str(db_path)))

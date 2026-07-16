@@ -8,7 +8,7 @@ from typing import Final, cast
 import yaml  # type: ignore[import-untyped]
 
 from ethos.config import CONFIG_FILE, EthosSettings
-from ethos.storage import initialise_database
+from ethos.storage import Storage
 
 DB_PATH: Final = Path("data/ethos.db")
 DEFAULT_WORKSPACE_PATH: Final = Path("workspaces/default")
@@ -23,7 +23,7 @@ def _dump_default_settings() -> str:
             EthosSettings.defaults().model_dump(mode="json"),
             sort_keys=False,
         ),
-    )
+    )  # pyright: ignore[reportUnnecessaryCast]
 
 
 _FILES: Final[tuple[tuple[Path, Callable[[], str]], ...]] = (
@@ -61,6 +61,6 @@ def initialise_home(home: Path, reinitialise: bool = False) -> Path:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(contents())
 
-    initialise_database(resolved_home / DB_PATH)
+    Storage(resolved_home / DB_PATH).close()
 
     return resolved_home
