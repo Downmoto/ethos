@@ -1,27 +1,53 @@
+from importlib.resources import files
 from pathlib import Path
 
 import pytest
+import yaml  # type: ignore[import-untyped]
+from pydantic import BaseModel
 
+from ethos.config import CONFIG_FILE, EthosSettings
 from ethos.home import initialise_home
+
+
+def _model_field_paths(model: type[BaseModel], prefix: str = "") -> set[str]:
+    paths: set[str] = set()
+    for name, field in model.model_fields.items():
+        path = f"{prefix}.{name}" if prefix else name
+        annotation = field.annotation
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            paths.update(_model_field_paths(annotation, path))
+        else:
+            paths.add(path)
+    return paths
+
+
+def _config_field_paths(
+    config: dict[str, object], prefix: str = ""
+) -> set[str]:
+    paths: set[str] = set()
+    for name, value in config.items():
+        path = f"{prefix}.{name}" if prefix else name
+        if isinstance(value, dict):
+            paths.update(_config_field_paths(value, path))  # pyright: ignore[reportUnknownArgumentType]
+        else:
+            paths.add(path)
+    return paths
 
 
 def test_initialise_home_creates_config_file(tmp_path: Path) -> None:
     home = initialise_home(tmp_path / ".ethos")
+    template = files("ethos") / "templates" / CONFIG_FILE
 
     assert home == tmp_path / ".ethos"
-    assert (home / "config.yaml").read_text() == (
-        "events:\n"
-        "  enabled: true\n"
-        "  print_events: false\n"
-        "provider:\n"
-        "  name: null\n"
-        "  model_name: null\n"
-        "  ollama_base_url: http://localhost:11434/v1\n"
-        "keys:\n"
-        "  openai_api_key: null\n"
-        "  google_api_key: null\n"
-        "  ollama_api_key: null\n"
-    )
+    assert (home / CONFIG_FILE).read_text() == template.read_text()
+
+
+def test_config_template_matches_settings_fields() -> None:
+    template = files("ethos") / "templates" / CONFIG_FILE
+    config = yaml.safe_load(template.read_text())
+
+    assert isinstance(config, dict)
+    assert _config_field_paths(config) == _model_field_paths(EthosSettings)  # pyright: ignore[reportUnknownArgumentType]
 
 
 def test_initialise_home_creates_database(tmp_path: Path) -> None:

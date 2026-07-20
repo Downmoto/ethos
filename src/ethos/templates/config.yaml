@@ -1,0 +1,22 @@
+# Ethos configuration
+# Run `ethos onboard` to configure a provider and model.
+
+events:
+  # Store and dispatch events emitted by ethos.
+  enabled: true
+  # Print emitted events to standard output.
+  print_events: false
+
+provider:
+  # Supported providers: openai, google, ollama.
+  name: null
+  # Model name exposed by the selected provider.
+  model_name: null
+  # OpenAI-compatible endpoint used by Ollama.
+  ollama_base_url: http://localhost:11434/v1
+
+keys:
+  # Only the key for the selected provider is required. Ollama keys are optional.
+  openai_api_key: null
+  google_api_key: null
+  ollama_api_key: null

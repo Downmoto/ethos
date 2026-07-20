@@ -73,12 +73,12 @@ ONBOARDING_STEPS: Final[tuple[OnboardingStep, ...]] = (
 def run_onboarding(home: Path) -> None:
     """Run the configured onboarding steps and save their settings."""
     config_path = home / CONFIG_FILE
-    config = yaml.safe_load(config_path.read_text()) or {}
+    config = yaml.safe_load(config_path.read_text()) or {}  # pyright: ignore[reportUnknownVariableType]
     if not isinstance(config, dict):
         raise click.ClickException("config.yaml must contain a mapping")
 
     for step in ONBOARDING_STEPS:
-        step(config)
+        step(config)  # pyright: ignore[reportUnknownArgumentType]
 
     EthosSettings.model_validate(config)
     config_path.write_text(yaml.safe_dump(config, sort_keys=False))

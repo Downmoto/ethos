@@ -34,17 +34,11 @@ class AIProvider:
     @classmethod
     def from_settings(cls, settings: "EthosSettings") -> "AIProvider":
         name = settings.provider.name
-        if name is None:
-            raise ValueError("ETHOS_PROVIDER__NAME is required")
-
         api_key = {
             ProviderName.OPENAI: settings.keys.openai_api_key,
             ProviderName.GOOGLE: settings.keys.google_api_key,
             ProviderName.OLLAMA: settings.keys.ollama_api_key,
         }[name]
-        if api_key is None and name is not ProviderName.OLLAMA:
-            variable = f"ETHOS_KEYS__{name.value.upper()}_API_KEY"
-            raise ValueError(f"{variable} is required")
         return cls(
             name,
             api_key,

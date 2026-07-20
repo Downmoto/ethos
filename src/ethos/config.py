@@ -2,9 +2,9 @@
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Final
+from typing import Final, Self
 
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -25,8 +25,8 @@ class EventsConfig(BaseModel):
 
 
 class ProviderConfig(BaseModel):
-    name: ProviderName | None = None
-    model_name: str | None = None
+    name: ProviderName
+    model_name: str
     ollama_base_url: str = "http://localhost:11434/v1"
 
 
@@ -38,7 +38,7 @@ class KeysConfig(BaseModel):
 
 class EthosSettings(BaseSettings):
     events: EventsConfig = Field(default_factory=EventsConfig)
-    provider: ProviderConfig = Field(default_factory=ProviderConfig)
+    provider: ProviderConfig
     keys: KeysConfig = Field(default_factory=KeysConfig)
 
     model_config = SettingsConfigDict(
@@ -49,14 +49,17 @@ class EthosSettings(BaseSettings):
         extra="ignore",
     )
 
-    @classmethod
-    def defaults(cls) -> "EthosSettings":
-        return cls.model_construct(
-            **{
-                name: field.get_default(call_default_factory=True)
-                for name, field in cls.model_fields.items()
-            }
-        )
+    @model_validator(mode="after")
+    def require_provider_key(self) -> Self:
+        api_key = {
+            ProviderName.OPENAI: self.keys.openai_api_key,
+            ProviderName.GOOGLE: self.keys.google_api_key,
+            ProviderName.OLLAMA: self.keys.ollama_api_key,
+        }[self.provider.name]
+        if api_key is None and self.provider.name is not ProviderName.OLLAMA:
+            variable = f"ETHOS_KEYS__{self.provider.name.value.upper()}_API_KEY"
+            raise ValueError(f"{variable} is required")
+        return self
 
     @classmethod
     def settings_customise_sources(
@@ -76,4 +79,4 @@ class EthosSettings(BaseSettings):
 
 @lru_cache
 def get_settings() -> EthosSettings:
-    return EthosSettings()
+    return EthosSettings.model_validate({})

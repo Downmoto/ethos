@@ -1,4 +1,3 @@
-import pytest
 from pydantic import SecretStr
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.ollama import OllamaModel
@@ -44,7 +43,7 @@ def test_provider_does_not_expose_api_key_in_repr() -> None:
 def test_provider_uses_selected_key_from_settings() -> None:
     settings = EthosSettings.model_validate(
         {
-            "provider": {"name": "google"},
+            "provider": {"name": "google", "model_name": "gemini"},
             "keys": {"google_api_key": "google-key"},
         }
     )
@@ -54,17 +53,3 @@ def test_provider_uses_selected_key_from_settings() -> None:
     assert provider.name is ProviderName.GOOGLE
     assert provider.api_key is not None
     assert provider.api_key.get_secret_value() == "google-key"
-
-
-def test_provider_requires_key_for_selected_provider() -> None:
-    settings = EthosSettings.model_validate({"provider": {"name": "google"}})
-
-    with pytest.raises(
-        ValueError, match="ETHOS_KEYS__GOOGLE_API_KEY is required"
-    ):
-        AIProvider.from_settings(settings)
-
-
-def test_provider_requires_selection() -> None:
-    with pytest.raises(ValueError, match="ETHOS_PROVIDER__NAME is required"):
-        AIProvider.from_settings(EthosSettings.defaults())

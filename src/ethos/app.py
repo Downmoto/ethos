@@ -143,6 +143,7 @@ async def _write_response(prompt: str, output_path: Path) -> None:
 
 ####### CLI #######
 
+
 def requires_home[**P, R](command: Callable[P, R]) -> Callable[P, R]:
     """Require an initialised ethos home for a command."""
 

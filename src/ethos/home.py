@@ -2,12 +2,11 @@
 
 import shutil
 from collections.abc import Callable
+from importlib.resources import files
 from pathlib import Path
-from typing import Final, cast
+from typing import Final
 
-import yaml  # type: ignore[import-untyped]
-
-from ethos.config import CONFIG_FILE, EthosSettings
+from ethos.config import CONFIG_FILE
 from ethos.storage import Storage
 
 DB_PATH: Final = Path("data/ethos.db")
@@ -15,19 +14,12 @@ DEFAULT_WORKSPACE_PATH: Final = Path("workspaces/default")
 WORKFLOWS_PATH: Final = Path("workflows")
 
 
-def _dump_default_settings() -> str:
-    # mypy --strict did not recognize yaml.safe_dump returning str
-    return cast(
-        str,
-        yaml.safe_dump(
-            EthosSettings.defaults().model_dump(mode="json"),
-            sort_keys=False,
-        ),
-    )  # pyright: ignore[reportUnnecessaryCast]
+def _read_config_template() -> str:
+    return (files("ethos") / "templates" / CONFIG_FILE).read_text()
 
 
 _FILES: Final[tuple[tuple[Path, Callable[[], str]], ...]] = (
-    (Path(CONFIG_FILE), _dump_default_settings),
+    (Path(CONFIG_FILE), _read_config_template),
 )
 
 _EMPTY_DIRS: Final[tuple[Path, ...]] = (

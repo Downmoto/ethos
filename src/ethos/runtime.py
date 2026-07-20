@@ -25,11 +25,6 @@ async def run_prompt_singleton(
 ) -> AsyncIterator[PromptStreamEvent]:
     """Stream one prompt from the configured provider and model."""
     settings = settings or get_settings()
-    if settings.provider.name is None:
-        raise ValueError("ETHOS_PROVIDER__NAME is required")
-    if settings.provider.model_name is None:
-        raise ValueError("ETHOS_PROVIDER__MODEL_NAME is required")
-
     provider = AIProvider.from_settings(settings)
     model = provider.model(settings.provider.model_name)
 
