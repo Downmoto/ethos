@@ -8,9 +8,9 @@ from typing import Final
 
 from ethos.config import CONFIG_FILE
 from ethos.storage import Storage
+from ethos.workspaces import WORKSPACES_DIR, WorkspaceManager
 
 DB_PATH: Final = Path("data/ethos.db")
-DEFAULT_WORKSPACE_PATH: Final = Path("workspaces/default")
 WORKFLOWS_PATH: Final = Path("workflows")
 
 
@@ -22,11 +22,7 @@ _FILES: Final[tuple[tuple[Path, Callable[[], str]], ...]] = (
     (Path(CONFIG_FILE), _read_config_template),
 )
 
-_EMPTY_DIRS: Final[tuple[Path, ...]] = (
-    # create general workspaces; default workspace houses generic sessions
-    DEFAULT_WORKSPACE_PATH,
-    WORKFLOWS_PATH,
-)
+_EMPTY_DIRS: Final[tuple[Path, ...]] = (WORKFLOWS_PATH,)
 
 
 def initialise_home(home: Path, reinitialise: bool = False) -> Path:
@@ -56,5 +52,6 @@ def initialise_home(home: Path, reinitialise: bool = False) -> Path:
         target.chmod(0o600)
 
     Storage(resolved_home / DB_PATH).close()
+    WorkspaceManager(resolved_home / WORKSPACES_DIR).ensure_default()
 
     return resolved_home

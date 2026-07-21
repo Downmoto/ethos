@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from ethos.config import CONFIG_FILE, EthosSettings
 from ethos.home import initialise_home
+from ethos.workspaces import DEFAULT_WORKSPACE, WORKSPACES_DIR, WorkspaceManager
 
 
 def _model_field_paths(model: type[BaseModel], prefix: str = "") -> set[str]:
@@ -64,6 +65,14 @@ def test_initialise_home_creates_database(tmp_path: Path) -> None:
     db = home / "data" / "ethos.db"
     assert db.exists()
     assert db.stat().st_size > 0
+
+
+def test_initialise_home_creates_default_workspace(tmp_path: Path) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+
+    workspace = WorkspaceManager(home / WORKSPACES_DIR).get(DEFAULT_WORKSPACE)
+
+    assert workspace.name == DEFAULT_WORKSPACE
 
 
 def test_initialise_home_rejects_existing_home(tmp_path: Path) -> None:
