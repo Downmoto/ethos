@@ -11,7 +11,7 @@ from pydantic_ai.models.test import TestModel
 
 from ethos import app
 from ethos.commands import CommandResponse, CommandUsage
-from ethos.config import ProviderConfig
+from ethos.config import EthosSettings, ProviderConfig
 from ethos.home import initialise_home
 from ethos.provider import AIProvider
 from ethos.sessions import SessionManager
@@ -126,6 +126,81 @@ def test_onboarding_command_configures_ollama(
         "http://localhost:11434/v1"
     )
     assert config["keys"]["ollama_api_key"] is None
+
+
+def test_start_uses_explicit_gateway_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    monkeypatch.setattr(app, "HOME_PATH", home)
+    monkeypatch.setattr(
+        app,
+        "get_settings",
+        lambda: EthosSettings.model_validate(
+            {
+                "provider": {"name": "ollama", "model_name": "test"},
+                "gateways": {"vox": {"enabled": False}},
+            }
+        ),
+    )
+    selected: list[tuple[str, ...]] = []
+
+    async def capture_start(_settings: object, names: tuple[str, ...]) -> None:
+        selected.append(names)
+
+    monkeypatch.setattr(app, "_start_gateways", capture_start)
+
+    result = CliRunner().invoke(app.main, ["start", "--vox"])
+
+    assert result.exit_code == 0
+    assert selected == [("vox",)]
+
+
+def test_start_uses_enabled_gateways_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    monkeypatch.setattr(app, "HOME_PATH", home)
+    monkeypatch.setattr(
+        app,
+        "get_settings",
+        lambda: EthosSettings.model_validate(
+            {
+                "provider": {"name": "ollama", "model_name": "test"},
+                "gateways": {"vox": {"enabled": True}},
+            }
+        ),
+    )
+    selected: list[tuple[str, ...]] = []
+
+    async def capture_start(_settings: object, names: tuple[str, ...]) -> None:
+        selected.append(names)
+
+    monkeypatch.setattr(app, "_start_gateways", capture_start)
+
+    result = CliRunner().invoke(app.main, ["start"])
+
+    assert result.exit_code == 0
+    assert selected == [("vox",)]
+
+
+def test_start_rejects_unconfigured_explicit_gateway(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    monkeypatch.setattr(app, "HOME_PATH", home)
+    monkeypatch.setattr(
+        app,
+        "get_settings",
+        lambda: EthosSettings.model_validate(
+            {"provider": {"name": "ollama", "model_name": "test"}}
+        ),
+    )
+
+    result = CliRunner().invoke(app.main, ["start", "--discord"])
+
+    assert result.exit_code == 1
+    assert result.output == "Error: discord requires a bot token\n"
 
 
 def test_ask_command_prints_model_output(

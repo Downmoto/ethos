@@ -50,8 +50,32 @@ class KeysConfig(BaseModel):
     ollama_api_key: SecretStr | None = None
 
 
+class VoxConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    host: str = Field(default="127.0.0.1", min_length=1)
+    port: int = Field(default=8000, ge=1, le=65535)
+    bearer_token: SecretStr | None = None
+
+
+class DiscordConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    token: SecretStr | None = None
+
+
+class GatewaysConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    vox: VoxConfig = Field(default_factory=VoxConfig)
+    discord: DiscordConfig = Field(default_factory=DiscordConfig)
+
+
 class EthosSettings(BaseSettings):
     events: EventsConfig = Field(default_factory=EventsConfig)
+    gateways: GatewaysConfig = Field(default_factory=GatewaysConfig)
     provider: ProviderConfig
     keys: KeysConfig = Field(default_factory=KeysConfig)
 

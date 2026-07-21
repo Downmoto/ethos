@@ -7,6 +7,16 @@ events:
   # Print emitted events to standard output.
   print_events: false
 
+gateways:
+  vox:
+    enabled: false
+    host: 127.0.0.1
+    port: 8000
+    bearer_token: null
+  discord:
+    enabled: false
+    token: null
+
 provider:
   # Supported providers: openai, google, ollama.
   name: null

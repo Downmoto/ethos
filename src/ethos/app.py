@@ -22,6 +22,7 @@ from ethos.commands import (
 from ethos.config import (
     HOME_PATH,
     EthosSettings,
+    get_settings,
     load_events_config,
 )
 from ethos.environments import (
@@ -29,6 +30,13 @@ from ethos.environments import (
     resolve_workspace_environment,
 )
 from ethos.events import create_event_emitter
+from ethos.gateways import (
+    Gateway,
+    GatewayConfigurationError,
+    GatewayName,
+    resolve_gateway_selection,
+    run_until_shutdown,
+)
 from ethos.home import DB_PATH as HOME_DB_PATH
 from ethos.home import initialise_home
 from ethos.onboarding import run_onboarding
@@ -277,6 +285,28 @@ async def _ask_requests(prompt: str) -> AsyncIterator[CommandResponse]:
         storage.close()
 
 
+def _make_gateways(
+    _settings: EthosSettings, names: tuple[GatewayName, ...]
+) -> tuple[Gateway, ...]:
+    """Construct concrete gateways as their implementations become available."""
+    raise GatewayConfigurationError(
+        f"gateway implementation is not available yet: {', '.join(names)}"
+    )
+
+
+async def _start_gateways(
+    settings: EthosSettings, names: tuple[GatewayName, ...]
+) -> None:
+    storage = Storage(HOME_PATH / HOME_DB_PATH)
+    try:
+        dispatcher = _build_dispatcher(storage)
+        await run_until_shutdown(
+            _make_gateways(settings, names), dispatcher.execute
+        )
+    finally:
+        storage.close()
+
+
 ####### CLI #######
 
 
@@ -351,6 +381,32 @@ def onboard() -> None:
     """Configure the settings required to run ethos."""
     run_onboarding(HOME_PATH)
     click.echo(f"ethos configured at: {HOME_PATH}")
+
+
+@main.command()
+@click.option("--vox", is_flag=True, help="Start the Vox REST gateway.")
+@click.option("--discord", is_flag=True, help="Start the Discord gateway.")
+@requires_home
+def start(vox: bool, discord: bool) -> None:
+    """Start selected or enabled gateways."""
+    try:
+        settings = get_settings()
+        requested: list[GatewayName] = []
+        if vox:
+            requested.append("vox")
+        if discord:
+            requested.append("discord")
+        names = resolve_gateway_selection(settings.gateways, requested)
+        asyncio.run(_start_gateways(settings, names))
+    except ValidationError as error:
+        message = (
+            "ethos is not configured. Run [ethos onboard] first."
+            if error.title == EthosSettings.__name__
+            else str(error)
+        )
+        raise click.ClickException(message) from error
+    except Exception as error:
+        raise click.ClickException(str(error)) from error
 
 
 @main.group()
