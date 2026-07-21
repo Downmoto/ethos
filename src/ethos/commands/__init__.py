@@ -8,6 +8,7 @@ from ethos.commands.dispatcher import (
     UnknownCommandError,
 )
 from ethos.commands.models import CommandEvent, CommandRequest
+from ethos.commands.workspaces import register_workspace_commands
 
 __all__ = [
     "CommandDispatcher",
@@ -17,4 +18,5 @@ __all__ = [
     "CommandRequest",
     "CommandSourceError",
     "UnknownCommandError",
+    "register_workspace_commands",
 ]

@@ -8,3 +8,8 @@ class EventType(StrEnum):
 
     APP_STARTED = "app.started"
     APP_INITIALISED = "app.initialised"
+
+    # workspace event
+    WORKSPACE_CREATE = "workspace.create"
+    WORKSPACE_LIST = "workspace.list"
+    WORKSPACE_SHOW = "workspace.show"
