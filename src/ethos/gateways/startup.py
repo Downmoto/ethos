@@ -2,53 +2,10 @@
 
 import asyncio
 import signal
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from contextlib import suppress
-from ipaddress import ip_address
-from typing import Literal
 
-from ethos.config import GatewaysConfig
 from ethos.gateways.base import CommandExecutor, Gateway, run_gateways
-
-type GatewayName = Literal["vox", "discord"]
-
-
-class GatewayConfigurationError(ValueError):
-    """Raised when no runnable gateways are configured."""
-
-
-def _vox_is_configured(config: GatewaysConfig) -> bool:
-    try:
-        loopback = ip_address(config.vox.host).is_loopback
-    except ValueError:
-        loopback = config.vox.host == "localhost"
-    return loopback or config.vox.bearer_token is not None
-
-
-def resolve_gateway_selection(
-    config: GatewaysConfig,
-    requested: Sequence[GatewayName] = (),
-) -> tuple[GatewayName, ...]:
-    """Select explicit gateways or every enabled gateway, then preflight."""
-    selected = tuple(requested)
-    if not selected:
-        enabled: list[GatewayName] = []
-        if config.vox.enabled:
-            enabled.append("vox")
-        if config.discord.enabled:
-            enabled.append("discord")
-        selected = tuple(enabled)
-    if not selected:
-        raise GatewayConfigurationError(
-            "no gateways are enabled; select --vox or --discord"
-        )
-    if "vox" in selected and not _vox_is_configured(config):
-        raise GatewayConfigurationError(
-            "vox requires a bearer token when exposed beyond loopback"
-        )
-    if "discord" in selected and config.discord.token is None:
-        raise GatewayConfigurationError("discord requires a bot token")
-    return selected
 
 
 async def run_until_shutdown(

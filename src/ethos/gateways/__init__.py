@@ -1,19 +1,13 @@
 """Long-running adapters for Ethos commands."""
 
 from ethos.gateways.base import CommandExecutor, Gateway, run_gateways
-from ethos.gateways.startup import (
-    GatewayConfigurationError,
-    GatewayName,
-    resolve_gateway_selection,
-    run_until_shutdown,
-)
+from ethos.gateways.startup import run_until_shutdown
+from ethos.gateways.vox import VoxGateway
 
 __all__ = [
     "CommandExecutor",
     "Gateway",
-    "GatewayConfigurationError",
-    "GatewayName",
+    "VoxGateway",
     "run_gateways",
     "run_until_shutdown",
-    "resolve_gateway_selection",
 ]

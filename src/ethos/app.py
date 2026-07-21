@@ -32,9 +32,7 @@ from ethos.environments import (
 from ethos.events import create_event_emitter
 from ethos.gateways import (
     Gateway,
-    GatewayConfigurationError,
-    GatewayName,
-    resolve_gateway_selection,
+    VoxGateway,
     run_until_shutdown,
 )
 from ethos.home import DB_PATH as HOME_DB_PATH
@@ -286,23 +284,35 @@ async def _ask_requests(prompt: str) -> AsyncIterator[CommandResponse]:
 
 
 def _make_gateways(
-    _settings: EthosSettings, names: tuple[GatewayName, ...]
+    settings: EthosSettings, requested: tuple[str, ...]
 ) -> tuple[Gateway, ...]:
-    """Construct concrete gateways as their implementations become available."""
-    raise GatewayConfigurationError(
-        f"gateway implementation is not available yet: {', '.join(names)}"
+    """Resolve selected gateways and construct their concrete adapters."""
+    selected = requested or tuple(
+        name
+        for name, enabled in (
+            ("vox", settings.gateways.vox.enabled),
+            ("discord", settings.gateways.discord.enabled),
+        )
+        if enabled
     )
+    if not selected:
+        raise ValueError("no gateways are enabled; select --vox or --discord")
+
+    gateways: list[Gateway] = []
+    if "vox" in selected:
+        gateways.append(VoxGateway(settings.gateways.vox))
+    if "discord" in selected:
+        if settings.gateways.discord.token is None:
+            raise ValueError("discord requires a bot token")
+        raise ValueError("discord gateway implementation is not available yet")
+    return tuple(gateways)
 
 
-async def _start_gateways(
-    settings: EthosSettings, names: tuple[GatewayName, ...]
-) -> None:
+async def _start_gateways(gateways: tuple[Gateway, ...]) -> None:
     storage = Storage(HOME_PATH / HOME_DB_PATH)
     try:
         dispatcher = _build_dispatcher(storage)
-        await run_until_shutdown(
-            _make_gateways(settings, names), dispatcher.execute
-        )
+        await run_until_shutdown(gateways, dispatcher.execute)
     finally:
         storage.close()
 
@@ -391,13 +401,13 @@ def start(vox: bool, discord: bool) -> None:
     """Start selected or enabled gateways."""
     try:
         settings = get_settings()
-        requested: list[GatewayName] = []
+        requested: list[str] = []
         if vox:
             requested.append("vox")
         if discord:
             requested.append("discord")
-        names = resolve_gateway_selection(settings.gateways, requested)
-        asyncio.run(_start_gateways(settings, names))
+        gateways = _make_gateways(settings, tuple(requested))
+        asyncio.run(_start_gateways(gateways))
     except ValidationError as error:
         message = (
             "ethos is not configured. Run [ethos onboard] first."

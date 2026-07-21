@@ -12,6 +12,7 @@ from pydantic_ai.models.test import TestModel
 from ethos import app
 from ethos.commands import CommandResponse, CommandUsage
 from ethos.config import EthosSettings, ProviderConfig
+from ethos.gateways import Gateway
 from ethos.home import initialise_home
 from ethos.provider import AIProvider
 from ethos.sessions import SessionManager
@@ -145,8 +146,8 @@ def test_start_uses_explicit_gateway_selection(
     )
     selected: list[tuple[str, ...]] = []
 
-    async def capture_start(_settings: object, names: tuple[str, ...]) -> None:
-        selected.append(names)
+    async def capture_start(gateways: tuple[Gateway, ...]) -> None:
+        selected.append(tuple(gateway.name for gateway in gateways))
 
     monkeypatch.setattr(app, "_start_gateways", capture_start)
 
@@ -173,8 +174,8 @@ def test_start_uses_enabled_gateways_by_default(
     )
     selected: list[tuple[str, ...]] = []
 
-    async def capture_start(_settings: object, names: tuple[str, ...]) -> None:
-        selected.append(names)
+    async def capture_start(gateways: tuple[Gateway, ...]) -> None:
+        selected.append(tuple(gateway.name for gateway in gateways))
 
     monkeypatch.setattr(app, "_start_gateways", capture_start)
 
