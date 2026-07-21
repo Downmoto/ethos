@@ -8,21 +8,27 @@ from typing import Final
 
 from ethos.config import CONFIG_FILE
 from ethos.storage import Storage
-from ethos.workspaces import WORKSPACES_DIR, WorkspaceManager
+from ethos.workspaces import TOOLS_CONFIG_FILE, WORKSPACES_DIR, WorkspaceManager
 
 DB_PATH: Final = Path("data/ethos.db")
 WORKFLOWS_PATH: Final = Path("workflows")
+SKILLS_PATH: Final = Path("skills")
 
 
 def _read_config_template() -> str:
     return (files("ethos") / "templates" / CONFIG_FILE).read_text()
 
 
+def _read_tools_template() -> str:
+    return "tools: {}\ntoolsets: {}\n"
+
+
 _FILES: Final[tuple[tuple[Path, Callable[[], str]], ...]] = (
     (Path(CONFIG_FILE), _read_config_template),
+    (Path(TOOLS_CONFIG_FILE), _read_tools_template),
 )
 
-_EMPTY_DIRS: Final[tuple[Path, ...]] = (WORKFLOWS_PATH,)
+_EMPTY_DIRS: Final[tuple[Path, ...]] = (WORKFLOWS_PATH, SKILLS_PATH)
 
 
 def initialise_home(home: Path, reinitialise: bool = False) -> Path:
@@ -43,7 +49,7 @@ def initialise_home(home: Path, reinitialise: bool = False) -> Path:
     resolved_home.chmod(0o700)
 
     for directory in _EMPTY_DIRS:
-        (resolved_home / directory).mkdir(parents=True)
+        (resolved_home / directory).mkdir(parents=True, mode=0o700)
 
     for file, contents in _FILES:
         target = resolved_home / file

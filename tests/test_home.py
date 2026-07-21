@@ -75,6 +75,18 @@ def test_initialise_home_creates_default_workspace(tmp_path: Path) -> None:
     assert workspace.name == DEFAULT_WORKSPACE
 
 
+def test_initialise_home_creates_capability_configuration(
+    tmp_path: Path,
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+
+    assert (home / "tools.yaml").read_text() == ("tools: {}\ntoolsets: {}\n")
+    assert (home / "skills").is_dir()
+    assert not (home / "skills.yaml").exists()
+    assert not (home / "tools").exists()
+    assert not (home / "memory").exists()
+
+
 def test_initialise_home_rejects_existing_home(tmp_path: Path) -> None:
     home = tmp_path / ".ethos"
     home.mkdir()

@@ -15,15 +15,21 @@ def test_create_workspace_builds_self_contained_layout(
     assert workspace.path == tmp_path / "workspaces" / "my-project"
     assert workspace.config_path.read_text() == "{}\n"
     assert workspace.ethos_path == workspace.path / ".ethos_workspace"
-    assert workspace.tools_path.is_dir()
-    assert workspace.skills_path.is_dir()
-    assert workspace.memory_path.is_dir()
+    assert workspace.tools_config_path.read_text() == (
+        "tools: {}\ntoolsets: {}\n"
+    )
+    assert workspace.skills_config_path.read_text() == "skills: []\n"
+    assert not (workspace.ethos_path / "tools").exists()
+    assert not (workspace.ethos_path / "skills").exists()
+    assert not (workspace.ethos_path / "memory").exists()
     assert not (workspace.path / "data").exists()
     assert not (workspace.path / "files").exists()
     assert S_IMODE(workspace.path.parent.stat().st_mode) == 0o700
     assert S_IMODE(workspace.path.stat().st_mode) == 0o700
     assert S_IMODE(workspace.ethos_path.stat().st_mode) == 0o700
     assert S_IMODE(workspace.config_path.stat().st_mode) == 0o600
+    assert S_IMODE(workspace.tools_config_path.stat().st_mode) == 0o600
+    assert S_IMODE(workspace.skills_config_path.stat().st_mode) == 0o600
 
 
 def test_workspace_root_allows_user_defined_structure(tmp_path: Path) -> None:

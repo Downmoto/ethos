@@ -10,7 +10,14 @@ DEFAULT_WORKSPACE: Final = "default"
 WORKSPACES_DIR: Final = "workspaces"
 WORKSPACE_META_DIR: Final = ".ethos_workspace"
 WORKSPACE_CONFIG_FILE: Final = "ws_config.yaml"
-WORKSPACE_DIRS: Final = ("tools", "skills", "memory")
+TOOLS_CONFIG_FILE: Final = "tools.yaml"
+SKILLS_CONFIG_FILE: Final = "skills.yaml"
+
+_WORKSPACE_FILES: Final = {
+    WORKSPACE_CONFIG_FILE: "{}\n",
+    TOOLS_CONFIG_FILE: "tools: {}\ntoolsets: {}\n",
+    SKILLS_CONFIG_FILE: "skills: []\n",
+}
 
 _WORKSPACE_NAME_PATTERN: Final = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _MAX_WORKSPACE_NAME_LENGTH: Final = 63
@@ -29,7 +36,7 @@ _RESERVED_NAMES: Final = frozenset(
 
 @dataclass(frozen=True)
 class Workspace:
-    """A validated workspace and its resource locations."""
+    """A validated workspace and its Ethos-owned configuration."""
 
     name: str
     path: Path
@@ -43,16 +50,12 @@ class Workspace:
         return self.ethos_path / WORKSPACE_CONFIG_FILE
 
     @property
-    def tools_path(self) -> Path:
-        return self.ethos_path / "tools"
+    def tools_config_path(self) -> Path:
+        return self.ethos_path / TOOLS_CONFIG_FILE
 
     @property
-    def skills_path(self) -> Path:
-        return self.ethos_path / "skills"
-
-    @property
-    def memory_path(self) -> Path:
-        return self.ethos_path / "memory"
+    def skills_config_path(self) -> Path:
+        return self.ethos_path / SKILLS_CONFIG_FILE
 
 
 class WorkspaceManager:
@@ -88,8 +91,7 @@ class WorkspaceManager:
 
         required_paths = (
             workspace.ethos_path,
-            workspace.config_path,
-            *(workspace.ethos_path / directory for directory in WORKSPACE_DIRS),
+            *(workspace.ethos_path / name for name in _WORKSPACE_FILES),
         )
         symlinks = [path.name for path in required_paths if path.is_symlink()]
         if symlinks:
@@ -100,9 +102,9 @@ class WorkspaceManager:
             path.name
             for path in required_paths
             if not (
-                path.is_file()
-                if path == workspace.config_path
-                else path.is_dir()
+                path.is_dir()
+                if path == workspace.ethos_path
+                else path.is_file()
             )
         ]
         if missing:
@@ -144,11 +146,10 @@ class WorkspaceManager:
         try:
             ethos_path = path / WORKSPACE_META_DIR
             ethos_path.mkdir(mode=0o700)
-            for directory in WORKSPACE_DIRS:
-                (ethos_path / directory).mkdir(mode=0o700)
-            config_path = ethos_path / WORKSPACE_CONFIG_FILE
-            config_path.write_text("{}\n", encoding="utf-8")
-            config_path.chmod(0o600)
+            for filename, contents in _WORKSPACE_FILES.items():
+                file = ethos_path / filename
+                file.write_text(contents, encoding="utf-8")
+                file.chmod(0o600)
         except Exception:
             shutil.rmtree(path)
             raise
