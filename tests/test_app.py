@@ -316,3 +316,68 @@ def test_ask_command_requires_initialised_home(
     assert result.output == (
         "Error: ethos is not initialised. Run [ethos init] first.\n"
     )
+
+
+def test_workspace_create_command_uses_dispatcher(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    monkeypatch.setattr(app, "HOME_PATH", home)
+
+    result = CliRunner().invoke(app.main, ["workspace", "create", "my-project"])
+
+    assert result.exit_code == 0
+    assert result.output == "workspace created: my-project\n"
+    assert (home / "workspaces" / "my-project").is_dir()
+
+
+def test_workspace_list_command_renders_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    monkeypatch.setattr(app, "HOME_PATH", home)
+    CliRunner().invoke(app.main, ["workspace", "create", "my-project"])
+
+    result = CliRunner().invoke(app.main, ["workspace", "list"])
+
+    assert result.exit_code == 0
+    assert result.output == "default\nmy-project\n"
+
+
+def test_workspace_show_command_renders_name_and_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    monkeypatch.setattr(app, "HOME_PATH", home)
+
+    result = CliRunner().invoke(app.main, ["workspace", "show", "default"])
+
+    assert result.exit_code == 0
+    assert result.output == f"default\t{home / 'workspaces/default'}\n"
+
+
+def test_workspace_create_command_reports_conflict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    monkeypatch.setattr(app, "HOME_PATH", home)
+    runner = CliRunner()
+    runner.invoke(app.main, ["workspace", "create", "my-project"])
+
+    result = runner.invoke(app.main, ["workspace", "create", "my-project"])
+
+    assert result.exit_code == 1
+    assert result.output == "Error: workspace already exists: my-project\n"
+
+
+def test_workspace_commands_require_initialised_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(app, "HOME_PATH", tmp_path / ".ethos")
+
+    result = CliRunner().invoke(app.main, ["workspace", "list"])
+
+    assert result.exit_code == 1
+    assert result.output == (
+        "Error: ethos is not initialised. Run [ethos init] first.\n"
+    )

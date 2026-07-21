@@ -4,7 +4,15 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Final, Self
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
+import yaml  # type: ignore[import-untyped]
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    TypeAdapter,
+    model_validator,
+)
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -81,6 +89,14 @@ class EthosSettings(BaseSettings):
             env_settings,
             YamlConfigSettingsSource(settings_cls),
         )
+
+
+def load_events_config(home: Path) -> EventsConfig:
+    """Load event settings without requiring model onboarding."""
+    config = TypeAdapter(dict[str, object]).validate_python(
+        yaml.safe_load((home / CONFIG_FILE).read_text(encoding="utf-8"))
+    )
+    return EventsConfig.model_validate(config.get("events", {}))
 
 
 @lru_cache

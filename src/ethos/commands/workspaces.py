@@ -113,7 +113,10 @@ def register_workspace_commands(
         await _emit_workspace_event(
             emitter, request, EventType.WORKSPACE_SHOW, (workspace,)
         )
-        yield CommandEvent(data={"workspace": _workspace_data(workspace)})
+        yield CommandEvent(
+            text=f"{workspace.name}\t{workspace.path}",
+            data={"workspace": _workspace_data(workspace)},
+        )
 
     dispatcher.register("workspace.create", create)
     dispatcher.register("workspace.list", list_workspaces)

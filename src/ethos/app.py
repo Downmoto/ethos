@@ -1,4 +1,5 @@
 import asyncio
+import getpass
 import logging
 import math
 import shutil
@@ -9,12 +10,25 @@ from pathlib import Path
 from time import monotonic
 
 import click
-from pydantic import ValidationError
+from pydantic import JsonValue, ValidationError
 
-from ethos.config import HOME_PATH, EthosSettings
+from ethos.commands import (
+    CommandDispatcher,
+    CommandRequest,
+    register_workspace_commands,
+)
+from ethos.config import (
+    HOME_PATH,
+    EthosSettings,
+    load_events_config,
+)
+from ethos.events import create_event_emitter
+from ethos.home import DB_PATH as HOME_DB_PATH
 from ethos.home import initialise_home
 from ethos.onboarding import run_onboarding
 from ethos.runtime import PromptStreamEvent, run_prompt_singleton
+from ethos.storage import Storage
+from ethos.workspaces import WORKSPACES_DIR, WorkspaceManager
 
 
 class _IgnoreOtelDetachContextError(logging.Filter):
@@ -142,6 +156,42 @@ async def _write_response(prompt: str, output_path: Path) -> None:
         raise
 
 
+async def _execute_and_print_command_events(
+    dispatcher: CommandDispatcher, request: CommandRequest
+) -> None:
+    wrote_output = False
+    async for event in dispatcher.execute(request):
+        if event.text:
+            click.echo(event.text, nl=False)
+            wrote_output = True
+    if wrote_output:
+        click.echo()
+
+
+def _run_cli_command(name: str, arguments: dict[str, JsonValue]) -> None:
+    try:
+        storage = Storage(HOME_PATH / HOME_DB_PATH)
+        try:
+            dispatcher = CommandDispatcher()
+            register_workspace_commands(
+                dispatcher,
+                WorkspaceManager(HOME_PATH / WORKSPACES_DIR),
+                create_event_emitter(storage, load_events_config(HOME_PATH)),
+            )
+            request = CommandRequest(
+                name=name,
+                arguments=arguments,
+                source="cli",
+                owner_id=getpass.getuser(),
+                external_context={"cwd": str(Path.cwd())},
+            )
+            asyncio.run(_execute_and_print_command_events(dispatcher, request))
+        finally:
+            storage.close()
+    except Exception as error:
+        raise click.ClickException(str(error)) from error
+
+
 ####### CLI #######
 
 
@@ -216,6 +266,34 @@ def onboard() -> None:
     """Configure the settings required to run ethos."""
     run_onboarding(HOME_PATH)
     click.echo(f"ethos configured at: {HOME_PATH}")
+
+
+@main.group()
+def workspace() -> None:
+    """Manage ethos workspaces."""
+
+
+@workspace.command("create")
+@click.argument("name")
+@requires_home
+def workspace_create(name: str) -> None:
+    """Create a workspace."""
+    _run_cli_command("workspace.create", {"name": name})
+
+
+@workspace.command("list")
+@requires_home
+def workspace_list() -> None:
+    """List workspaces."""
+    _run_cli_command("workspace.list", {})
+
+
+@workspace.command("show")
+@click.argument("name")
+@requires_home
+def workspace_show(name: str) -> None:
+    """Show a workspace."""
+    _run_cli_command("workspace.show", {"name": name})
 
 
 @main.command()

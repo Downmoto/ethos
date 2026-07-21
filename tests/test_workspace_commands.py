@@ -111,12 +111,13 @@ def test_workspace_show_command(tmp_path: Path) -> None:
 
     assert events == [
         CommandEvent(
+            text=f"my-project\t{workspace.path}",
             data={
                 "workspace": {
                     "name": "my-project",
                     "path": str(workspace.path),
                 }
-            }
+            },
         )
     ]
     assert [event.type for event in emitted] == [EventType.WORKSPACE_SHOW]

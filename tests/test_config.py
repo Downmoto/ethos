@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from ethos.config import EthosSettings
+from ethos.config import EthosSettings, load_events_config
 from ethos.provider import ProviderName
 
 
@@ -103,3 +103,15 @@ def test_settings_allow_ollama_without_api_key() -> None:
 def test_settings_reject_unknown_fields(settings: dict[str, object]) -> None:
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         EthosSettings.model_validate(settings)
+
+
+def test_load_events_config_does_not_require_provider(tmp_path: Path) -> None:
+    (tmp_path / "config.yaml").write_text(
+        "events:\n  enabled: false\n  print_events: true\n"
+        "provider:\n  name: null\n  model_name: null\n"
+    )
+
+    config = load_events_config(tmp_path)
+
+    assert not config.enabled
+    assert config.print_events
