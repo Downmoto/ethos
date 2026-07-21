@@ -1,17 +1,21 @@
 import asyncio
 import logging
+import re
 from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
 import yaml  # type: ignore[import-untyped]
 from click.testing import CliRunner
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.models.test import TestModel
 
 from ethos import app
-from ethos.config import EthosSettings, ProviderConfig
+from ethos.commands import CommandResponse, CommandUsage
+from ethos.config import ProviderConfig
 from ethos.home import initialise_home
-from ethos.runtime import PromptStreamEvent
+from ethos.provider import AIProvider
+from ethos.sessions import SessionManager
+from ethos.workspaces import DEFAULT_WORKSPACE, WorkspaceManager
 
 
 def test_otel_detach_context_error_is_suppressed(
@@ -131,12 +135,12 @@ def test_ask_command_prints_model_output(
     home.mkdir()
     monkeypatch.setattr(app, "HOME_PATH", home)
 
-    async def stream_prompt(prompt: str) -> AsyncIterator[PromptStreamEvent]:
-        yield PromptStreamEvent(text="reply: ")
-        yield PromptStreamEvent(text=prompt)
-        yield PromptStreamEvent(done=True)
+    async def stream_prompt(prompt: str) -> AsyncIterator[CommandResponse]:
+        yield CommandResponse(text="reply: ")
+        yield CommandResponse(text=prompt)
+        yield CommandResponse(done=True)
 
-    monkeypatch.setattr(app, "run_prompt_singleton", stream_prompt)
+    monkeypatch.setattr(app, "_ask_requests", stream_prompt)
 
     result = CliRunner().invoke(app.main, ["ask", "hello"])
 
@@ -154,11 +158,11 @@ def test_ask_command_updates_thinking_time(
 
     async def stream_prompt(
         _prompt: str,
-    ) -> AsyncIterator[PromptStreamEvent]:
+    ) -> AsyncIterator[CommandResponse]:
         await asyncio.sleep(0.15)
-        yield PromptStreamEvent(text="reply")
+        yield CommandResponse(text="reply")
 
-    monkeypatch.setattr(app, "run_prompt_singleton", stream_prompt)
+    monkeypatch.setattr(app, "_ask_requests", stream_prompt)
 
     result = CliRunner().invoke(app.main, ["ask", "hello"])
 
@@ -175,15 +179,15 @@ def test_ask_command_writes_model_output_to_file(
     output_path = tmp_path / "response.md"
     monkeypatch.setattr(app, "HOME_PATH", home)
 
-    async def stream_prompt(_prompt: str) -> AsyncIterator[PromptStreamEvent]:
-        yield PromptStreamEvent(text="streamed ")
-        yield PromptStreamEvent(text="response")
-        yield PromptStreamEvent(
-            usage=RunUsage(input_tokens=10, output_tokens=2),
+    async def stream_prompt(_prompt: str) -> AsyncIterator[CommandResponse]:
+        yield CommandResponse(text="streamed ")
+        yield CommandResponse(text="response")
+        yield CommandResponse(
+            usage=CommandUsage(input_tokens=10, output_tokens=2),
             done=True,
         )
 
-    monkeypatch.setattr(app, "run_prompt_singleton", stream_prompt)
+    monkeypatch.setattr(app, "_ask_requests", stream_prompt)
 
     result = CliRunner().invoke(
         app.main, ["ask", "hello", "--to", str(output_path)]
@@ -203,11 +207,11 @@ def test_ask_command_retains_partial_file_on_stream_error(
     output_path = tmp_path / "response.md"
     monkeypatch.setattr(app, "HOME_PATH", home)
 
-    async def fail(_prompt: str) -> AsyncIterator[PromptStreamEvent]:
-        yield PromptStreamEvent(text="partial response")
+    async def fail(_prompt: str) -> AsyncIterator[CommandResponse]:
+        yield CommandResponse(text="partial response")
         raise ValueError("model context window exceeded")
 
-    monkeypatch.setattr(app, "run_prompt_singleton", fail)
+    monkeypatch.setattr(app, "_ask_requests", fail)
 
     result = CliRunner().invoke(
         app.main, ["ask", "hello", "--to", str(output_path)]
@@ -247,11 +251,11 @@ def test_ask_command_reports_runtime_error(
     home.mkdir()
     monkeypatch.setattr(app, "HOME_PATH", home)
 
-    async def fail(_prompt: str) -> AsyncIterator[PromptStreamEvent]:
+    async def fail(_prompt: str) -> AsyncIterator[CommandResponse]:
         raise ValueError("ETHOS_KEYS__OPENAI_API_KEY is required")
         yield  # required for return type, runtime error without
 
-    monkeypatch.setattr(app, "run_prompt_singleton", fail)
+    monkeypatch.setattr(app, "_ask_requests", fail)
 
     result = CliRunner().invoke(app.main, ["ask", "hello"])
 
@@ -263,17 +267,8 @@ def test_ask_command_reports_runtime_error(
 def test_ask_command_requires_onboarding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    home = tmp_path / ".ethos"
-    home.mkdir()
+    home = initialise_home(tmp_path / ".ethos")
     monkeypatch.setattr(app, "HOME_PATH", home)
-
-    async def fail(_prompt: str) -> AsyncIterator[PromptStreamEvent]:
-        EthosSettings.model_validate(
-            {"provider": {"name": None, "model_name": None}}
-        )
-        yield PromptStreamEvent()
-
-    monkeypatch.setattr(app, "run_prompt_singleton", fail)
 
     result = CliRunner().invoke(app.main, ["ask", "hello"])
 
@@ -283,6 +278,8 @@ def test_ask_command_requires_onboarding(
         in result.output
     )
     assert "Traceback" not in result.output
+    sessions = SessionManager(WorkspaceManager(home / "workspaces"))
+    assert sessions.list(DEFAULT_WORKSPACE) == ()
 
 
 def test_ask_command_preserves_other_validation_errors(
@@ -292,11 +289,11 @@ def test_ask_command_preserves_other_validation_errors(
     home.mkdir()
     monkeypatch.setattr(app, "HOME_PATH", home)
 
-    async def fail(_prompt: str) -> AsyncIterator[PromptStreamEvent]:
+    async def fail(_prompt: str) -> AsyncIterator[CommandResponse]:
         ProviderConfig.model_validate({})
-        yield PromptStreamEvent()
+        yield CommandResponse()
 
-    monkeypatch.setattr(app, "run_prompt_singleton", fail)
+    monkeypatch.setattr(app, "_ask_requests", fail)
 
     result = CliRunner().invoke(app.main, ["ask", "hello"])
 
@@ -381,3 +378,88 @@ def test_workspace_commands_require_initialised_home(
     assert result.output == (
         "Error: ethos is not initialised. Run [ethos init] first.\n"
     )
+
+
+def test_session_cli_commands_use_dispatcher(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    monkeypatch.setattr(app, "HOME_PATH", home)
+    runner = CliRunner()
+
+    created = runner.invoke(app.main, ["session", "create", "default"])
+    match = re.fullmatch(r"session created: ([0-9a-f-]+)\n", created.output)
+    assert created.exit_code == 0
+    assert match is not None
+    session_id = match.group(1)
+
+    listed = runner.invoke(app.main, ["session", "list", "default"])
+    shown = runner.invoke(app.main, ["session", "show", "default", session_id])
+    archived = runner.invoke(
+        app.main, ["session", "archive", "default", session_id]
+    )
+
+    assert listed.output == f"{session_id}\tactive\n"
+    assert shown.output == f"{session_id}\tdefault\tactive\n"
+    assert archived.output == f"session archived: {session_id}\n"
+
+
+def test_ask_creates_one_shot_default_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    (home / "config.yaml").write_text(
+        "events:\n  enabled: false\n  print_events: false\n"
+        "provider:\n  name: ollama\n  model_name: test\n"
+        "keys: {}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app, "HOME_PATH", home)
+    monkeypatch.setattr(
+        AIProvider,
+        "model",
+        lambda _provider, _model_name: TestModel(  # pyright: ignore
+            custom_output_text="reply"
+        ),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    )
+
+    result = CliRunner().invoke(app.main, ["ask", "hello"])
+
+    sessions = SessionManager(WorkspaceManager(home / "workspaces")).list(
+        DEFAULT_WORKSPACE
+    )
+    assert result.exit_code == 0
+    assert result.stdout == "reply\n"
+    assert len(sessions) == 1
+    assert sessions[0].messages
+
+
+def test_session_chat_cli_streams_persistent_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    (home / "config.yaml").write_text(
+        "events:\n  enabled: false\n  print_events: false\n"
+        "provider:\n  name: ollama\n  model_name: test\n"
+        "keys: {}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app, "HOME_PATH", home)
+    monkeypatch.setattr(
+        AIProvider,
+        "model",
+        lambda _provider, _model_name: TestModel(  # pyright: ignore
+            custom_output_text="reply"
+        ),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    )
+    sessions = SessionManager(WorkspaceManager(home / "workspaces"))
+    session = sessions.create(DEFAULT_WORKSPACE)
+
+    result = CliRunner().invoke(
+        app.main,
+        ["session", "chat", "default", str(session.id), "hello"],
+    )
+
+    assert result.exit_code == 0
+    assert result.output == "reply\n"
+    assert sessions.get(DEFAULT_WORKSPACE, str(session.id)).messages

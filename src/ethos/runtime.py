@@ -1,14 +1,14 @@
 """Conversation-aware ethos agent runtime."""
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from copy import copy
 from dataclasses import dataclass
 
 from pydantic_ai import Agent
 from pydantic_ai.usage import RunUsage
 
-from ethos.config import EthosSettings, get_settings
+from ethos.environments import WorkspaceEnvironment
 from ethos.provider import AIProvider
 from ethos.sessions import SessionManager
 
@@ -28,14 +28,11 @@ class AgentRuntime:
     def __init__(
         self,
         sessions: SessionManager,
-        settings: EthosSettings | None = None,
+        resolve_environment: Callable[[str], WorkspaceEnvironment],
     ) -> None:
-        settings = settings or get_settings()
-        provider = AIProvider.from_settings(settings)
-        model = provider.model(settings.provider.model_name)
-
-        self._agent = Agent(model, output_type=str)
+        self._agent = Agent(output_type=str)
         self._sessions = sessions
+        self._resolve_environment = resolve_environment
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
 
     async def run(
@@ -51,12 +48,18 @@ class AgentRuntime:
             session = self._sessions.get(workspace_name, session_id)
             if session.archived:
                 raise ValueError(f"session is archived: {session_id}")
+            environment = self._resolve_environment(workspace_name)
+            provider = AIProvider.from_settings(environment.settings)
+            model = provider.model(environment.settings.provider.model_name)
 
             # TODO: Add Event here
 
             async with self._agent.run_stream(
                 prompt,
+                deps=environment,
                 message_history=session.messages or None,
+                model=model,
+                toolsets=environment.toolsets,
                 conversation_id=str(session.id),
             ) as result:
                 emitted = ""
@@ -79,24 +82,3 @@ class AgentRuntime:
                     usage=copy(result.usage),
                     done=True,
                 )
-
-
-async def run_prompt_singleton(
-    prompt: str, settings: EthosSettings | None = None
-) -> AsyncIterator[PromptStreamEvent]:
-    """Stream one prompt from the configured provider and model."""
-    settings = settings or get_settings()
-    provider = AIProvider.from_settings(settings)
-    model = provider.model(settings.provider.model_name)
-    agent = Agent(model, output_type=str)
-
-    async with agent.run_stream(prompt, conversation_id="ask") as result:
-        emitted = ""
-        async for text in result.stream_text():
-            chunk = text[len(emitted) :]
-            emitted = text
-            yield PromptStreamEvent(text=chunk, usage=copy(result.usage))
-        yield PromptStreamEvent(
-            usage=copy(result.usage),
-            done=True,
-        )

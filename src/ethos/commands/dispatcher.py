@@ -6,11 +6,11 @@ from dataclasses import dataclass
 
 from ethos.commands.models import (
     COMMAND_NAME_PATTERN,
-    CommandEvent,
     CommandRequest,
+    CommandResponse,
 )
 
-type CommandHandler = Callable[[CommandRequest], AsyncIterator[CommandEvent]]
+type CommandHandler = Callable[[CommandRequest], AsyncIterator[CommandResponse]]
 
 
 class CommandRegistrationError(ValueError):
@@ -70,7 +70,7 @@ class CommandDispatcher:
 
     async def execute(
         self, request: CommandRequest
-    ) -> AsyncIterator[CommandEvent]:
+    ) -> AsyncIterator[CommandResponse]:
         """Dispatch a request and stream its handler's output."""
         registration = self._commands.get(request.name)
         if registration is None:

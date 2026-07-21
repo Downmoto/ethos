@@ -6,9 +6,9 @@ from pydantic import ValidationError
 
 from ethos.commands import (
     CommandDispatcher,
-    CommandEvent,
     CommandRegistrationError,
     CommandRequest,
+    CommandResponse,
     CommandSourceError,
     UnknownCommandError,
 )
@@ -30,24 +30,24 @@ def test_dispatcher_streams_registered_handler_output() -> None:
 
     async def echo(
         command: CommandRequest,
-    ) -> AsyncIterator[CommandEvent]:
+    ) -> AsyncIterator[CommandResponse]:
         handled.append(command)
         message = command.arguments["message"]
         assert isinstance(message, str)
-        yield CommandEvent(text=message)
-        yield CommandEvent(data={"events": 1})
+        yield CommandResponse(text=message)
+        yield CommandResponse(data={"events": 1})
 
     dispatcher.register("test.echo", echo)
 
-    async def execute() -> list[CommandEvent]:
+    async def execute() -> list[CommandResponse]:
         return [event async for event in dispatcher.execute(request())]
 
     events = asyncio.run(execute())
 
     assert handled == [request()]
     assert events == [
-        CommandEvent(text="hello"),
-        CommandEvent(data={"events": 1}),
+        CommandResponse(text="hello"),
+        CommandResponse(data={"events": 1}),
     ]
 
 
@@ -56,8 +56,8 @@ def test_dispatcher_rejects_duplicate_registration() -> None:
 
     async def handle(
         _command: CommandRequest,
-    ) -> AsyncIterator[CommandEvent]:
-        yield CommandEvent(text="handled")
+    ) -> AsyncIterator[CommandResponse]:
+        yield CommandResponse(text="handled")
 
     dispatcher.register("test.command", handle)
 
@@ -88,8 +88,8 @@ def test_dispatcher_enforces_allowed_sources() -> None:
 
     async def handle(
         _command: CommandRequest,
-    ) -> AsyncIterator[CommandEvent]:
-        yield CommandEvent(text="handled")
+    ) -> AsyncIterator[CommandResponse]:
+        yield CommandResponse(text="handled")
 
     dispatcher.register(
         "discord.channel.create", handle, allowed_sources={"discord"}
@@ -113,7 +113,7 @@ def test_dispatcher_enforces_allowed_sources() -> None:
                 request("discord.channel.create", source="discord")
             )
         ]
-        assert events == [CommandEvent(text="handled")]
+        assert events == [CommandResponse(text="handled")]
 
     asyncio.run(execute())
 

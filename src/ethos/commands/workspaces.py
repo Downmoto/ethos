@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from ethos.commands.dispatcher import CommandDispatcher
-from ethos.commands.models import CommandEvent, CommandRequest
+from ethos.commands.models import CommandRequest, CommandResponse
 from ethos.events import event_factory
 from ethos.events.emitters import EnvelopeEventEmitter
 from ethos.events.models import EventPayload
@@ -77,26 +77,26 @@ def register_workspace_commands(
 
     async def create(
         request: CommandRequest,
-    ) -> AsyncIterator[CommandEvent]:
+    ) -> AsyncIterator[CommandResponse]:
         arguments = _WorkspaceNameArguments.model_validate(request.arguments)
         workspace = manager.create(arguments.name)
         await _emit_workspace_event(
             emitter, request, EventType.WORKSPACE_CREATE, (workspace,)
         )
-        yield CommandEvent(
+        yield CommandResponse(
             text=f"workspace created: {workspace.name}",
             data={"workspace": _workspace_data(workspace)},
         )
 
     async def list_workspaces(
         request: CommandRequest,
-    ) -> AsyncIterator[CommandEvent]:
+    ) -> AsyncIterator[CommandResponse]:
         _NoArguments.model_validate(request.arguments)
         workspaces = manager.list()
         await _emit_workspace_event(
             emitter, request, EventType.WORKSPACE_LIST, workspaces
         )
-        yield CommandEvent(
+        yield CommandResponse(
             text="\n".join(workspace.name for workspace in workspaces),
             data={
                 "workspaces": [
@@ -107,13 +107,13 @@ def register_workspace_commands(
 
     async def show(
         request: CommandRequest,
-    ) -> AsyncIterator[CommandEvent]:
+    ) -> AsyncIterator[CommandResponse]:
         arguments = _WorkspaceNameArguments.model_validate(request.arguments)
         workspace = manager.get(arguments.name)
         await _emit_workspace_event(
             emitter, request, EventType.WORKSPACE_SHOW, (workspace,)
         )
-        yield CommandEvent(
+        yield CommandResponse(
             text=f"{workspace.name}\t{workspace.path}",
             data={"workspace": _workspace_data(workspace)},
         )

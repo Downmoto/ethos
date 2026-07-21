@@ -6,8 +6,8 @@ from pydantic import JsonValue, ValidationError
 
 from ethos.commands import (
     CommandDispatcher,
-    CommandEvent,
     CommandRequest,
+    CommandResponse,
     register_workspace_commands,
 )
 from ethos.events.emitters import EnvelopeEventEmitter
@@ -28,8 +28,8 @@ def request(name: str, arguments: dict[str, JsonValue]) -> CommandRequest:
 
 def execute(
     dispatcher: CommandDispatcher, command: CommandRequest
-) -> list[CommandEvent]:
-    async def collect() -> list[CommandEvent]:
+) -> list[CommandResponse]:
+    async def collect() -> list[CommandResponse]:
         return [event async for event in dispatcher.execute(command)]
 
     return asyncio.run(collect())
@@ -61,7 +61,7 @@ def test_workspace_create_command(tmp_path: Path) -> None:
 
     workspace = manager.get("my-project")
     assert events == [
-        CommandEvent(
+        CommandResponse(
             text="workspace created: my-project",
             data={
                 "workspace": {
@@ -110,7 +110,7 @@ def test_workspace_show_command(tmp_path: Path) -> None:
     )
 
     assert events == [
-        CommandEvent(
+        CommandResponse(
             text=f"my-project\t{workspace.path}",
             data={
                 "workspace": {

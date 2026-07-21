@@ -15,6 +15,8 @@ from pydantic import JsonValue, ValidationError
 from ethos.commands import (
     CommandDispatcher,
     CommandRequest,
+    CommandResponse,
+    register_session_commands,
     register_workspace_commands,
 )
 from ethos.config import (
@@ -22,13 +24,22 @@ from ethos.config import (
     EthosSettings,
     load_events_config,
 )
+from ethos.environments import (
+    WorkspaceEnvironment,
+    resolve_workspace_environment,
+)
 from ethos.events import create_event_emitter
 from ethos.home import DB_PATH as HOME_DB_PATH
 from ethos.home import initialise_home
 from ethos.onboarding import run_onboarding
-from ethos.runtime import PromptStreamEvent, run_prompt_singleton
+from ethos.runtime import AgentRuntime, PromptStreamEvent
+from ethos.sessions import SessionManager
 from ethos.storage import Storage
-from ethos.workspaces import WORKSPACES_DIR, WorkspaceManager
+from ethos.workspaces import (
+    DEFAULT_WORKSPACE,
+    WORKSPACES_DIR,
+    WorkspaceManager,
+)
 
 
 class _IgnoreOtelDetachContextError(logging.Filter):
@@ -71,7 +82,7 @@ class _TokenTracker:
         self._line_width = 0
         self._started_at = monotonic()
 
-    def update(self, event: PromptStreamEvent) -> None:
+    def update(self, event: CommandResponse) -> None:
         self._characters += len(event.text)
         usage = (
             event.usage if event.usage and event.usage.total_tokens else None
@@ -108,12 +119,14 @@ class _TokenTracker:
         )
 
 
-async def _stream_response(prompt: str) -> AsyncIterator[PromptStreamEvent]:
+async def _stream_response(
+    events: AsyncIterator[CommandResponse],
+) -> AsyncIterator[CommandResponse]:
     status = _ThinkingStatus()
     status.render()
     status_task: asyncio.Task[None] | None = asyncio.create_task(status.show())
     try:
-        async for event in run_prompt_singleton(prompt):
+        async for event in events:
             if status_task is not None and (event.text or event.done):
                 status_task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -129,10 +142,10 @@ async def _stream_response(prompt: str) -> AsyncIterator[PromptStreamEvent]:
             status.clear()
 
 
-async def _print_response(prompt: str) -> None:
+async def _print_response(events: AsyncIterator[CommandResponse]) -> None:
     wrote_output = False
     try:
-        async for event in _stream_response(prompt):
+        async for event in _stream_response(events):
             if event.text:
                 click.echo(event.text, nl=False)
                 wrote_output = True
@@ -141,12 +154,14 @@ async def _print_response(prompt: str) -> None:
             click.echo()
 
 
-async def _write_response(prompt: str, output_path: Path) -> None:
+async def _write_response(
+    events: AsyncIterator[CommandResponse], output_path: Path
+) -> None:
     output = output_path.open("x", encoding="utf-8")
     tracker = _TokenTracker(output_path)
     try:
         with output:
-            async for event in _stream_response(prompt):
+            async for event in _stream_response(events):
                 if event.text:
                     output.write(event.text)
                     output.flush()
@@ -156,7 +171,7 @@ async def _write_response(prompt: str, output_path: Path) -> None:
         raise
 
 
-async def _execute_and_print_command_events(
+async def _execute_and_print_command_responses(
     dispatcher: CommandDispatcher, request: CommandRequest
 ) -> None:
     wrote_output = False
@@ -168,28 +183,98 @@ async def _execute_and_print_command_events(
         click.echo()
 
 
+def _cli_request(name: str, arguments: dict[str, JsonValue]) -> CommandRequest:
+    return CommandRequest(
+        name=name,
+        arguments=arguments,
+        source="cli",
+        owner_id=getpass.getuser(),
+        external_context={"cwd": str(Path.cwd())},
+    )
+
+
+def _build_dispatcher(storage: Storage) -> CommandDispatcher:
+    dispatcher = CommandDispatcher()
+    workspaces = WorkspaceManager(HOME_PATH / WORKSPACES_DIR)
+    sessions = SessionManager(workspaces)
+    emitter = create_event_emitter(storage, load_events_config(HOME_PATH))
+    runtime: AgentRuntime | None = None
+
+    def resolve_environment(workspace_name: str) -> WorkspaceEnvironment:
+        return resolve_workspace_environment(
+            HOME_PATH,
+            workspaces,
+            workspace_name,
+            {},
+            storage,
+        )
+
+    async def run_session(
+        prompt: str, workspace_name: str, session_id: str
+    ) -> AsyncIterator[PromptStreamEvent]:
+        nonlocal runtime
+        if runtime is None:
+            runtime = AgentRuntime(sessions, resolve_environment)
+        async for event in runtime.run(prompt, workspace_name, session_id):
+            yield event
+
+    register_workspace_commands(dispatcher, workspaces, emitter)
+    register_session_commands(dispatcher, sessions, emitter, run_session)
+    return dispatcher
+
+
 def _run_cli_command(name: str, arguments: dict[str, JsonValue]) -> None:
     try:
         storage = Storage(HOME_PATH / HOME_DB_PATH)
         try:
-            dispatcher = CommandDispatcher()
-            register_workspace_commands(
-                dispatcher,
-                WorkspaceManager(HOME_PATH / WORKSPACES_DIR),
-                create_event_emitter(storage, load_events_config(HOME_PATH)),
+            dispatcher = _build_dispatcher(storage)
+            request = _cli_request(name, arguments)
+            asyncio.run(
+                _execute_and_print_command_responses(dispatcher, request)
             )
-            request = CommandRequest(
-                name=name,
-                arguments=arguments,
-                source="cli",
-                owner_id=getpass.getuser(),
-                external_context={"cwd": str(Path.cwd())},
-            )
-            asyncio.run(_execute_and_print_command_events(dispatcher, request))
         finally:
             storage.close()
     except Exception as error:
         raise click.ClickException(str(error)) from error
+
+
+async def _ask_requests(prompt: str) -> AsyncIterator[CommandResponse]:
+    storage = Storage(HOME_PATH / HOME_DB_PATH)
+    try:
+        resolve_workspace_environment(
+            HOME_PATH,
+            WorkspaceManager(HOME_PATH / WORKSPACES_DIR),
+            DEFAULT_WORKSPACE,
+            {},
+            storage,
+        )
+        dispatcher = _build_dispatcher(storage)
+        created = [
+            event
+            async for event in dispatcher.execute(
+                _cli_request("session.create", {"workspace": DEFAULT_WORKSPACE})
+            )
+        ]
+        session_data = created[0].data.get("session")
+        if not isinstance(session_data, dict):
+            raise RuntimeError("session.create returned invalid data")
+        session_id = session_data.get("id")
+        if not isinstance(session_id, str):
+            raise RuntimeError("session.create returned invalid data")
+
+        async for event in dispatcher.execute(
+            _cli_request(
+                "session.chat",
+                {
+                    "workspace": DEFAULT_WORKSPACE,
+                    "session_id": session_id,
+                    "prompt": prompt,
+                },
+            )
+        ):
+            yield event
+    finally:
+        storage.close()
 
 
 ####### CLI #######
@@ -296,6 +381,68 @@ def workspace_show(name: str) -> None:
     _run_cli_command("workspace.show", {"name": name})
 
 
+@main.group()
+def session() -> None:
+    """Manage workspace sessions."""
+
+
+@session.command("create")
+@click.argument("workspace_name", metavar="WORKSPACE")
+@requires_home
+def session_create(workspace_name: str) -> None:
+    """Create a session in a workspace."""
+    _run_cli_command("session.create", {"workspace": workspace_name})
+
+
+@session.command("list")
+@click.argument("workspace_name", metavar="WORKSPACE")
+@requires_home
+def session_list(workspace_name: str) -> None:
+    """List sessions in a workspace."""
+    _run_cli_command("session.list", {"workspace": workspace_name})
+
+
+@session.command("show")
+@click.argument("workspace_name", metavar="WORKSPACE")
+@click.argument("session_id", metavar="SESSION")
+@requires_home
+def session_show(workspace_name: str, session_id: str) -> None:
+    """Show a session."""
+    _run_cli_command(
+        "session.show",
+        {"workspace": workspace_name, "session_id": session_id},
+    )
+
+
+@session.command("archive")
+@click.argument("workspace_name", metavar="WORKSPACE")
+@click.argument("session_id", metavar="SESSION")
+@requires_home
+def session_archive(workspace_name: str, session_id: str) -> None:
+    """Archive a session."""
+    _run_cli_command(
+        "session.archive",
+        {"workspace": workspace_name, "session_id": session_id},
+    )
+
+
+@session.command("chat")
+@click.argument("workspace_name", metavar="WORKSPACE")
+@click.argument("session_id", metavar="SESSION")
+@click.argument("prompt")
+@requires_home
+def session_chat(workspace_name: str, session_id: str, prompt: str) -> None:
+    """Send one prompt to a session."""
+    _run_cli_command(
+        "session.chat",
+        {
+            "workspace": workspace_name,
+            "session_id": session_id,
+            "prompt": prompt,
+        },
+    )
+
+
 @main.command()
 @click.argument("prompt")
 @click.option(
@@ -310,9 +457,9 @@ def ask(prompt: str, output_path: Path | None) -> None:
     """Send one prompt to the configured model."""
     try:
         if output_path is None:
-            asyncio.run(_print_response(prompt))
+            asyncio.run(_print_response(_ask_requests(prompt)))
         else:
-            asyncio.run(_write_response(prompt, output_path))
+            asyncio.run(_write_response(_ask_requests(prompt), output_path))
     except FileExistsError as error:
         raise click.ClickException(
             f"output file already exists: {output_path}"

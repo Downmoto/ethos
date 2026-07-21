@@ -24,10 +24,25 @@ class CommandRequest(BaseModel):
     external_context: dict[Identifier, Identifier] = Field(default_factory=dict)
 
 
-class CommandEvent(BaseModel):
+class CommandUsage(BaseModel):
+    """Transport-neutral token usage for streamed command output."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+
+class CommandResponse(BaseModel):
     """One transport-neutral output from a command execution."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     text: str = ""
     data: dict[str, JsonValue] = Field(default_factory=dict)
+    usage: CommandUsage | None = None
+    done: bool = False
