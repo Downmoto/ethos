@@ -8,7 +8,6 @@ from ethos.gateways import (
     CommandExecutor,
     Gateway,
     run_gateways,
-    run_until_shutdown,
 )
 
 
@@ -111,38 +110,3 @@ def test_gateway_runner_cancels_and_cleans_up_siblings() -> None:
         for error in raised.value.exceptions
     )
     assert sibling_cleaned_up.is_set()
-
-
-def test_gateway_shutdown_cancels_and_cleans_up() -> None:
-    started = asyncio.Event()
-    cleaned_up = asyncio.Event()
-
-    class TestGateway(Gateway):
-        @property
-        def name(self) -> str:
-            return "test"
-
-        async def run(self, execute: CommandExecutor) -> None:
-            started.set()
-            try:
-                await asyncio.Event().wait()
-            finally:
-                cleaned_up.set()
-
-    async def execute(
-        _command: CommandRequest,
-    ) -> AsyncIterator[CommandResponse]:
-        yield CommandResponse()
-
-    async def stop_gateway() -> None:
-        shutdown = asyncio.Event()
-        running = asyncio.create_task(
-            run_until_shutdown([TestGateway()], execute, shutdown=shutdown)
-        )
-        await started.wait()
-        shutdown.set()
-        await running
-
-    asyncio.run(stop_gateway())
-
-    assert cleaned_up.is_set()

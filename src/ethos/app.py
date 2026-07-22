@@ -3,6 +3,9 @@ import getpass
 import logging
 import math
 import shutil
+import subprocess
+import sys
+import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from functools import wraps
@@ -32,8 +35,13 @@ from ethos.environments import (
 from ethos.events import create_event_emitter
 from ethos.gateways import (
     Gateway,
+    GatewaySupervisor,
+    SupervisorAlreadyRunning,
+    SupervisorNotRunning,
     VoxGateway,
-    run_until_shutdown,
+    running_gateways,
+    stop_gateways,
+    supervisor_status,
 )
 from ethos.home import DB_PATH as HOME_DB_PATH
 from ethos.home import initialise_home
@@ -312,9 +320,55 @@ async def _start_gateways(gateways: tuple[Gateway, ...]) -> None:
     storage = Storage(HOME_PATH / HOME_DB_PATH)
     try:
         dispatcher = _build_dispatcher(storage)
-        await run_until_shutdown(gateways, dispatcher.execute)
+        await GatewaySupervisor(HOME_PATH, gateways).run(dispatcher.execute)
     finally:
         storage.close()
+
+
+def _launch_background(requested: tuple[str, ...]) -> int:
+    try:
+        running_gateways(HOME_PATH)
+    except SupervisorNotRunning:
+        pass
+    else:
+        raise SupervisorAlreadyRunning("ethos gateways are already running")
+
+    logs = HOME_PATH / "logs"
+    logs.mkdir(mode=0o700, exist_ok=True)
+    logs.chmod(0o700)
+    log_path = logs / "gateways.log"
+    log_path.touch(mode=0o600, exist_ok=True)
+    log_path.chmod(0o600)
+    arguments = [sys.executable, "-m", "ethos.app", "start"]
+    arguments.extend(f"--{name}" for name in requested)
+    with log_path.open("a", encoding="utf-8") as output:
+        process = subprocess.Popen(
+            arguments,
+            stdin=subprocess.DEVNULL,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(
+                f"ethos failed to start; see background log: {log_path}"
+            )
+        try:
+            supervisor_pid, _running = supervisor_status(HOME_PATH)
+        except SupervisorNotRunning:
+            time.sleep(0.05)
+        else:
+            if supervisor_pid != process.pid:
+                raise SupervisorAlreadyRunning(
+                    "ethos gateways are already running"
+                )
+            return process.pid
+
+    process.terminate()
+    raise RuntimeError(f"ethos start timed out; see background log: {log_path}")
 
 
 ####### CLI #######
@@ -396,8 +450,9 @@ def onboard() -> None:
 @main.command()
 @click.option("--vox", is_flag=True, help="Start the Vox REST gateway.")
 @click.option("--discord", is_flag=True, help="Start the Discord gateway.")
+@click.option("--bg", is_flag=True, help="Run gateways in the background.")
 @requires_home
-def start(vox: bool, discord: bool) -> None:
+def start(vox: bool, discord: bool, bg: bool) -> None:
     """Start selected or enabled gateways."""
     try:
         settings = get_settings()
@@ -407,7 +462,11 @@ def start(vox: bool, discord: bool) -> None:
         if discord:
             requested.append("discord")
         gateways = _make_gateways(settings, tuple(requested))
-        asyncio.run(_start_gateways(gateways))
+        if bg:
+            pid = _launch_background(tuple(requested))
+            click.echo(f"ethos started in background (pid {pid})")
+        else:
+            asyncio.run(_start_gateways(gateways))
     except ValidationError as error:
         message = (
             "ethos is not configured. Run [ethos onboard] first."
@@ -417,6 +476,24 @@ def start(vox: bool, discord: bool) -> None:
         raise click.ClickException(message) from error
     except Exception as error:
         raise click.ClickException(str(error)) from error
+
+
+@main.command()
+@click.option("--vox", is_flag=True, help="Stop the Vox REST gateway.")
+@click.option("--discord", is_flag=True, help="Stop the Discord gateway.")
+@requires_home
+def stop(vox: bool, discord: bool) -> None:
+    """Stop selected or all running gateways."""
+    requested: list[str] = []
+    if vox:
+        requested.append("vox")
+    if discord:
+        requested.append("discord")
+    try:
+        stopped = stop_gateways(HOME_PATH, tuple(requested))
+    except Exception as error:
+        raise click.ClickException(str(error)) from error
+    click.echo(f"stopped gateways: {', '.join(stopped)}")
 
 
 @main.group()

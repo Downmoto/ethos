@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import re
+import subprocess
+import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -12,7 +14,7 @@ from pydantic_ai.models.test import TestModel
 from ethos import app
 from ethos.commands import CommandResponse, CommandUsage
 from ethos.config import EthosSettings, ProviderConfig
-from ethos.gateways import Gateway
+from ethos.gateways import Gateway, SupervisorNotRunning
 from ethos.home import initialise_home
 from ethos.provider import AIProvider
 from ethos.sessions import SessionManager
@@ -202,6 +204,123 @@ def test_start_rejects_unconfigured_explicit_gateway(
 
     assert result.exit_code == 1
     assert result.output == "Error: discord requires a bot token\n"
+
+
+def test_start_can_launch_selected_gateways_in_background(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    monkeypatch.setattr(app, "HOME_PATH", home)
+    monkeypatch.setattr(
+        app,
+        "get_settings",
+        lambda: EthosSettings.model_validate(
+            {"provider": {"name": "ollama", "model_name": "test"}}
+        ),
+    )
+    launched: list[tuple[str, ...]] = []
+
+    def capture_launch(requested: tuple[str, ...]) -> int:
+        launched.append(requested)
+        return 1234
+
+    monkeypatch.setattr(app, "_launch_background", capture_launch)
+
+    result = CliRunner().invoke(app.main, ["start", "--vox", "--bg"])
+
+    assert result.exit_code == 0
+    assert result.output == "ethos started in background (pid 1234)\n"
+    assert launched == [("vox",)]
+
+
+def test_background_launcher_detaches_and_waits_for_its_supervisor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    monkeypatch.setattr(app, "HOME_PATH", home)
+
+    def not_running(_home: Path) -> tuple[str, ...]:
+        raise SupervisorNotRunning()
+
+    monkeypatch.setattr(app, "running_gateways", not_running)
+    monkeypatch.setattr(
+        app, "supervisor_status", lambda _home: (4321, ("vox",))
+    )
+    calls: list[tuple[list[str], bool]] = []
+
+    class TestProcess:
+        pid = 4321
+
+        def poll(self) -> None:
+            return None
+
+        def terminate(self) -> None:
+            raise AssertionError("ready process must not be terminated")
+
+    def launch(arguments: list[str], **options: object) -> TestProcess:
+        calls.append((arguments, options["start_new_session"] is True))
+        return TestProcess()
+
+    monkeypatch.setattr(subprocess, "Popen", launch)
+
+    pid = app._launch_background(("vox",))
+
+    assert pid == 4321
+    assert calls == [
+        ([sys.executable, "-m", "ethos.app", "start", "--vox"], True)
+    ]
+    assert (home / "logs/gateways.log").exists()
+
+
+@pytest.mark.parametrize(
+    ("arguments", "requested"),
+    [(["stop"], ()), (["stop", "--vox"], ("vox",))],
+)
+def test_stop_requests_selected_or_all_gateways(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    arguments: list[str],
+    requested: tuple[str, ...],
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    monkeypatch.setattr(app, "HOME_PATH", home)
+    calls: list[tuple[str, ...]] = []
+
+    def capture_stop(_home: Path, names: tuple[str, ...]) -> tuple[str, ...]:
+        calls.append(names)
+        return names or ("vox", "discord")
+
+    monkeypatch.setattr(app, "stop_gateways", capture_stop)
+
+    result = CliRunner().invoke(app.main, arguments)
+
+    assert result.exit_code == 0
+    assert calls == [requested]
+    assert result.output.startswith("stopped gateways: ")
+
+
+def test_background_start_reports_existing_supervisor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    monkeypatch.setattr(app, "HOME_PATH", home)
+    monkeypatch.setattr(
+        app,
+        "get_settings",
+        lambda: EthosSettings.model_validate(
+            {"provider": {"name": "ollama", "model_name": "test"}}
+        ),
+    )
+
+    def reject_start(_requested: tuple[str, ...]) -> int:
+        raise RuntimeError("ethos gateways are already running")
+
+    monkeypatch.setattr(app, "_launch_background", reject_start)
+
+    result = CliRunner().invoke(app.main, ["start", "--vox", "--bg"])
+
+    assert result.exit_code == 1
+    assert result.output == "Error: ethos gateways are already running\n"
 
 
 def test_ask_command_prints_model_output(
