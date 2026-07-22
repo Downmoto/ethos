@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Final, Self
+from typing import Annotated, Final, Self
 
 import yaml  # type: ignore[import-untyped]
 from pydantic import (
@@ -64,6 +64,7 @@ class DiscordConfig(BaseModel):
 
     enabled: bool = False
     token: SecretStr | None = None
+    allowed_user_ids: frozenset[Annotated[int, Field(gt=0)]] = frozenset()
 
 
 class GatewaysConfig(BaseModel):

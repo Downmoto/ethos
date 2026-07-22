@@ -84,6 +84,25 @@ def test_settings_allow_ollama_without_api_key() -> None:
     assert settings.keys.ollama_api_key is None
 
 
+def test_settings_validate_discord_user_ids() -> None:
+    settings = EthosSettings.model_validate(
+        {
+            "provider": {"name": "ollama", "model_name": "llama3.2"},
+            "gateways": {"discord": {"allowed_user_ids": [123, 456]}},
+        }
+    )
+
+    assert settings.gateways.discord.allowed_user_ids == frozenset({123, 456})
+
+    with pytest.raises(ValidationError):
+        EthosSettings.model_validate(
+            {
+                "provider": {"name": "ollama", "model_name": "llama3.2"},
+                "gateways": {"discord": {"allowed_user_ids": [0]}},
+            }
+        )
+
+
 @pytest.mark.parametrize(
     "settings",
     [

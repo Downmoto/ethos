@@ -196,7 +196,10 @@ def test_start_rejects_unconfigured_explicit_gateway(
         app,
         "get_settings",
         lambda: EthosSettings.model_validate(
-            {"provider": {"name": "ollama", "model_name": "test"}}
+            {
+                "provider": {"name": "ollama", "model_name": "test"},
+                "gateways": {"discord": {"token": None}},
+            }
         ),
     )
 
@@ -204,6 +207,33 @@ def test_start_rejects_unconfigured_explicit_gateway(
 
     assert result.exit_code == 1
     assert result.output == "Error: discord requires a bot token\n"
+
+
+def test_start_reports_underlying_gateway_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    monkeypatch.setattr(app, "HOME_PATH", home)
+    monkeypatch.setattr(
+        app,
+        "get_settings",
+        lambda: EthosSettings.model_validate(
+            {
+                "provider": {"name": "ollama", "model_name": "test"},
+                "gateways": {"vox": {"enabled": True}},
+            }
+        ),
+    )
+
+    async def fail(_gateways: tuple[Gateway, ...]) -> None:
+        raise ExceptionGroup("gateway errors", [RuntimeError("TLS failed")])
+
+    monkeypatch.setattr(app, "_start_gateways", fail)
+
+    result = CliRunner().invoke(app.main, ["start"])
+
+    assert result.exit_code == 1
+    assert result.output == "Error: TLS failed\n"
 
 
 def test_start_can_launch_selected_gateways_in_background(

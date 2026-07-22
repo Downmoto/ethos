@@ -34,6 +34,7 @@ from ethos.environments import (
 )
 from ethos.events import create_event_emitter
 from ethos.gateways import (
+    DiscordGateway,
     Gateway,
     GatewaySupervisor,
     SupervisorAlreadyRunning,
@@ -310,9 +311,7 @@ def _make_gateways(
     if "vox" in selected:
         gateways.append(VoxGateway(settings.gateways.vox))
     if "discord" in selected:
-        if settings.gateways.discord.token is None:
-            raise ValueError("discord requires a bot token")
-        raise ValueError("discord gateway implementation is not available yet")
+        gateways.append(DiscordGateway(settings.gateways.discord))
     return tuple(gateways)
 
 
@@ -369,6 +368,12 @@ def _launch_background(requested: tuple[str, ...]) -> int:
 
     process.terminate()
     raise RuntimeError(f"ethos start timed out; see background log: {log_path}")
+
+
+def _error_message(error: BaseException) -> str:
+    while isinstance(error, BaseExceptionGroup) and len(error.exceptions) == 1: # type: ignore
+        error = error.exceptions[0] # type: ignore
+    return str(error) # type: ignore
 
 
 ####### CLI #######
@@ -475,7 +480,7 @@ def start(vox: bool, discord: bool, bg: bool) -> None:
         )
         raise click.ClickException(message) from error
     except Exception as error:
-        raise click.ClickException(str(error)) from error
+        raise click.ClickException(_error_message(error)) from error
 
 
 @main.command()

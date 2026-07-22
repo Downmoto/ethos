@@ -16,6 +16,8 @@ gateways:
   discord:
     enabled: false
     token: null
+    # Discord user IDs permitted to invoke Ethos.
+    allowed_user_ids: []
 
 provider:
   # Supported providers: openai, google, ollama.
