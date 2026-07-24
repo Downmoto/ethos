@@ -11,6 +11,7 @@ from contextlib import suppress
 from functools import wraps
 from pathlib import Path
 from time import monotonic
+from typing import TypeGuard
 
 import click
 from pydantic import JsonValue, ValidationError
@@ -372,10 +373,16 @@ def _launch_background(requested: tuple[str, ...]) -> int:
     raise RuntimeError(f"ethos start timed out; see background log: {log_path}")
 
 
+def _is_exception_group(
+    error: BaseException,
+) -> TypeGuard[BaseExceptionGroup[BaseException]]:
+    return isinstance(error, BaseExceptionGroup)
+
+
 def _error_message(error: BaseException) -> str:
-    while isinstance(error, BaseExceptionGroup) and len(error.exceptions) == 1: # type: ignore
-        error = error.exceptions[0] # type: ignore
-    return str(error) # type: ignore
+    while _is_exception_group(error) and len(error.exceptions) == 1:
+        error = error.exceptions[0]
+    return str(error)
 
 
 ####### CLI #######

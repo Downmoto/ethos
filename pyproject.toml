@@ -48,6 +48,11 @@ testpaths = ["tests"]
 requires = ["uv_build>=0.11.21,<0.12.0"]
 build-backend = "uv_build"
 
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+include = ["src"]
+
 [dependency-groups]
 dev = [
     "mypy>=2.1.0",

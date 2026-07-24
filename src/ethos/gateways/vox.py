@@ -4,7 +4,7 @@
 import asyncio
 import getpass
 import secrets
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Generator
 from contextlib import contextmanager
 from ipaddress import ip_address
 from typing import Annotated, Final
@@ -24,7 +24,7 @@ _SOURCE: Final = "vox"
 
 class _VoxServer(uvicorn.Server):
     @contextmanager
-    def capture_signals(self) -> Iterator[None]:
+    def capture_signals(self) -> Generator[None, None, None]:
         """Leave process signal handling to the Ethos gateway runner."""
         yield
 
