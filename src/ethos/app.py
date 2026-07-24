@@ -210,6 +210,7 @@ def _cli_request(name: str, arguments: dict[str, JsonValue]) -> CommandRequest:
 
 
 def _build_dispatcher(storage: Storage) -> CommandDispatcher:
+    """Compose one command core around the supplied storage lifetime."""
     dispatcher = CommandDispatcher()
     workspaces = WorkspaceManager(HOME_PATH / WORKSPACES_DIR)
     sessions = SessionManager(workspaces)
@@ -255,6 +256,7 @@ def _run_cli_command(name: str, arguments: dict[str, JsonValue]) -> None:
 
 
 async def _ask_requests(prompt: str) -> AsyncIterator[CommandResponse]:
+    """Run a one-shot prompt in a newly created default-workspace session."""
     storage = Storage(HOME_PATH / HOME_DB_PATH)
     try:
         resolve_workspace_environment(
@@ -317,6 +319,7 @@ def _make_gateways(
 
 
 async def _start_gateways(gateways: tuple[Gateway, ...]) -> None:
+    """Run selected gateways over one shared dispatcher and storage lifetime."""
     storage = Storage(HOME_PATH / HOME_DB_PATH)
     try:
         dispatcher = _build_dispatcher(storage)

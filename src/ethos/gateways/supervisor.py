@@ -1,4 +1,8 @@
-"""Singleton gateway process lifecycle and local control socket."""
+"""Singleton gateway process lifecycle and private local control socket.
+
+See ``docs/development/commands-events-and-gateways.md`` for shutdown and
+background-process semantics.
+"""
 
 import asyncio
 import fcntl
@@ -70,6 +74,11 @@ class SupervisorNotRunning(RuntimeError):
 
 @contextmanager
 def _claim_runtime(home: Path) -> Generator[Path, None, None]:
+    """Claim singleton ownership and replace stale discovery files.
+
+    The held ``flock`` is authoritative. PID and socket files only advertise
+    the current owner and may be stale after an unclean process exit.
+    """
     runtime = home / RUNTIME_DIR
     runtime.mkdir(mode=0o700, parents=True, exist_ok=True)
     runtime.chmod(0o700)
@@ -108,7 +117,7 @@ def _claim_runtime(home: Path) -> Generator[Path, None, None]:
 
 
 class GatewaySupervisor:
-    """Run and selectively stop gateways in one singleton process."""
+    """Run and selectively stop unique gateways in one singleton process."""
 
     def __init__(self, home: Path, gateways: tuple[Gateway, ...]) -> None:
         names = [gateway.name for gateway in gateways]
@@ -122,7 +131,11 @@ class GatewaySupervisor:
         self._shutdown = asyncio.Event()
 
     async def run(self, execute: CommandExecutor) -> None:
-        """Serve gateways and their private local control socket."""
+        """Serve gateways until failure, signal, or a local stop request.
+
+        A normally returning gateway requests process shutdown. A failing
+        gateway leaves through the task group, which cancels its siblings.
+        """
         with _claim_runtime(self._home) as socket_path:
             server = await asyncio.start_unix_server(
                 self._handle_control, path=socket_path

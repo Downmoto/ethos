@@ -1,5 +1,7 @@
 # Ollama thinking streams
 
+This is a design note, not a description of current supported behaviour.
+
 ## Status
 
 Deferred. Ethos currently streams answer deltas with `stream_text(delta=True)`.

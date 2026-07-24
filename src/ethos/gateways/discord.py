@@ -349,7 +349,11 @@ class _DiscordClient(discord.Client):
 
 
 class DiscordGateway(Gateway):
-    """Expose Ethos commands through Discord."""
+    """Expose commands to the configured Discord user allow-list.
+
+    Discord permission checks remain gateway concerns; source-restricted
+    dispatch alone is not authorisation.
+    """
 
     def __init__(self, config: DiscordConfig) -> None:
         if config.token is None:

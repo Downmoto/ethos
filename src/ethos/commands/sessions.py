@@ -1,4 +1,4 @@
-"""Session command handlers."""
+"""Transport-neutral session operations and their lifecycle events."""
 
 from collections.abc import AsyncIterator, Callable
 
@@ -102,7 +102,12 @@ def register_session_commands(
     emitter: EnvelopeEventEmitter,
     run_session: SessionRunner,
 ) -> None:
-    """Register universal session commands on a dispatcher."""
+    """Register universal session commands on a dispatcher.
+
+    Management events precede their single response. Chat may yield text
+    chunks first, then emits after history is committed and before yielding
+    the final completion response. Event failure does not roll back files.
+    """
 
     async def create(request: CommandRequest) -> AsyncIterator[CommandResponse]:
         arguments = _WorkspaceArguments.model_validate(request.arguments)
@@ -182,6 +187,8 @@ def register_session_commands(
                 done=event.done,
             )
             if event.done:
+                # AgentRuntime persists history before done; the event can now
+                # describe the committed session rather than an in-flight turn.
                 session = manager.get(arguments.workspace, arguments.session_id)
                 await _emit_session_event(
                     emitter, request, EventType.SESSION_CHAT, (session,)

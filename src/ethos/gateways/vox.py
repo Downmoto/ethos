@@ -49,7 +49,11 @@ def _is_loopback(host: str) -> bool:
 
 
 class VoxGateway(Gateway):
-    """Expose universal Ethos commands as REST resources."""
+    """Expose universal commands behind the Vox HTTP trust boundary.
+
+    A non-loopback binding requires bearer authentication. Request identity is
+    otherwise the local operating-system user, not a distinct remote user.
+    """
 
     def __init__(self, config: VoxConfig) -> None:
         if not _is_loopback(config.host) and config.bearer_token is None:

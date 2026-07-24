@@ -1,4 +1,8 @@
-"""Self-contained ethos workspaces."""
+"""Workspace identities and the Ethos-owned metadata inside their roots.
+
+See ``docs/development/workspaces-and-runtime.md`` for layout and trust
+boundaries.
+"""
 
 import re
 import shutil
@@ -37,7 +41,7 @@ _RESERVED_NAMES: Final = frozenset(
 
 @dataclass(frozen=True)
 class Workspace:
-    """A validated workspace and its Ethos-owned configuration."""
+    """A validated root whose ``.ethos_workspace`` metadata Ethos owns."""
 
     name: str
     path: Path
@@ -64,7 +68,12 @@ class Workspace:
 
 
 class WorkspaceManager:
-    """Create and discover workspaces beneath one injected root."""
+    """Create and discover workspaces beneath one injected root.
+
+    User content outside ``.ethos_workspace`` is not managed by Ethos.
+    Structural and symlink validation fails closed so a workspace name cannot
+    redirect configuration or session access outside the injected root.
+    """
 
     def __init__(self, root: Path) -> None:
         self.root = root.expanduser()
@@ -85,7 +94,7 @@ class WorkspaceManager:
                 return self.get(DEFAULT_WORKSPACE)
 
     def get(self, name: str) -> Workspace:
-        """Load a valid existing workspace."""
+        """Load a complete workspace without repairing or following it."""
         self._validate_name(name, allow_default=True)
         workspace = Workspace(name=name, path=self.root / name)
 
@@ -139,6 +148,7 @@ class WorkspaceManager:
         return tuple(sorted(workspaces, key=lambda workspace: workspace.name))
 
     def _create(self, name: str) -> Workspace:
+        """Create all owned metadata or remove the incomplete workspace."""
         self.root.mkdir(parents=True, mode=0o700, exist_ok=True)
         path = self.root / name
 

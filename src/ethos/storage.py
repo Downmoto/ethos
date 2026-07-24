@@ -13,7 +13,11 @@ if TYPE_CHECKING:
 
 
 class Storage:
-    """Own the application database connection and its reads and writes."""
+    """Own the application database connection and durable event writes.
+
+    Session state deliberately lives in workspace files; this database stores
+    cross-cutting application events.
+    """
 
     def __init__(self, db_path: Path) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)

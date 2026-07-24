@@ -1,4 +1,4 @@
-"""Workspace command handlers."""
+"""Transport-neutral workspace operations and their lifecycle events."""
 
 from collections.abc import AsyncIterator
 
@@ -73,7 +73,12 @@ def register_workspace_commands(
     manager: WorkspaceManager,
     emitter: EnvelopeEventEmitter,
 ) -> None:
-    """Register universal workspace commands on a dispatcher."""
+    """Register universal workspace commands on a dispatcher.
+
+    Handlers mutate or read workspace state, emit the corresponding event, and
+    only then yield a response. Event failure can therefore follow a completed
+    domain operation.
+    """
 
     async def create(
         request: CommandRequest,

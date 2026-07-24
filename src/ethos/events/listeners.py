@@ -1,4 +1,8 @@
-"""Event listener registry for async in-process callbacks."""
+"""Deterministic in-process event callbacks with aggregated failures.
+
+See ``docs/development/commands-events-and-gateways.md`` for delivery ordering
+and its effect on command failures.
+"""
 
 from collections.abc import Awaitable, Callable
 

@@ -1,4 +1,8 @@
-"""Persistent sessions owned by Ethos workspaces."""
+"""Persistent, workspace-owned conversation sessions.
+
+See ``docs/development/workspaces-and-runtime.md`` for lifecycle, durability,
+and concurrency guarantees.
+"""
 
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -27,7 +31,11 @@ class Session(BaseModel):
 
 
 class SessionManager:
-    """Create and persist sessions beneath their owning workspaces."""
+    """Validate and persist sessions beneath their owning workspaces.
+
+    File replacement is atomic for readers, but this manager has no
+    cross-process lock. Callers must serialise competing updates separately.
+    """
 
     def __init__(self, workspaces: WorkspaceManager) -> None:
         self.workspaces = workspaces
@@ -40,7 +48,12 @@ class SessionManager:
         return session
 
     def get(self, workspace_name: str, session_id: str) -> Session:
-        """Load a session and verify its immutable workspace association."""
+        """Load a session without trusting its requested path or stored owner.
+
+        The canonical UUID, filename, and stored workspace must agree. These
+        checks prevent renamed or copied records from silently crossing a
+        workspace boundary.
+        """
         workspace = self.workspaces.get(workspace_name)
         canonical_id = self._validate_id(session_id)
         path = workspace.sessions_path / f"{canonical_id}.json"
@@ -100,6 +113,7 @@ class SessionManager:
     def _write(
         self, workspace: Workspace, session: Session, *, create: bool = False
     ) -> None:
+        """Replace a complete record atomically within its session directory."""
         path = workspace.sessions_path / f"{session.id}.json"
         if create and path.exists():
             raise FileExistsError(f"session already exists: {session.id}")

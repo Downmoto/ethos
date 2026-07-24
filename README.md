@@ -37,3 +37,8 @@ Existing output files are never overwritten.
 ```sh
 scripts/verify.sh
 ```
+
+## Development
+
+Start with the [developer documentation](docs/development/index.md) for the
+architecture, core contracts, and contribution guidance.

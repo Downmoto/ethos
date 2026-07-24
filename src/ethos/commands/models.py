@@ -1,4 +1,8 @@
-"""Command request and output models."""
+"""Transport-neutral command request and streamed response contracts.
+
+See ``docs/development/commands-events-and-gateways.md`` for how adapters
+establish request identity and consume response streams.
+"""
 
 from typing import Annotated
 
@@ -13,7 +17,12 @@ type Identifier = Annotated[
 
 
 class CommandRequest(BaseModel):
-    """A command invocation independent of its transport."""
+    """A command invocation independent of its transport.
+
+    ``source``, ``owner_id``, and ``external_context`` are adapter-supplied
+    claims. This model validates their representation, not their authenticity;
+    a gateway must authenticate and authorise callers before constructing it.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -38,7 +47,11 @@ class CommandUsage(BaseModel):
 
 
 class CommandResponse(BaseModel):
-    """One transport-neutral output from a command execution."""
+    """One transport-neutral output from a command execution.
+
+    A handler may yield several responses. For chat, usage snapshots are
+    cumulative and ``done`` marks completion after session persistence.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 

@@ -1,4 +1,8 @@
-"""Conversation-aware ethos agent runtime."""
+"""Conversation turns over workspace-scoped environments and stored sessions.
+
+See ``docs/development/workspaces-and-runtime.md`` for how configuration,
+session persistence, and runtime concurrency compose.
+"""
 
 import asyncio
 from collections.abc import AsyncIterator, Callable
@@ -23,7 +27,13 @@ class PromptStreamEvent:
 
 
 class AgentRuntime:
-    """Reuse one agent with persistent workspace-scoped sessions."""
+    """Run isolated conversations through one reusable agent.
+
+    The agent does not own conversation history. Each turn reloads one session
+    and supplies its messages explicitly, allowing the same agent to serve
+    independent conversations. Locks serialise turns per session within this
+    runtime instance; they do not coordinate separate processes or runtimes.
+    """
 
     def __init__(
         self,
@@ -41,7 +51,14 @@ class AgentRuntime:
         workspace_name: str,
         session_id: str,
     ) -> AsyncIterator[PromptStreamEvent]:
-        """Stream and persist one serialised turn in a session."""
+        """Stream and commit one turn for an active session.
+
+        Text and cumulative usage may be yielded before the turn is durable.
+        History is replaced only after the provider stream finishes normally,
+        and ``done=True`` is yielded only after that replacement succeeds.
+        Cancelling or abandoning the iterator before then leaves the previous
+        history intact.
+        """
         key = (workspace_name, session_id)
         lock = self._locks.setdefault(key, asyncio.Lock())
         async with lock:
@@ -71,6 +88,8 @@ class AgentRuntime:
                         usage=copy(result.usage),
                     )
 
+                # Completion means the streamed turn is durable, so persist
+                # before exposing the final done event.
                 self._sessions.replace_messages(
                     workspace_name,
                     session_id,

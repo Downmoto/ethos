@@ -1,4 +1,8 @@
-"""Gateway lifecycle contract and concurrent runner."""
+"""Transport adapter lifecycle and shared command-executor contract.
+
+See ``docs/development/commands-events-and-gateways.md`` for gateway ownership
+and process behaviour.
+"""
 
 import asyncio
 from abc import ABC, abstractmethod
@@ -12,7 +16,7 @@ type CommandExecutor = Callable[
 
 
 class Gateway(ABC):
-    """Translate native input and render command responses."""
+    """Translate native I/O without reimplementing universal commands."""
 
     @property
     @abstractmethod
@@ -31,7 +35,10 @@ class Gateway(ABC):
 async def run_gateways(
     gateways: Iterable[Gateway], execute: CommandExecutor
 ) -> None:
-    """Run gateways concurrently and cancel siblings when one fails."""
+    """Run gateways concurrently and cancel siblings when one fails.
+
+    Task-group exit waits for sibling cleanup before propagating failures.
+    """
     async with asyncio.TaskGroup() as tasks:
         for gateway in gateways:
             tasks.create_task(

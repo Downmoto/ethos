@@ -1,4 +1,8 @@
-"""Asynchronous in-process command dispatch."""
+"""Asynchronous in-process command registration and dispatch.
+
+See ``docs/development/commands-events-and-gateways.md`` for the command
+boundary and handler responsibilities.
+"""
 
 import re
 from collections.abc import AsyncIterator, Callable, Iterable
@@ -32,7 +36,11 @@ class _Registration:
 
 
 class CommandDispatcher:
-    """Register command handlers and stream their output."""
+    """Register one handler per command and stream its output.
+
+    Source restrictions separate transport-owned commands from universal
+    commands. They are routing policy, not caller authentication.
+    """
 
     def __init__(self) -> None:
         self._commands: dict[str, _Registration] = {}
@@ -44,7 +52,7 @@ class CommandDispatcher:
         *,
         allowed_sources: Iterable[str] | None = None,
     ) -> None:
-        """Register one handler, optionally restricted by source."""
+        """Register one handler, optionally restricted by adapter identity."""
         if re.fullmatch(COMMAND_NAME_PATTERN, name) is None:
             raise CommandRegistrationError(f"invalid command name: {name}")
         if name in self._commands:
@@ -71,7 +79,7 @@ class CommandDispatcher:
     async def execute(
         self, request: CommandRequest
     ) -> AsyncIterator[CommandResponse]:
-        """Dispatch a request and stream its handler's output."""
+        """Enforce registration policy and stream the selected handler."""
         registration = self._commands.get(request.name)
         if registration is None:
             raise UnknownCommandError(f"unknown command: {request.name}")

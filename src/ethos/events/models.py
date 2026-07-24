@@ -1,4 +1,7 @@
-"""Event envelope and payload models."""
+"""Stable event-envelope metadata and forward-readable payloads.
+
+See ``docs/development/commands-events-and-gateways.md`` for schema evolution.
+"""
 
 from datetime import UTC, datetime
 from typing import Annotated
@@ -35,7 +38,7 @@ class EventPayload(BaseModel):
 
 
 class EventEnvelope(BaseModel):
-    """Common envelope for every ethos lifecycle event."""
+    """Strict common metadata around a versionable feature payload."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 

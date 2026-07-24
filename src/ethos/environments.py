@@ -1,4 +1,8 @@
-"""Resolve the configuration and capabilities available to a workspace."""
+"""Resolve configuration and capabilities within a workspace policy boundary.
+
+See ``docs/development/workspaces-and-runtime.md`` for layer precedence and
+the security properties of tool and skill selection.
+"""
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -21,7 +25,7 @@ from ethos.workspaces import (
 
 
 class ToolSelection(BaseModel):
-    """Enabled tools and toolsets in one policy layer."""
+    """Explicit tool decisions in one global or workspace policy layer."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -47,7 +51,7 @@ class Skill:
 
 @dataclass(frozen=True)
 class WorkspaceMemory:
-    """Database access scoped to one workspace identity."""
+    """Database access paired with the workspace identity it must remain in."""
 
     workspace_name: str
     storage: Storage
@@ -55,7 +59,7 @@ class WorkspaceMemory:
 
 @dataclass(frozen=True)
 class WorkspaceEnvironment:
-    """Validated settings and capabilities for one workspace."""
+    """One turn's validated, workspace-scoped dependencies and capabilities."""
 
     workspace: Workspace
     settings: EthosSettings
@@ -86,6 +90,7 @@ def _merge(
 
 
 def _resolve_settings(home: Path, workspace: Workspace) -> EthosSettings:
+    """Merge global YAML, workspace YAML, then operator environment values."""
     yaml_values: dict[str, object] = YamlConfigSettingsSource(
         EthosSettings,
         yaml_file=(home / CONFIG_FILE, workspace.config_path),
@@ -130,6 +135,7 @@ def _selected(
     toolset_name: str,
     selection: ToolSelection,
 ) -> bool:
+    """Resolve one layer, where a tool decision overrides its toolset."""
     if tool_name in selection.tools:
         return selection.tools[tool_name]
     return selection.toolsets.get(toolset_name, False)
@@ -146,6 +152,11 @@ def _resolve_tools(
     workspace: Workspace,
     catalogue: Mapping[str, FunctionToolset[object]],
 ) -> tuple[AbstractToolset[object], ...]:
+    """Apply global and workspace policy as an intersection over the catalogue.
+
+    Global policy is a ceiling: workspace configuration may narrow it but
+    cannot restore a tool denied globally.
+    """
     _validate_tool_catalogue(catalogue)
     global_path = home / TOOLS_CONFIG_FILE
     global_selection = _load_yaml(global_path, ToolSelection)
@@ -169,6 +180,7 @@ def _resolve_tools(
 
 
 def _installed_skills(root: Path) -> dict[str, Skill]:
+    """Discover regular skill directories without following symlinks."""
     if root.is_symlink():
         raise ValueError(f"skills directory must not be a symlink: {root}")
     if not root.exists():
@@ -207,7 +219,13 @@ def resolve_workspace_environment(
     tool_catalogue: Mapping[str, FunctionToolset[object]],
     storage: Storage,
 ) -> WorkspaceEnvironment:
-    """Resolve an agent environment from one workspace identity."""
+    """Resolve current settings and capabilities from one workspace identity.
+
+    Resolution is intentionally performed per turn so configuration changes
+    can take effect without being copied into persistent session records.
+    Invalid capability policy fails the turn rather than silently producing a
+    partial environment.
+    """
     workspace = manager.get(workspace_name)
     return WorkspaceEnvironment(
         workspace=workspace,
