@@ -32,6 +32,7 @@ authorisation must happen before an adapter constructs the request:
 - Discord rejects users outside its configured allow-list and performs
   Discord permission checks for privileged Discord operations.
 - The local CLI uses the operating-system username as `owner_id`.
+- The foreground TUI uses the operating-system username as `owner_id`.
 
 `allowed_sources` is a command-routing restriction, not user authentication.
 It prevents, for example, a CLI request from invoking a Discord-owned command,
@@ -90,6 +91,11 @@ Pydantic AI run. They are not per-chunk deltas. The final response contains
 Management commands currently yield exactly one response. Vox's non-streaming
 routes enforce that expectation. Chat is exposed separately as a server-sent
 event stream.
+
+`session.history` returns display-safe conversation records for adapters. It
+includes user prompt text and assistant text in chronological order while
+omitting system instructions, attachments, thinking, and tool traffic. An
+archived session's history remains readable.
 
 ## Error ownership
 
@@ -238,6 +244,19 @@ the child it launched.
 
 The filesystem lock, rather than this polling check, remains the final defence
 against two supervisors.
+
+### Foreground TUI
+
+`ethos start --tui` runs the Textual gateway in the foreground. It uses the
+same supervisor and command dispatcher as other gateways selected in that
+invocation. Exiting the TUI therefore ends the supervisor and stops those
+sibling gateways. The TUI cannot run with `--bg`, and an already-running
+background supervisor must be stopped before starting it.
+
+TUI cancellation stops consumption of the active `session.chat` response
+stream. Visible partial output is retained in the interface, but the runtime
+may not have persisted that incomplete turn because session history is saved
+only before the final completion response.
 
 ## Adding a universal command
 

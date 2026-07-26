@@ -159,6 +159,47 @@ def test_start_uses_explicit_gateway_selection(
     assert selected == [("vox",)]
 
 
+def test_start_selects_foreground_tui(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    monkeypatch.setattr(app, "HOME_PATH", home)
+    monkeypatch.setattr(
+        app,
+        "get_settings",
+        lambda: EthosSettings.model_validate(
+            {"provider": {"name": "ollama", "model_name": "test"}}
+        ),
+    )
+    selected: list[tuple[str, ...]] = []
+
+    async def capture_start(gateways: tuple[Gateway, ...]) -> None:
+        selected.append(tuple(gateway.name for gateway in gateways))
+
+    monkeypatch.setattr(app, "_start_gateways", capture_start)
+
+    result = CliRunner().invoke(app.main, ["start", "--tui"])
+    mixed = CliRunner().invoke(app.main, ["start", "--vox", "--tui"])
+
+    assert result.exit_code == 0
+    assert mixed.exit_code == 0
+    assert selected == [("tui",), ("vox", "tui")]
+
+
+def test_start_rejects_background_tui(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    monkeypatch.setattr(app, "HOME_PATH", home)
+
+    result = CliRunner().invoke(app.main, ["start", "--tui", "--bg"])
+
+    assert result.exit_code == 1
+    assert result.output == (
+        "Error: the TUI gateway cannot run in the background\n"
+    )
+
+
 def test_start_uses_enabled_gateways_by_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -304,7 +345,11 @@ def test_background_launcher_detaches_and_waits_for_its_supervisor(
 
 @pytest.mark.parametrize(
     ("arguments", "requested"),
-    [(["stop"], ()), (["stop", "--vox"], ("vox",))],
+    [
+        (["stop"], ()),
+        (["stop", "--vox"], ("vox",)),
+        (["stop", "--tui"], ("tui",)),
+    ],
 )
 def test_stop_requests_selected_or_all_gateways(
     tmp_path: Path,

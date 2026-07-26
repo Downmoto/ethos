@@ -27,10 +27,15 @@ uv run ethos onboard
 ```sh
 uv run ethos ask "hello"
 uv run ethos ask "write a report" --to report.md
+uv run ethos start --tui
 ```
 
 File output is streamed incrementally and includes a token tracker on stderr.
 Existing output files are never overwritten.
+
+The TUI is a foreground workspace and session browser with streamed chat,
+keyboard navigation, and responsive built-in layouts. Press `?` inside it for
+shortcuts. It cannot be combined with `--bg`.
 
 ## Checks
 

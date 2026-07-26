@@ -87,6 +87,31 @@ def test_supervisor_selectively_stops_gateways(short_home: Path) -> None:
     assert not (short_home / SOCKET_FILE).exists()
 
 
+def test_supervisor_stops_siblings_when_tui_exits(short_home: Path) -> None:
+    sibling_started = asyncio.Event()
+    sibling_stopped = asyncio.Event()
+
+    class ReturningTui(Gateway):
+        @property
+        def name(self) -> str:
+            return "tui"
+
+        async def run(self, execute: CommandExecutor) -> None:
+            await sibling_started.wait()
+
+    supervisor = GatewaySupervisor(
+        short_home,
+        (
+            WaitingGateway("vox", sibling_started, sibling_stopped),
+            ReturningTui(),
+        ),
+    )
+
+    asyncio.run(supervisor.run(execute))
+
+    assert sibling_stopped.is_set()
+
+
 def test_supervisor_rejects_second_process(short_home: Path) -> None:
     started = asyncio.Event()
     stopped = asyncio.Event()

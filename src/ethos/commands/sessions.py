@@ -3,6 +3,12 @@
 from collections.abc import AsyncIterator, Callable
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic_ai.messages import (
+    ModelRequest,
+    TextContent,
+    TextPart,
+    UserPromptPart,
+)
 
 from ethos.commands.dispatcher import CommandDispatcher
 from ethos.commands.models import (
@@ -42,6 +48,13 @@ class _SessionEventItem(BaseModel):
     archived: bool
 
 
+class _HistoryItem(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    role: str
+    text: str
+
+
 class _SessionCommandPayload(EventPayload):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -61,6 +74,38 @@ def _session_data(session: Session) -> dict[str, JsonValue]:
         "archived": session.archived,
         "message_count": len(session.messages),
     }
+
+
+def _history_data(session: Session) -> tuple[_HistoryItem, ...]:
+    messages: list[_HistoryItem] = []
+    for message in session.messages:
+        role: str
+        parts: list[str]
+        if isinstance(message, ModelRequest):
+            role = "user"
+            parts = []
+            for part in message.parts:
+                if not isinstance(part, UserPromptPart):
+                    continue
+                content = part.content
+                if isinstance(content, str):
+                    parts.append(content)
+                else:
+                    parts.extend(
+                        item if isinstance(item, str) else item.content
+                        for item in content
+                        if isinstance(item, (str, TextContent))
+                    )
+        else:
+            role = "assistant"
+            parts = [
+                part.content
+                for part in message.parts
+                if isinstance(part, TextPart)
+            ]
+        if parts:
+            messages.append(_HistoryItem(role=role, text="\n".join(parts)))
+    return tuple(messages)
 
 
 async def _emit_session_event(
@@ -148,6 +193,28 @@ def register_session_commands(
             data={"session": _session_data(session)},
         )
 
+    async def history(
+        request: CommandRequest,
+    ) -> AsyncIterator[CommandResponse]:
+        arguments = _SessionArguments.model_validate(request.arguments)
+        session = manager.get(arguments.workspace, arguments.session_id)
+        await _emit_session_event(
+            emitter, request, EventType.SESSION_HISTORY, (session,)
+        )
+        messages = _history_data(session)
+        yield CommandResponse(
+            text="\n\n".join(
+                f"{message.role}: {message.text}" for message in messages
+            ),
+            data={
+                "workspace": session.workspace_name,
+                "session_id": str(session.id),
+                "messages": [
+                    message.model_dump(mode="json") for message in messages
+                ],
+            },
+        )
+
     async def archive(
         request: CommandRequest,
     ) -> AsyncIterator[CommandResponse]:
@@ -204,5 +271,6 @@ def register_session_commands(
     dispatcher.register("session.create", create)
     dispatcher.register("session.list", list_sessions)
     dispatcher.register("session.show", show)
+    dispatcher.register("session.history", history)
     dispatcher.register("session.archive", archive)
     dispatcher.register("session.chat", chat)

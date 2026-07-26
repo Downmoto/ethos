@@ -18,5 +18,6 @@ class EventType(StrEnum):
     SESSION_CREATE = "session.create"
     SESSION_LIST = "session.list"
     SESSION_SHOW = "session.show"
+    SESSION_HISTORY = "session.history"
     SESSION_ARCHIVE = "session.archive"
     SESSION_CHAT = "session.chat"

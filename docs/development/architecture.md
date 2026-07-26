@@ -12,9 +12,7 @@ streams transport-neutral responses back to the caller.
 ## System shape
 
 ```text
-CLI                       Vox                       Discord
- |                         |                            |
- +-------------------------+----------------------------+
+                        Gateway         
                            |
                      CommandRequest
                            |
@@ -39,10 +37,10 @@ in-process listeners.
 ```
 
 The important boundary is the command dispatcher, not any particular user
-interface. CLI functions, HTTP routes, and Discord callbacks are adapters.
-They translate native input into a `CommandRequest` and render streamed
-`CommandResponse` values. Domain behaviour belongs behind that boundary so
-that every transport observes the same rules.
+interface. CLI functions, Textual actions, HTTP routes, and Discord callbacks
+are adapters. They translate native input into a `CommandRequest` and render
+streamed `CommandResponse` values. Domain behaviour belongs behind that
+boundary so that every transport observes the same rules.
 
 ## Core design rules
 

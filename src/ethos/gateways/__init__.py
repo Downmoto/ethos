@@ -10,6 +10,7 @@ from ethos.gateways.supervisor import (
     stop_gateways,
     supervisor_status,
 )
+from ethos.gateways.tui import TuiGateway
 from ethos.gateways.vox import VoxGateway
 
 __all__ = [
@@ -19,6 +20,7 @@ __all__ = [
     "GatewaySupervisor",
     "SupervisorAlreadyRunning",
     "SupervisorNotRunning",
+    "TuiGateway",
     "VoxGateway",
     "run_gateways",
     "running_gateways",

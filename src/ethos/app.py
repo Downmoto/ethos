@@ -40,6 +40,7 @@ from ethos.gateways import (
     GatewaySupervisor,
     SupervisorAlreadyRunning,
     SupervisorNotRunning,
+    TuiGateway,
     VoxGateway,
     running_gateways,
     stop_gateways,
@@ -315,6 +316,8 @@ def _make_gateways(
         gateways.append(VoxGateway(settings.gateways.vox))
     if "discord" in selected:
         gateways.append(DiscordGateway(settings.gateways.discord))
+    if "tui" in selected:
+        gateways.append(TuiGateway())
     return tuple(gateways)
 
 
@@ -467,17 +470,22 @@ def onboard() -> None:
 @main.command()
 @click.option("--vox", is_flag=True, help="Start the Vox REST gateway.")
 @click.option("--discord", is_flag=True, help="Start the Discord gateway.")
+@click.option("--tui", is_flag=True, help="Start the foreground TUI gateway.")
 @click.option("--bg", is_flag=True, help="Run gateways in the background.")
 @requires_home
-def start(vox: bool, discord: bool, bg: bool) -> None:
+def start(vox: bool, discord: bool, tui: bool, bg: bool) -> None:
     """Start selected or enabled gateways."""
     try:
+        if tui and bg:
+            raise ValueError("the TUI gateway cannot run in the background")
         settings = get_settings()
         requested: list[str] = []
         if vox:
             requested.append("vox")
         if discord:
             requested.append("discord")
+        if tui:
+            requested.append("tui")
         gateways = _make_gateways(settings, tuple(requested))
         if bg:
             pid = _launch_background(tuple(requested))
@@ -498,14 +506,17 @@ def start(vox: bool, discord: bool, bg: bool) -> None:
 @main.command()
 @click.option("--vox", is_flag=True, help="Stop the Vox REST gateway.")
 @click.option("--discord", is_flag=True, help="Stop the Discord gateway.")
+@click.option("--tui", is_flag=True, help="Stop the TUI gateway.")
 @requires_home
-def stop(vox: bool, discord: bool) -> None:
+def stop(vox: bool, discord: bool, tui: bool) -> None:
     """Stop selected or all running gateways."""
     requested: list[str] = []
     if vox:
         requested.append("vox")
     if discord:
         requested.append("discord")
+    if tui:
+        requested.append("tui")
     try:
         stopped = stop_gateways(HOME_PATH, tuple(requested))
     except Exception as error:
