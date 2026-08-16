@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from ethos.config import EthosSettings, load_events_config
+from ethos.config import EthosSettings
 from ethos.provider import ProviderName
 
 
@@ -38,19 +38,15 @@ def test_settings_load_order(
     config_file = tmp_path / "config.yaml"
     config_file.write_text(
         "provider:\n  name: google\n  model_name: yaml-model\n"
+        "keys:\n  google_api_key: yaml-key\n"
     )
     monkeypatch.setitem(EthosSettings.model_config, "yaml_file", config_file)
     monkeypatch.setenv("ETHOS_PROVIDER__NAME", "ollama")
     monkeypatch.setenv("ETHOS_PROVIDER__MODEL_NAME", "env-model")
 
-    settings = EthosSettings.model_validate(
-        {
-            "provider": {"name": "openai"},
-            "keys": {"openai_api_key": "openai-key"},
-        }
-    )
+    settings = EthosSettings.model_validate({})
 
-    assert settings.provider.name is ProviderName.OPENAI
+    assert settings.provider.name is ProviderName.OLLAMA
     assert settings.provider.model_name == "env-model"
 
 
@@ -84,21 +80,22 @@ def test_settings_allow_ollama_without_api_key() -> None:
     assert settings.keys.ollama_api_key is None
 
 
-def test_settings_validate_discord_user_ids() -> None:
+def test_settings_validate_gateway_bind() -> None:
     settings = EthosSettings.model_validate(
         {
             "provider": {"name": "ollama", "model_name": "llama3.2"},
-            "gateways": {"discord": {"allowed_user_ids": [123, 456]}},
+            "gateway": {"host": "localhost", "port": 9000},
         }
     )
 
-    assert settings.gateways.discord.allowed_user_ids == frozenset({123, 456})
+    assert settings.gateway.host == "localhost"
+    assert settings.gateway.port == 9000
 
     with pytest.raises(ValidationError):
         EthosSettings.model_validate(
             {
                 "provider": {"name": "ollama", "model_name": "llama3.2"},
-                "gateways": {"discord": {"allowed_user_ids": [0]}},
+                "gateway": {"port": 0},
             }
         )
 
@@ -122,15 +119,3 @@ def test_settings_validate_discord_user_ids() -> None:
 def test_settings_reject_unknown_fields(settings: dict[str, object]) -> None:
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         EthosSettings.model_validate(settings)
-
-
-def test_load_events_config_does_not_require_provider(tmp_path: Path) -> None:
-    (tmp_path / "config.yaml").write_text(
-        "events:\n  enabled: false\n  print_events: true\n"
-        "provider:\n  name: null\n  model_name: null\n"
-    )
-
-    config = load_events_config(tmp_path)
-
-    assert not config.enabled
-    assert config.print_events

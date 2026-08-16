@@ -1,6 +1,6 @@
 """Stable event-envelope metadata and forward-readable payloads.
 
-See ``docs/development/commands-events-and-gateways.md`` for schema evolution.
+Feature payloads are strict when written and forward-readable when loaded.
 """
 
 from datetime import UTC, datetime

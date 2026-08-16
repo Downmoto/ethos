@@ -21,9 +21,7 @@ def configured_environment(
     home = tmp_path / ".ethos"
     home.mkdir()
     (home / "config.yaml").write_text(
-        "events:\n  enabled: true\n"
-        "provider:\n  name: ollama\n  model_name: global-model\n"
-        "keys: {}\n",
+        "provider:\n  name: ollama\n  model_name: global-model\nkeys: {}\n",
         encoding="utf-8",
     )
     (home / "tools.yaml").write_text(
@@ -33,7 +31,6 @@ def configured_environment(
     manager = WorkspaceManager(home / "workspaces")
     workspace = manager.create("my-project")
     workspace.config_path.write_text(
-        "events:\n  print_events: true\n"
         "provider:\n  model_name: workspace-model\n",
         encoding="utf-8",
     )
@@ -55,8 +52,6 @@ def test_workspace_configuration_recursively_overrides_global(
 
     assert environment.settings.provider.name is ProviderName.OLLAMA
     assert environment.settings.provider.model_name == "workspace-model"
-    assert environment.settings.events.enabled
-    assert environment.settings.events.print_events
     storage.close()
 
 

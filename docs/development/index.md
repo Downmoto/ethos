@@ -7,8 +7,8 @@ changing Ethos:
    end-to-end execution paths.
 2. [Workspaces and runtime](workspaces-and-runtime.md) covers configuration,
    capability policy, session persistence, and model-turn semantics.
-3. [Commands, events, and gateways](commands-events-and-gateways.md) covers the
-   transport boundary, event ordering, and long-running gateway lifecycle.
+3. The architecture guide also defines the Vox protocol boundary, event
+   ordering, and background server lifecycle.
 
 Design investigations and deferred proposals live separately in
 [`docs/notes`](../notes/). They are not statements of current behaviour.

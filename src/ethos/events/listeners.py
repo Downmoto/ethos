@@ -1,7 +1,6 @@
 """Deterministic in-process event callbacks with aggregated failures.
 
-See ``docs/development/commands-events-and-gateways.md`` for delivery ordering
-and its effect on command failures.
+Listener failures are aggregated after deterministic delivery.
 """
 
 from collections.abc import Awaitable, Callable
