@@ -3,7 +3,6 @@ from pathlib import Path
 
 import turso
 
-from ethos.config import EventsConfig
 from ethos.events import create_event_emitter
 from ethos.events.emitters import EnvelopeEventEmitter
 from ethos.events.listeners import EventListenerRegistry
@@ -15,7 +14,7 @@ from ethos.storage import Storage
 def test_emitter_writes_event_to_storage(tmp_path: Path) -> None:
     db_path = tmp_path / "events.db"
     storage = Storage(db_path)
-    emitter = EnvelopeEventEmitter(enabled=True, storage=storage)
+    emitter = EnvelopeEventEmitter(storage=storage)
     event = EventEnvelope(
         type=EventType.APP_STARTED,
         source=EventSource(name="test"),
@@ -35,14 +34,14 @@ def test_emitter_writes_event_to_storage(tmp_path: Path) -> None:
 
 def test_event_emitter_is_created_with_explicit_storage(tmp_path: Path) -> None:
     storage = Storage(tmp_path / "events.db")
-    emitter = create_event_emitter(storage, EventsConfig())
+    emitter = create_event_emitter(storage)
 
     assert emitter._storage is storage  # pyright: ignore[reportPrivateUsage]
     storage.close()
 
 
 def test_emitter_works_without_storage_or_dispatcher() -> None:
-    emitter = EnvelopeEventEmitter(enabled=True)
+    emitter = EnvelopeEventEmitter()
     event = EventEnvelope(
         type=EventType.APP_STARTED,
         source=EventSource(name="test"),
@@ -56,7 +55,7 @@ def test_emitter_works_without_storage_or_dispatcher() -> None:
 
 def test_emitter_dispatches_event_to_listener() -> None:
     registry = EventListenerRegistry()
-    emitter = EnvelopeEventEmitter(enabled=True, dispatcher=registry)
+    emitter = EnvelopeEventEmitter(dispatcher=registry)
     delivered: list[EventEnvelope] = []
     event = EventEnvelope(
         type=EventType.APP_STARTED,
@@ -77,9 +76,7 @@ def test_emitter_writes_before_dispatching(tmp_path: Path) -> None:
     db_path = tmp_path / "events.db"
     storage = Storage(db_path)
     registry = EventListenerRegistry()
-    emitter = EnvelopeEventEmitter(
-        enabled=True, storage=storage, dispatcher=registry
-    )
+    emitter = EnvelopeEventEmitter(storage=storage, dispatcher=registry)
     stored_event_counts_seen_by_listener: list[int] = []
     event = EventEnvelope(
         type=EventType.APP_STARTED,

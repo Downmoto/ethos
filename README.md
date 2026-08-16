@@ -1,16 +1,12 @@
 # ethos
 
-A general purpose agent harness for local workflow automation.
+A personal AI brain with one replaceable REST body protocol.
 
 ## Stack
 
 - Python managed by `uv`
 - Pydantic AI for agent runtime primitives and model/tool adapters
-- Pydantic Graph for control flow
-- Pydantic Evals for LLM testing
-- Pydantic AI Harness for shell execution and filesystem traversal utilities
 - Click for the CLI
-- Textual for limited TUI convenience screens
 - Pydantic Settings and YAML for configuration
 - Ruff, mypy, pyright, and pytest for quality checks
 
@@ -27,15 +23,17 @@ uv run ethos onboard
 ```sh
 uv run ethos ask "hello"
 uv run ethos ask "write a report" --to report.md
-uv run ethos start --tui
+uv run ethos start
+uv run ethos start --bg
+uv run ethos stop
 ```
 
 File output is streamed incrementally and includes a token tracker on stderr.
 Existing output files are never overwritten.
 
-The TUI is a foreground workspace and session browser with streamed chat,
-keyboard navigation, and responsive built-in layouts. Press `?` inside it for
-shortcuts. It cannot be combined with `--bg`.
+`ethos start` runs the Vox REST server in the foreground. `--bg` runs the same
+server as a tracked background process; `ethos stop` is a no-op when no
+background process is running.
 
 ## Checks
 

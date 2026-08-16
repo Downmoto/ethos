@@ -1,8 +1,6 @@
 """Typed ethos event APIs."""
 
-from ethos.config import EventsConfig
 from ethos.events.emitters import EnvelopeEventEmitter
-from ethos.events.listeners import EventListenerRegistry
 from ethos.events.models import (
     EventEnvelope,
     EventPayload,
@@ -26,26 +24,9 @@ def event_factory(
     )
 
 
-async def _global_print_event_listener(event: EventEnvelope) -> None:
-    print(
-        f"event type={event.type.value} source={event.source.name} "
-        f"detail={event.source.detail or '-'} tags={','.join(event.tags)}"
-    )
-
-
-def create_event_emitter(
-    storage: Storage, config: EventsConfig
-) -> EnvelopeEventEmitter:
-    """Create an event emitter without performing work during import."""
-    listeners = EventListenerRegistry()
-    if config.print_events:
-        listeners.register(_global_print_event_listener)
-
-    return EnvelopeEventEmitter(
-        enabled=config.enabled,
-        storage=storage,
-        dispatcher=listeners,
-    )
+def create_event_emitter(storage: Storage) -> EnvelopeEventEmitter:
+    """Create the always-on application event emitter."""
+    return EnvelopeEventEmitter(storage=storage)
 
 
 __all__ = ["create_event_emitter", "event_factory"]

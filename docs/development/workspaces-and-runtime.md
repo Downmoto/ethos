@@ -225,7 +225,7 @@ reloads history only after the first turn has persisted it. Different sessions
 may run concurrently.
 
 The locks belong to one `AgentRuntime` instance and one process. They do not
-coordinate a CLI process with a running gateway process, or two separately
+coordinate a CLI process with a running Vox process, or two separately
 constructed runtimes.
 
 ### Completion and failure

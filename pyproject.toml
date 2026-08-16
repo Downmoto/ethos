@@ -11,16 +11,11 @@ dependencies = [
     "click>=8.4.1",
     "pydantic>=2.13.4",
     "pydantic-ai-slim[google,openai]>=2.0.0",
-    "pydantic-ai-harness>=0.4.0",
-    "pydantic-evals>=2.0.0",
-    "pydantic-graph>=2.0.0",
     "pydantic-settings>=2.14.1",
     "pyyaml>=6.0.3",
     "pyturso>=0.6.1",
-    "textual>=8.2.7",
     "fastapi>=0.139.2",
     "uvicorn>=0.51.0",
-    "discord.py>=2.7.1",
 ]
 
 [project.scripts]

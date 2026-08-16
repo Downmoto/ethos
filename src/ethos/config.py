@@ -2,15 +2,13 @@
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Final, Self
+from typing import Final, Self
 
-import yaml  # type: ignore[import-untyped]
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
     SecretStr,
-    TypeAdapter,
     model_validator,
 )
 from pydantic_settings import (
@@ -25,13 +23,6 @@ from ethos.provider import ProviderName
 HOME_PATH: Final = Path.home() / ".ethos"
 CONFIG_FILE: Final = "config.yaml"
 DB_PATH: Final = HOME_PATH / "data" / "ethos.db"
-
-
-class EventsConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = True
-    print_events: bool = False
 
 
 class ProviderConfig(BaseModel):
@@ -53,30 +44,13 @@ class KeysConfig(BaseModel):
 class VoxConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = False
     host: str = Field(default="127.0.0.1", min_length=1)
     port: int = Field(default=8000, ge=1, le=65535)
     bearer_token: SecretStr | None = None
 
 
-class DiscordConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = False
-    token: SecretStr | None = None
-    allowed_user_ids: frozenset[Annotated[int, Field(gt=0)]] = frozenset()
-
-
-class GatewaysConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    vox: VoxConfig = Field(default_factory=VoxConfig)
-    discord: DiscordConfig = Field(default_factory=DiscordConfig)
-
-
 class EthosSettings(BaseSettings):
-    events: EventsConfig = Field(default_factory=EventsConfig)
-    gateways: GatewaysConfig = Field(default_factory=GatewaysConfig)
+    gateway: VoxConfig = Field(default_factory=VoxConfig)
     provider: ProviderConfig
     keys: KeysConfig = Field(default_factory=KeysConfig)
 
@@ -114,14 +88,6 @@ class EthosSettings(BaseSettings):
             env_settings,
             YamlConfigSettingsSource(settings_cls),
         )
-
-
-def load_events_config(home: Path) -> EventsConfig:
-    """Load event settings without requiring model onboarding."""
-    config = TypeAdapter(dict[str, object]).validate_python(
-        yaml.safe_load((home / CONFIG_FILE).read_text(encoding="utf-8"))
-    )
-    return EventsConfig.model_validate(config.get("events", {}))
 
 
 @lru_cache
