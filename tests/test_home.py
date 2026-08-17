@@ -82,6 +82,7 @@ def test_initialise_home_creates_capability_configuration(
 
     assert (home / "tools.yaml").read_text() == ("tools: {}\ntoolsets: {}\n")
     assert (home / "skills").is_dir()
+    assert (home / "sessions").is_dir()
     assert not (home / "skills.yaml").exists()
     assert not (home / "tools").exists()
     assert not (home / "memory").exists()

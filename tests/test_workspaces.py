@@ -6,32 +6,16 @@ import pytest
 from ethos.workspaces import DEFAULT_WORKSPACE, WorkspaceManager
 
 
-def test_create_workspace_builds_self_contained_layout(
+def test_create_workspace_builds_empty_user_owned_directory(
     tmp_path: Path,
 ) -> None:
     workspace = WorkspaceManager(tmp_path / "workspaces").create("my-project")
 
     assert workspace.name == "my-project"
     assert workspace.path == tmp_path / "workspaces" / "my-project"
-    assert workspace.config_path.read_text() == "{}\n"
-    assert workspace.ethos_path == workspace.path / ".ethos_workspace"
-    assert workspace.tools_config_path.read_text() == (
-        "tools: {}\ntoolsets: {}\n"
-    )
-    assert workspace.skills_config_path.read_text() == "skills: []\n"
-    assert workspace.sessions_path.is_dir()
-    assert not (workspace.ethos_path / "tools").exists()
-    assert not (workspace.ethos_path / "skills").exists()
-    assert not (workspace.ethos_path / "memory").exists()
-    assert not (workspace.path / "data").exists()
-    assert not (workspace.path / "files").exists()
+    assert list(workspace.path.iterdir()) == []
     assert S_IMODE(workspace.path.parent.stat().st_mode) == 0o700
     assert S_IMODE(workspace.path.stat().st_mode) == 0o700
-    assert S_IMODE(workspace.ethos_path.stat().st_mode) == 0o700
-    assert S_IMODE(workspace.config_path.stat().st_mode) == 0o600
-    assert S_IMODE(workspace.tools_config_path.stat().st_mode) == 0o600
-    assert S_IMODE(workspace.skills_config_path.stat().st_mode) == 0o600
-    assert S_IMODE(workspace.sessions_path.stat().st_mode) == 0o700
 
 
 def test_workspace_root_allows_user_defined_structure(tmp_path: Path) -> None:
@@ -103,14 +87,10 @@ def test_list_returns_workspaces_in_name_order(tmp_path: Path) -> None:
     ]
 
 
-def test_get_rejects_incomplete_workspace(tmp_path: Path) -> None:
+def test_get_accepts_any_user_defined_contents(tmp_path: Path) -> None:
     manager = WorkspaceManager(tmp_path / "workspaces")
-    workspace = manager.create("incomplete")
-    workspace.config_path.unlink()
+    workspace = manager.create("my-project")
+    (workspace.path / ".ethos_workspace").mkdir()
+    (workspace.path / "README.md").write_text("user content\n")
 
-    with pytest.raises(
-        ValueError,
-        match=r"workspace is incomplete: incomplete "
-        r"\(missing: ws_config.yaml\)",
-    ):
-        manager.get("incomplete")
+    assert manager.get("my-project") == workspace

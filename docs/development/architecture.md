@@ -35,8 +35,8 @@ behaviour.
 ### Service
 
 The service composes workspace and session managers, storage, lifecycle event
-emission, environment resolution, and the lazily created agent runtime. Its
-methods represent the currently supported application operations.
+emission, and the lazily created agent runtime. Its methods represent the
+currently supported application operations.
 
 Request context records which trusted adapter initiated an operation. It is
 event metadata, not a generic command envelope or an authentication system.
@@ -66,11 +66,11 @@ Foreground servers are deliberately not affected by `ethos stop`.
 
 ## State and execution
 
-A workspace owns its configuration boundary and sessions. A session belongs
-permanently to one workspace and stores one conversation's model messages.
-For each turn, `AgentRuntime` resolves the current workspace environment,
-streams model output, and atomically replaces history before emitting its
-completion chunk.
+A workspace identifies a user-owned project directory. A session belongs
+permanently to one workspace, stores one conversation's model messages, and
+lives in the Ethos home. For each turn, `AgentRuntime` resolves the global
+settings, streams model output, and atomically replaces history before emitting
+its completion chunk.
 
 Lifecycle events are always emitted and stored before in-process listeners
 run. Domain mutations and event writes are not one transaction, so an event
@@ -79,15 +79,11 @@ failure can follow a successful filesystem mutation.
 ## Deferred AI design
 
 Personas, persona memory, cross-persona conversation, and expanded skill/tool
-execution are intentionally outside this base refactor. Future capability
-selection will intersect workspace policy (the maximum allowed) with persona
-policy (what that persona can use). No placeholder persona abstractions exist
-until those behaviours are designed.
+execution are intentionally outside this base refactor. No placeholder persona
+abstractions exist until those behaviours are designed.
 
 ## Current limits
 
 - Session serialisation locks are process-local.
 - Session files have atomic replacement but no cross-process transaction.
 - The application event database is write-only through the current API.
-- The composition root currently supplies an empty tool catalogue.
-- Selected skills are resolved but not loaded into the model instructions.

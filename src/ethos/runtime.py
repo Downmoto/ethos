@@ -1,18 +1,18 @@
-"""Conversation turns over workspace-scoped environments and stored sessions.
+"""Conversation turns over stored workspace sessions.
 
-See ``docs/development/workspaces-and-runtime.md`` for how configuration,
-session persistence, and runtime concurrency compose.
+See ``docs/development/workspaces-and-runtime.md`` for how session persistence
+and runtime concurrency compose.
 """
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from copy import copy
 from dataclasses import dataclass
 
 from pydantic_ai import Agent
 from pydantic_ai.usage import RunUsage
 
-from ethos.environments import WorkspaceEnvironment
+from ethos.config import get_settings
 from ethos.provider import AIProvider
 from ethos.sessions import SessionManager
 
@@ -35,14 +35,9 @@ class AgentRuntime:
     runtime instance; they do not coordinate separate processes or runtimes.
     """
 
-    def __init__(
-        self,
-        sessions: SessionManager,
-        resolve_environment: Callable[[str], WorkspaceEnvironment],
-    ) -> None:
+    def __init__(self, sessions: SessionManager) -> None:
         self._agent = Agent(output_type=str)
         self._sessions = sessions
-        self._resolve_environment = resolve_environment
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
 
     async def run(
@@ -65,18 +60,16 @@ class AgentRuntime:
             session = self._sessions.get(workspace_name, session_id)
             if session.archived:
                 raise ValueError(f"session is archived: {session_id}")
-            environment = self._resolve_environment(workspace_name)
-            provider = AIProvider.from_settings(environment.settings)
-            model = provider.model(environment.settings.provider.model_name)
+            settings = get_settings()
+            provider = AIProvider.from_settings(settings)
+            model = provider.model(settings.provider.model_name)
 
             # TODO: Add Event here
 
             async with self._agent.run_stream(
                 prompt,
-                deps=environment,
                 message_history=session.messages or None,
                 model=model,
-                toolsets=environment.toolsets,
                 conversation_id=str(session.id),
             ) as result:
                 emitted = ""
