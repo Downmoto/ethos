@@ -6,7 +6,7 @@ changing Ethos:
 1. [Architecture](architecture.md) maps the system, dependency boundaries, and
    end-to-end execution paths.
 2. [Workspaces and runtime](workspaces-and-runtime.md) covers configuration,
-   capability policy, session persistence, and model-turn semantics.
+   session persistence, and model-turn semantics.
 3. The architecture guide also defines the Vox protocol boundary, event
    ordering, and background server lifecycle.
 

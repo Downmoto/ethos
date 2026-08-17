@@ -8,11 +8,9 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from ethos.config import EthosSettings
-from ethos.environments import WorkspaceEnvironment, WorkspaceMemory
 from ethos.provider import AIProvider
 from ethos.runtime import AgentRuntime, PromptStreamEvent
 from ethos.sessions import SessionManager
-from ethos.storage import Storage
 from ethos.workspaces import WorkspaceManager
 
 
@@ -25,20 +23,9 @@ def settings() -> EthosSettings:
     )
 
 
-def environment(
-    workspaces: WorkspaceManager, storage: Storage
-) -> WorkspaceEnvironment:
-    workspace = workspaces.get("my-project")
-    return WorkspaceEnvironment(
-        workspace=workspace,
-        settings=settings(),
-        toolsets=(),
-        skills=(),
-        memory=WorkspaceMemory(
-            workspace_name=workspace.name,
-            storage=storage,
-        ),
-    )
+@pytest.fixture(autouse=True)
+def configured_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("ethos.runtime.get_settings", settings)
 
 
 def test_runtime_returns_model_output(
@@ -55,12 +42,9 @@ def test_runtime_returns_model_output(
 
     workspaces = WorkspaceManager(tmp_path / "workspaces")
     workspaces.create("my-project")
-    sessions = SessionManager(workspaces)
+    sessions = SessionManager(workspaces, tmp_path / "sessions")
     session = sessions.create("my-project")
-    storage = Storage(tmp_path / "ethos.db")
-    runtime = AgentRuntime(
-        sessions, lambda _workspace: environment(workspaces, storage)
-    )
+    runtime = AgentRuntime(sessions)
 
     async def collect_events() -> list[PromptStreamEvent]:
         return [
@@ -76,7 +60,6 @@ def test_runtime_returns_model_output(
     assert events[-1].done
     assert events[-1].usage is not None
     assert events[-1].usage.output_tokens > 0
-    storage.close()
 
 
 def test_runtime_keeps_conversation_history_isolated(
@@ -101,23 +84,20 @@ def test_runtime_keeps_conversation_history_isolated(
     workspace_root = tmp_path / "workspaces"
     workspaces = WorkspaceManager(workspace_root)
     workspaces.create("my-project")
-    sessions = SessionManager(workspaces)
+    sessions_root = tmp_path / "sessions"
+    sessions = SessionManager(workspaces, sessions_root)
     first = sessions.create("my-project")
     second = sessions.create("my-project")
-    storage = Storage(tmp_path / "ethos.db")
 
     async def run_turns() -> None:
-        runtime = AgentRuntime(
-            sessions, lambda _workspace: environment(workspaces, storage)
-        )
+        runtime = AgentRuntime(sessions)
         _ = [
             event
             async for event in runtime.run("first", "my-project", str(first.id))
         ]
 
         restarted = AgentRuntime(
-            SessionManager(WorkspaceManager(workspace_root)),
-            lambda _workspace: environment(workspaces, storage),
+            SessionManager(WorkspaceManager(workspace_root), sessions_root)
         )
         _ = [
             event
@@ -143,7 +123,6 @@ def test_runtime_keeps_conversation_history_isolated(
         if isinstance(part, UserPromptPart)
     ]
     assert prompts == ["first", "second"]
-    storage.close()
 
 
 def test_runtime_serialises_each_conversation(
@@ -172,13 +151,10 @@ def test_runtime_serialises_each_conversation(
     )
     workspaces = WorkspaceManager(tmp_path / "workspaces")
     workspaces.create("my-project")
-    sessions = SessionManager(workspaces)
+    sessions = SessionManager(workspaces, tmp_path / "sessions")
     first = sessions.create("my-project")
     second = sessions.create("my-project")
-    storage = Storage(tmp_path / "ethos.db")
-    runtime = AgentRuntime(
-        sessions, lambda _workspace: environment(workspaces, storage)
-    )
+    runtime = AgentRuntime(sessions)
 
     async def collect(prompt: str, session_id: str) -> None:
         _ = [
@@ -211,7 +187,6 @@ def test_runtime_serialises_each_conversation(
         if isinstance(part, UserPromptPart)
     ]
     assert prompts == ["first", "second", "third"]
-    storage.close()
 
 
 def test_runtime_rejects_archived_session(
@@ -224,13 +199,10 @@ def test_runtime_rejects_archived_session(
     )
     workspaces = WorkspaceManager(tmp_path / "workspaces")
     workspaces.create("my-project")
-    sessions = SessionManager(workspaces)
+    sessions = SessionManager(workspaces, tmp_path / "sessions")
     session = sessions.create("my-project")
     sessions.archive("my-project", str(session.id))
-    storage = Storage(tmp_path / "ethos.db")
-    runtime = AgentRuntime(
-        sessions, lambda _workspace: environment(workspaces, storage)
-    )
+    runtime = AgentRuntime(sessions)
 
     async def collect() -> None:
         _ = [
@@ -242,4 +214,3 @@ def test_runtime_rejects_archived_session(
 
     with pytest.raises(ValueError, match=f"session is archived: {session.id}"):
         asyncio.run(collect())
-    storage.close()

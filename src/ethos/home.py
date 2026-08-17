@@ -7,8 +7,11 @@ from pathlib import Path
 from typing import Final
 
 from ethos.config import CONFIG_FILE
+from ethos.sessions import SESSIONS_DIR
 from ethos.storage import Storage
-from ethos.workspaces import TOOLS_CONFIG_FILE, WORKSPACES_DIR, WorkspaceManager
+from ethos.workspaces import WORKSPACES_DIR, WorkspaceManager
+
+TOOLS_CONFIG_FILE: Final = "tools.yaml"
 
 DB_PATH: Final = Path("data/ethos.db")
 WORKFLOWS_PATH: Final = Path("workflows")
@@ -28,7 +31,11 @@ _FILES: Final[tuple[tuple[Path, Callable[[], str]], ...]] = (
     (Path(TOOLS_CONFIG_FILE), _read_tools_template),
 )
 
-_EMPTY_DIRS: Final[tuple[Path, ...]] = (WORKFLOWS_PATH, SKILLS_PATH)
+_EMPTY_DIRS: Final[tuple[Path, ...]] = (
+    WORKFLOWS_PATH,
+    SKILLS_PATH,
+    Path(SESSIONS_DIR),
+)
 
 
 def initialise_home(home: Path, reinitialise: bool = False) -> Path:

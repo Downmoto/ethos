@@ -1,4 +1,4 @@
-"""Persistent, workspace-owned conversation sessions.
+"""Persistent, workspace-scoped conversation sessions.
 
 See ``docs/development/workspaces-and-runtime.md`` for lifecycle, durability,
 and concurrency guarantees.
@@ -6,12 +6,16 @@ and concurrency guarantees.
 
 from collections.abc import Iterable
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import Final
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic_ai.messages import ModelMessage
 
 from ethos.workspaces import Workspace, WorkspaceManager
+
+SESSIONS_DIR: Final = "sessions"
 
 
 class Session(BaseModel):
@@ -31,14 +35,15 @@ class Session(BaseModel):
 
 
 class SessionManager:
-    """Validate and persist sessions beneath their owning workspaces.
+    """Validate and persist sessions beneath the Ethos home.
 
     File replacement is atomic for readers, but this manager has no
     cross-process lock. Callers must serialise competing updates separately.
     """
 
-    def __init__(self, workspaces: WorkspaceManager) -> None:
+    def __init__(self, workspaces: WorkspaceManager, root: Path) -> None:
         self.workspaces = workspaces
+        self.root = root.expanduser()
 
     def create(self, workspace_name: str) -> Session:
         """Create a new active session in a workspace."""
@@ -56,7 +61,7 @@ class SessionManager:
         """
         workspace = self.workspaces.get(workspace_name)
         canonical_id = self._validate_id(session_id)
-        path = workspace.sessions_path / f"{canonical_id}.json"
+        path = self._workspace_path(workspace) / f"{canonical_id}.json"
         if path.is_symlink():
             raise ValueError(f"session must not be a symlink: {canonical_id}")
         if not path.is_file():
@@ -76,9 +81,12 @@ class SessionManager:
     def list(self, workspace_name: str) -> tuple[Session, ...]:
         """List a workspace's sessions in creation order."""
         workspace = self.workspaces.get(workspace_name)
+        directory = self._workspace_path(workspace)
+        if not directory.exists():
+            return ()
         sessions = [
             self.get(workspace.name, path.stem)
-            for path in workspace.sessions_path.iterdir()
+            for path in directory.iterdir()
             if path.suffix == ".json"
         ]
         return tuple(
@@ -114,7 +122,9 @@ class SessionManager:
         self, workspace: Workspace, session: Session, *, create: bool = False
     ) -> None:
         """Replace a complete record atomically within its session directory."""
-        path = workspace.sessions_path / f"{session.id}.json"
+        directory = self._workspace_path(workspace)
+        directory.mkdir(parents=True, mode=0o700, exist_ok=True)
+        path = directory / f"{session.id}.json"
         if create and path.exists():
             raise FileExistsError(f"session already exists: {session.id}")
 
@@ -128,6 +138,18 @@ class SessionManager:
             temporary.replace(path)
         finally:
             temporary.unlink(missing_ok=True)
+
+    def _workspace_path(self, workspace: Workspace) -> Path:
+        if self.root.is_symlink():
+            raise ValueError(
+                f"sessions directory must not be a symlink: {self.root}"
+            )
+        path = self.root / workspace.path.relative_to(self.workspaces.root)
+        if path.is_symlink():
+            raise ValueError(
+                f"workspace sessions must not be a symlink: {workspace.name}"
+            )
+        return path
 
     @staticmethod
     def _validate_id(session_id: str) -> str:

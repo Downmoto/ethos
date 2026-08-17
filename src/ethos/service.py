@@ -1,12 +1,11 @@
 """Shared Ethos application behaviour for the CLI and Vox protocol."""
 
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
-from pydantic_ai import FunctionToolset
 from pydantic_ai.messages import (
     ModelRequest,
     TextContent,
@@ -14,17 +13,13 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
-from ethos.environments import (
-    WorkspaceEnvironment,
-    resolve_workspace_environment,
-)
 from ethos.events import create_event_emitter, event_factory
 from ethos.events.emitters import EnvelopeEventEmitter
 from ethos.events.models import EventPayload
 from ethos.events.types import EventType
 from ethos.home import DB_PATH
 from ethos.runtime import AgentRuntime
-from ethos.sessions import Session, SessionManager
+from ethos.sessions import SESSIONS_DIR, Session, SessionManager
 from ethos.storage import Storage
 from ethos.workspaces import WORKSPACES_DIR, Workspace, WorkspaceManager
 
@@ -138,14 +133,12 @@ class Ethos:
     def __init__(
         self,
         home: Path,
-        tool_catalogue: Mapping[str, FunctionToolset[object]] | None = None,
     ) -> None:
         self.home = home
         self.storage = Storage(home / DB_PATH)
         self.workspaces = WorkspaceManager(home / WORKSPACES_DIR)
-        self.sessions = SessionManager(self.workspaces)
+        self.sessions = SessionManager(self.workspaces, home / SESSIONS_DIR)
         self.events = create_event_emitter(self.storage)
-        self._tool_catalogue = tool_catalogue or {}
         self._agent: AgentRuntime | None = None
 
     def close(self) -> None:
@@ -157,18 +150,9 @@ class Ethos:
     def __exit__(self, *_args: object) -> None:
         self.close()
 
-    def _environment(self, workspace_name: str) -> WorkspaceEnvironment:
-        return resolve_workspace_environment(
-            self.home,
-            self.workspaces,
-            workspace_name,
-            self._tool_catalogue,
-            self.storage,
-        )
-
     def _runtime(self) -> AgentRuntime:
         if self._agent is None:
-            self._agent = AgentRuntime(self.sessions, self._environment)
+            self._agent = AgentRuntime(self.sessions)
         return self._agent
 
     async def create_workspace(
