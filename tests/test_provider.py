@@ -14,6 +14,8 @@ def test_openai_provider_creates_responses_model() -> None:
 
     assert isinstance(model, OpenAIResponsesModel)
     assert model.model_name == "gpt-5-mini"
+    assert model.system == "openai"
+    assert model.base_url == "https://api.openai.com/v1/"
 
 
 def test_google_provider_creates_google_model() -> None:
@@ -23,6 +25,8 @@ def test_google_provider_creates_google_model() -> None:
 
     assert isinstance(model, GoogleModel)
     assert model.model_name == "gemini-2.5-flash"
+    assert model.system == "google"
+    assert model.base_url == "https://generativelanguage.googleapis.com/"
 
 
 def test_ollama_provider_creates_ollama_model_without_api_key() -> None:
@@ -32,6 +36,20 @@ def test_ollama_provider_creates_ollama_model_without_api_key() -> None:
 
     assert isinstance(model, OllamaModel)
     assert model.model_name == "llama3.2"
+    assert model.system == "ollama"
+    assert model.base_url == "http://localhost:11434/v1/"
+
+
+def test_ollama_provider_uses_configured_base_url() -> None:
+    provider = AIProvider(
+        ProviderName.OLLAMA,
+        SecretStr("test-key"),
+        "http://ollama.test:1234/custom",
+    )
+
+    model = provider.model("llama3.2")
+
+    assert model.base_url == "http://ollama.test:1234/custom/"
 
 
 def test_provider_does_not_expose_api_key_in_repr() -> None:
