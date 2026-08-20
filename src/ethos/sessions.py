@@ -11,8 +11,8 @@ from typing import Final
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
-from pydantic_ai.messages import ModelMessage
 
+from ethos.models import Message
 from ethos.workspaces import Workspace, WorkspaceManager
 
 SESSIONS_DIR: Final = "sessions"
@@ -27,7 +27,7 @@ class Session(BaseModel):
     workspace_name: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     archived_at: datetime | None = None
-    messages: tuple[ModelMessage, ...] = ()
+    messages: tuple[Message, ...] = ()
 
     @property
     def archived(self) -> bool:
@@ -107,7 +107,7 @@ class SessionManager:
         self,
         workspace_name: str,
         session_id: str,
-        messages: Iterable[ModelMessage],
+        messages: Iterable[Message],
     ) -> Session:
         """Atomically replace the history of an active session."""
         workspace = self.workspaces.get(workspace_name)

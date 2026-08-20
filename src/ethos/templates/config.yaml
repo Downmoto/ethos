@@ -11,8 +11,8 @@ provider:
   name: null
   # Model name exposed by the selected provider.
   model_name: null
-  # OpenAI-compatible endpoint used by Ollama.
-  ollama_base_url: http://localhost:11434/v1
+  # Ollama server root used by LiteLLM.
+  ollama_base_url: http://localhost:11434
 
 keys:
   # Only the key for the selected provider is required. Ollama keys are optional.

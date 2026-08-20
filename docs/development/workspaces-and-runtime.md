@@ -74,7 +74,7 @@ Each session is an immutable Pydantic value containing:
 - a UUID;
 - its owning workspace name;
 - creation and optional archival timestamps;
-- the complete Pydantic AI model-message history.
+- the complete Ethos message history.
 
 The workspace association is permanent. Loading verifies that the requested
 workspace exists, the supplied UUID is in canonical lower-case form, the
@@ -114,8 +114,8 @@ state, not deletion.
 
 ## One runtime turn
 
-`AgentRuntime` owns one reusable Pydantic AI `Agent` and a map of
-`asyncio.Lock` values keyed by `(workspace_name, session_id)`.
+`AgentRuntime` owns a model factory and a map of `asyncio.Lock` values keyed by
+`(workspace_name, session_id)`.
 
 For each turn it:
 
@@ -123,16 +123,16 @@ For each turn it:
 2. reloads the session from disk;
 3. rejects an archived session;
 4. loads the application settings and constructs the selected model;
-5. starts Pydantic AI with stored message history and the session UUID as the
-   provider conversation ID;
-6. converts cumulative streamed text into non-overlapping text chunks;
-7. yields chunks with copied usage snapshots;
-8. replaces the stored history with `result.all_messages()`;
-9. yields a final event with `done=True`.
+5. appends one user text message to the stored history in memory;
+6. streams that Ethos request through the selected LiteLLM-backed model;
+7. yields non-overlapping text deltas;
+8. validates the terminal response against the streamed text;
+9. atomically persists the user and assistant messages;
+10. yields usage in a final event with `done=True`.
 
-The shared `Agent` does not hold the conversation history. History is supplied
-explicitly for every run, which is why sessions remain isolated even when the
-same runtime object handles several conversations.
+Models do not hold conversation history. The complete history is supplied in
+an Ethos `ModelRequest` for every run, which keeps sessions isolated even when
+the same runtime object handles several conversations.
 
 ### Concurrency guarantee
 

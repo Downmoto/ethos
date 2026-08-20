@@ -10,7 +10,6 @@ requires-python = ">=3.12, <3.14"
 dependencies = [
     "click>=8.4.1",
     "pydantic>=2.13.4",
-    "pydantic-ai-slim[google,openai]>=2.0.0",
     "pydantic-settings>=2.14.1",
     "pyyaml>=6.0.3",
     "pyturso>=0.6.1",

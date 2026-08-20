@@ -78,6 +78,7 @@ def test_settings_allow_ollama_without_api_key() -> None:
     )
 
     assert settings.keys.ollama_api_key is None
+    assert settings.provider.ollama_base_url == "http://localhost:11434"
 
 
 def test_settings_validate_gateway_bind() -> None:

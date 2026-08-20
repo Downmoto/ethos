@@ -4,12 +4,12 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from pydantic_ai.messages import ModelRequest, UserPromptPart
 
 from ethos.events.types import EventType
 from ethos.home import initialise_home
+from ethos.models import Message, Role, TextPart
 from ethos.runtime import AgentRuntime, PromptStreamEvent
-from ethos.service import Ethos, RequestContext
+from ethos.service import Ethos, HistoryMessage, RequestContext
 from ethos.sessions import Session
 
 
@@ -39,6 +39,42 @@ def test_service_shares_workspace_and_session_behaviour(tmp_path: Path) -> None:
                 "health", session.id, context()
             )
             assert archived.archived
+
+    asyncio.run(exercise())
+
+
+def test_service_projects_ethos_messages_into_history(tmp_path: Path) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+
+    async def exercise() -> None:
+        with Ethos(home) as ethos:
+            session = await ethos.create_session("default", context())
+            ethos.sessions.replace_messages(
+                "default",
+                session.id,
+                (
+                    Message(
+                        role=Role.USER,
+                        parts=(
+                            TextPart(text="first"),
+                            TextPart(text="second"),
+                        ),
+                    ),
+                    Message(
+                        role=Role.ASSISTANT,
+                        parts=(TextPart(text="answer"),),
+                    ),
+                ),
+            )
+
+            history = await ethos.session_history(
+                "default", session.id, context()
+            )
+
+            assert history == (
+                HistoryMessage(role="user", text="first\nsecond"),
+                HistoryMessage(role="assistant", text="answer"),
+            )
 
     asyncio.run(exercise())
 
@@ -106,7 +142,12 @@ def test_service_emits_chat_event_after_persistence(
                     ethos.sessions.replace_messages(
                         workspace,
                         session_id,
-                        (ModelRequest(parts=[UserPromptPart(content=prompt)]),),
+                        (
+                            Message(
+                                role=Role.USER,
+                                parts=(TextPart(text=prompt),),
+                            ),
+                        ),
                     )
                     yield PromptStreamEvent(done=True)
 

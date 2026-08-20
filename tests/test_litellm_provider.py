@@ -302,12 +302,11 @@ def test_litellm_model_wraps_provider_error_without_secret() -> None:
 def test_litellm_model_streams_text_and_completes_once() -> None:
     calls: list[dict[str, object]] = []
     chunks = stream(
-        chunk("h"),
-        chunk(""),
-        chunk("ello"),
-        chunk(finish_reason="stop"),
+        chunk("h", response_id="first-id"),
+        chunk("", response_id="second-id"),
+        chunk("ello", response_id="third-id"),
+        chunk(finish_reason="stop", response_id="fourth-id"),
         chunk(
-            choices=0,
             usage={
                 "prompt_tokens": 4,
                 "completion_tokens": 2,
@@ -339,6 +338,7 @@ def test_litellm_model_streams_text_and_completes_once() -> None:
     assert isinstance(completed, ResponseCompleted)
     assert completed.response.parts == (TextPart(text="hello"),)
     assert completed.response.usage == Usage(input_tokens=4, output_tokens=2)
+    assert completed.response.provider_response_id == "first-id"
     assert calls == [
         {
             "model": "openai/model",
@@ -356,7 +356,6 @@ def test_litellm_model_streams_text_and_completes_once() -> None:
         stream(chunk("text")),
         stream(chunk("text", finish_reason="stop"), chunk("late")),
         stream(chunk("text", choices=2, finish_reason="stop")),
-        stream(chunk("text", response_id="one"), chunk("x", response_id="two")),
         stream(chunk("", finish_reason="stop")),
         stream(
             chunk(

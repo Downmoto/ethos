@@ -1,9 +1,10 @@
+import json
 from pathlib import Path
 from stat import S_IMODE
 
 import pytest
-from pydantic_ai.messages import ModelRequest, UserPromptPart
 
+from ethos.models import Message, Role, TextPart
 from ethos.sessions import SessionManager
 from ethos.workspaces import WorkspaceManager
 
@@ -15,7 +16,7 @@ def test_sessions_survive_manager_restarts(tmp_path: Path) -> None:
     workspaces.create("my-project")
     manager = SessionManager(workspaces, sessions_root)
     session = manager.create("my-project")
-    messages = (ModelRequest(parts=[UserPromptPart(content="hello")]),)
+    messages = (Message(role=Role.USER, parts=(TextPart(text="hello"),)),)
     manager.replace_messages("my-project", str(session.id), messages)
 
     restarted = SessionManager(WorkspaceManager(workspace_root), sessions_root)
@@ -26,6 +27,12 @@ def test_sessions_survive_manager_restarts(tmp_path: Path) -> None:
     assert restarted.list("my-project") == (loaded,)
     session_path = sessions_root / "my-project" / f"{session.id}.json"
     assert S_IMODE(session_path.stat().st_mode) == 0o600
+    assert json.loads(session_path.read_text())["messages"] == [
+        {
+            "role": "user",
+            "parts": [{"kind": "text", "text": "hello"}],
+        }
+    ]
     assert not (workspaces.get("my-project").path / ".ethos_workspace").exists()
 
 

@@ -8,13 +8,6 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 from pydantic import SecretStr
-from pydantic_ai.models import Model
-from pydantic_ai.models.google import GoogleModel
-from pydantic_ai.models.ollama import OllamaModel
-from pydantic_ai.models.openai import OpenAIResponsesModel
-from pydantic_ai.providers.google import GoogleProvider
-from pydantic_ai.providers.ollama import OllamaProvider
-from pydantic_ai.providers.openai import OpenAIProvider
 
 # ponytail: Ethos does not use LiteLLM pricing, so keep imports offline.
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
@@ -28,6 +21,7 @@ from litellm import (
 from ethos.models import (  # noqa: E402
     FinishReason,
     Message,
+    Model,
     ModelEvent,
     ModelRequest,
     ModelResponse,
@@ -58,11 +52,11 @@ class ProviderName(StrEnum):
 
 @dataclass(frozen=True)
 class AIProvider:
-    """Create Pydantic AI models using one provider credential."""
+    """Create Ethos models using one provider credential."""
 
     name: ProviderName
     api_key: SecretStr | None
-    ollama_base_url: str = "http://localhost:11434/v1"
+    ollama_base_url: str = "http://localhost:11434"
 
     @classmethod
     def from_settings(cls, settings: "EthosSettings") -> "AIProvider":
@@ -79,35 +73,7 @@ class AIProvider:
         )
 
     def model(self, model_name: str) -> Model:
-        match self.name:
-            case ProviderName.OPENAI:
-                assert self.api_key is not None
-                return OpenAIResponsesModel(
-                    model_name,
-                    provider=OpenAIProvider(
-                        api_key=self.api_key.get_secret_value()
-                    ),
-                )
-            case ProviderName.GOOGLE:
-                assert self.api_key is not None
-                return GoogleModel(
-                    model_name,
-                    provider=GoogleProvider(
-                        api_key=self.api_key.get_secret_value()
-                    ),
-                )
-            case ProviderName.OLLAMA:
-                return OllamaModel(
-                    model_name,
-                    provider=OllamaProvider(
-                        base_url=self.ollama_base_url,
-                        api_key=(
-                            self.api_key.get_secret_value()
-                            if self.api_key
-                            else None
-                        ),
-                    ),
-                )
+        return LiteLLMModel(self, model_name)
 
 
 class ModelProviderError(RuntimeError):
@@ -170,9 +136,21 @@ class LiteLLMModel:
                         )
                     continue
                 if finished:
-                    raise ModelProtocolError(
-                        "provider streamed after completion"
-                    )
+                    if chunk_usage is None or len(value.choices) != 1:
+                        raise ModelProtocolError(
+                            "provider streamed after completion"
+                        )
+                    final_choice = value.choices[0]
+                    _validate_delta(final_choice.delta)
+                    if (
+                        final_choice.index != 0
+                        or final_choice.delta.content
+                        or final_choice.finish_reason is not None
+                    ):
+                        raise ModelProtocolError(
+                            "provider streamed after completion"
+                        )
+                    continue
                 if len(value.choices) != 1:
                     raise ModelProtocolError(
                         "provider returned multiple choices"
@@ -186,8 +164,6 @@ class LiteLLMModel:
                 _validate_delta(delta)
                 if response_id is None:
                     response_id = value.id
-                elif response_id != value.id:
-                    raise ModelProtocolError("provider changed response ID")
                 content = cast(object, delta.content)
                 if content is not None and not isinstance(content, str):
                     raise ModelProtocolError(

@@ -30,7 +30,7 @@ class ProviderConfig(BaseModel):
 
     name: ProviderName
     model_name: str
-    ollama_base_url: str = "http://localhost:11434/v1"
+    ollama_base_url: str = "http://localhost:11434"
 
 
 class KeysConfig(BaseModel):

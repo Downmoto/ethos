@@ -6,18 +6,13 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
-from pydantic_ai.messages import (
-    ModelRequest,
-    TextContent,
-    TextPart,
-    UserPromptPart,
-)
 
 from ethos.events import create_event_emitter, event_factory
 from ethos.events.emitters import EnvelopeEventEmitter
 from ethos.events.models import EventPayload
 from ethos.events.types import EventType
 from ethos.home import DB_PATH
+from ethos.models import Role, TextPart
 from ethos.runtime import AgentRuntime
 from ethos.sessions import SESSIONS_DIR, Session, SessionManager
 from ethos.storage import Storage
@@ -333,29 +328,14 @@ async def _emit(
 def _history(session: Session) -> tuple[HistoryMessage, ...]:
     messages: list[HistoryMessage] = []
     for message in session.messages:
-        role: Literal["user", "assistant"]
-        parts: list[str]
-        if isinstance(message, ModelRequest):
-            role = "user"
-            parts = []
-            for part in message.parts:
-                if not isinstance(part, UserPromptPart):
-                    continue
-                if isinstance(part.content, str):
-                    parts.append(part.content)
-                else:
-                    parts.extend(
-                        item if isinstance(item, str) else item.content
-                        for item in part.content
-                        if isinstance(item, (str, TextContent))
-                    )
-        else:
-            role = "assistant"
-            parts = [
-                part.content
-                for part in message.parts
-                if isinstance(part, TextPart)
-            ]
+        if message.role not in (Role.USER, Role.ASSISTANT):
+            continue
+        role: Literal["user", "assistant"] = (
+            "user" if message.role is Role.USER else "assistant"
+        )
+        parts = [
+            part.text for part in message.parts if isinstance(part, TextPart)
+        ]
         if parts:
             messages.append(HistoryMessage(role=role, text="\n".join(parts)))
     return tuple(messages)

@@ -5,7 +5,7 @@ A personal AI brain with one replaceable REST body protocol.
 ## Stack
 
 - Python managed by `uv`
-- Pydantic AI for agent runtime primitives and model/tool adapters
+- Ethos-owned agent loop with LiteLLM as the model-provider adapter
 - Click for the CLI
 - Pydantic Settings and YAML for configuration
 - Ruff, mypy, pyright, and pytest for quality checks

@@ -44,7 +44,7 @@ def configure_credentials(config: Config) -> None:
         provider_config["ollama_base_url"] = click.prompt(
             "Ollama base URL",
             default=provider_config.get(
-                "ollama_base_url", "http://localhost:11434/v1"
+                "ollama_base_url", "http://localhost:11434"
             ),
         )
         api_key = click.prompt(
