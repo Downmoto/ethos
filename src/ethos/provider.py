@@ -198,7 +198,12 @@ class LiteLLMModel:
     ) -> dict[str, object]:
         if request.tools:
             raise ModelProtocolError("text model does not support tools")
-        model = f"{_provider_prefix(self.provider.name)}/{self.model_name}"
+        prefix = (
+            "gemini"
+            if self.provider.name is ProviderName.GOOGLE
+            else self.provider.name.value
+        )
+        model = f"{prefix}/{self.model_name}"
         kwargs: dict[str, object] = {
             "model": model,
             "messages": [_message(message) for message in request.messages],
@@ -211,14 +216,6 @@ class LiteLLMModel:
         if self.provider.name is ProviderName.OLLAMA:
             kwargs["base_url"] = self.provider.ollama_base_url
         return kwargs
-
-
-def _provider_prefix(provider: ProviderName) -> str:
-    return {
-        ProviderName.OPENAI: "openai",
-        ProviderName.GOOGLE: "gemini",
-        ProviderName.OLLAMA: "ollama",
-    }[provider]
 
 
 def _message(message: Message) -> dict[str, str]:
