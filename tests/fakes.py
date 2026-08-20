@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator, Sequence
 
 from ethos.models import (
     ModelEvent,
+    ModelFeatures,
     ModelRequest,
     ModelResponse,
     ResponseCompleted,
@@ -21,7 +22,9 @@ class FakeModel:
         outcomes: Sequence[ModelResponse | Exception],
         *,
         stream_chunks: Sequence[tuple[str, ...]] | None = None,
+        features: ModelFeatures | None = None,
     ) -> None:
+        self.features = features or ModelFeatures(tools=False)
         chunks = (
             stream_chunks
             if stream_chunks is not None

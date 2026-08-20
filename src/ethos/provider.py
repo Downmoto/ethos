@@ -23,12 +23,16 @@ from ethos.models import (  # noqa: E402
     Message,
     Model,
     ModelEvent,
+    ModelFeatures,
     ModelRequest,
     ModelResponse,
     ResponseCompleted,
     Role,
     TextDelta,
     TextPart,
+    ToolCallPart,
+    ToolDefinition,
+    ToolResultPart,
     Usage,
 )
 
@@ -73,7 +77,11 @@ class AIProvider:
         )
 
     def model(self, model_name: str) -> Model:
-        return LiteLLMModel(self, model_name)
+        return LiteLLMModel(
+            self,
+            model_name,
+            features=ModelFeatures(tools=True),
+        )
 
 
 class ModelProviderError(RuntimeError):
@@ -82,6 +90,19 @@ class ModelProviderError(RuntimeError):
 
 class ModelProtocolError(RuntimeError):
     """A provider returned data outside the Ethos model contract."""
+
+
+@dataclass
+class _TextAssembly:
+    chunks: list[str] = dataclass_field(default_factory=lambda: list[str]())
+
+
+@dataclass
+class _ToolCallAssembly:
+    index: int
+    call_id: str | None = None
+    name: str | None = None
+    arguments: list[str] = dataclass_field(default_factory=lambda: list[str]())
 
 
 @dataclass(frozen=True)
@@ -95,6 +116,7 @@ class LiteLLMModel:
         repr=False,
         compare=False,
     )
+    features: ModelFeatures = ModelFeatures(tools=True)
 
     async def request(self, request: ModelRequest) -> ModelResponse:
         kwargs = self._kwargs(request, stream=False)
@@ -115,7 +137,8 @@ class LiteLLMModel:
         if not isinstance(result, AsyncIterable):
             raise ModelProtocolError("provider returned an invalid stream")
 
-        text = ""
+        order: list[_TextAssembly | _ToolCallAssembly] = []
+        tool_calls: dict[int, _ToolCallAssembly] = {}
         usage = Usage()
         finish_reason: FinishReason | None = None
         response_id: str | None = None
@@ -145,6 +168,7 @@ class LiteLLMModel:
                     if (
                         final_choice.index != 0
                         or final_choice.delta.content
+                        or final_choice.delta.tool_calls
                         or final_choice.finish_reason is not None
                     ):
                         raise ModelProtocolError(
@@ -170,8 +194,12 @@ class LiteLLMModel:
                         "provider returned unsupported content"
                     )
                 if content:
-                    text += content
+                    if order and isinstance(order[-1], _TextAssembly):
+                        order[-1].chunks.append(content)
+                    else:
+                        order.append(_TextAssembly(chunks=[content]))
                     yield TextDelta(text=content)
+                _add_tool_call_deltas(delta, tool_calls, order)
                 if choice.finish_reason is not None:
                     finish_reason = _finish_reason(choice.finish_reason)
                     finished = True
@@ -182,11 +210,10 @@ class LiteLLMModel:
 
         if not finished or finish_reason is None:
             raise ModelProtocolError("provider stream ended before completion")
-        if not text:
-            raise ModelProtocolError("provider returned empty text")
+        parts = _finalise_stream_parts(order)
         yield ResponseCompleted(
             response=ModelResponse(
-                parts=(TextPart(text=text),),
+                parts=parts,
                 usage=usage,
                 finish_reason=finish_reason,
                 provider_response_id=response_id,
@@ -196,8 +223,8 @@ class LiteLLMModel:
     def _kwargs(
         self, request: ModelRequest, *, stream: bool
     ) -> dict[str, object]:
-        if request.tools:
-            raise ModelProtocolError("text model does not support tools")
+        if request.tools and not self.features.tools:
+            raise ModelProtocolError("model does not support tools")
         prefix = (
             "gemini"
             if self.provider.name is ProviderName.GOOGLE
@@ -209,6 +236,8 @@ class LiteLLMModel:
             "messages": [_message(message) for message in request.messages],
             "stream": stream,
         }
+        if request.tools:
+            kwargs["tools"] = [_tool(tool) for tool in request.tools]
         if stream:
             kwargs["stream_options"] = {"include_usage": True}
         if self.provider.api_key is not None:
@@ -218,21 +247,52 @@ class LiteLLMModel:
         return kwargs
 
 
-def _message(message: Message) -> dict[str, str]:
+def _message(message: Message) -> dict[str, object]:
     if message.role is Role.TOOL:
-        raise ModelProtocolError(
-            "text model received unsupported message parts"
-        )
+        part = message.parts[0]
+        if not isinstance(part, ToolResultPart):
+            raise ModelProtocolError("model received invalid tool result")
+        return {
+            "role": "tool",
+            "tool_call_id": part.call_id,
+            "name": part.name,
+            "content": part.content,
+        }
     text: list[str] = []
+    tool_calls: list[dict[str, object]] = []
     for part in message.parts:
-        if not isinstance(part, TextPart):
-            raise ModelProtocolError(
-                "text model received unsupported message parts"
+        if isinstance(part, TextPart):
+            text.append(part.text)
+        elif isinstance(part, ToolCallPart) and message.role is Role.ASSISTANT:
+            tool_calls.append(
+                {
+                    "id": part.call_id,
+                    "type": "function",
+                    "function": {
+                        "name": part.name,
+                        "arguments": part.arguments_json,
+                    },
+                }
             )
-        text.append(part.text)
-    return {
+        else:
+            raise ModelProtocolError("model received unsupported message parts")
+    result: dict[str, object] = {
         "role": message.role.value,
         "content": "".join(text),
+    }
+    if tool_calls:
+        result["tool_calls"] = tool_calls
+    return result
+
+
+def _tool(tool: ToolDefinition) -> dict[str, object]:
+    return {
+        "type": "function",
+        "function": {
+            "name": tool.name,
+            "description": tool.description,
+            "parameters": tool.parameters,
+        },
     }
 
 
@@ -246,8 +306,15 @@ def _response(value: LiteLLMResponse) -> ModelResponse:
     if message.role != "assistant":
         raise ModelProtocolError("provider returned an invalid role")
     _validate_content(message)
-    if not isinstance(message.content, str) or not message.content:
-        raise ModelProtocolError("provider returned empty text")
+    parts: list[TextPart | ToolCallPart] = []
+    content = cast(object, message.content)
+    if content is not None and not isinstance(content, str):
+        raise ModelProtocolError("provider returned unsupported content")
+    if content:
+        parts.append(TextPart(text=content))
+    parts.extend(_tool_calls(message))
+    if not parts:
+        raise ModelProtocolError("provider returned an empty response")
     finish_reason = cast(object, choice.finish_reason)
     if not isinstance(finish_reason, str):
         raise ModelProtocolError("provider omitted finish reason")
@@ -260,7 +327,7 @@ def _response(value: LiteLLMResponse) -> ModelResponse:
             finish_reason = native_finish_reason
     usage = _usage(getattr(value, "usage", None)) or Usage()
     return ModelResponse(
-        parts=(TextPart(text=message.content),),
+        parts=tuple(parts),
         usage=usage,
         finish_reason=_finish_reason(finish_reason),
         provider_response_id=value.id,
@@ -269,7 +336,6 @@ def _response(value: LiteLLMResponse) -> ModelResponse:
 
 def _validate_content(value: object) -> None:
     unsupported = (
-        "tool_calls",
         "function_call",
         "audio",
         "images",
@@ -280,6 +346,130 @@ def _validate_content(value: object) -> None:
     )
     if any(getattr(value, name, None) for name in unsupported):
         raise ModelProtocolError("provider returned unsupported content")
+
+
+def _tool_calls(value: object) -> tuple[ToolCallPart, ...]:
+    calls = getattr(value, "tool_calls", None)
+    if calls is None:
+        return ()
+    if not isinstance(calls, list):
+        raise ModelProtocolError("provider returned invalid tool calls")
+    parts: list[ToolCallPart] = []
+    call_ids: set[str] = set()
+    for call in cast(list[object], calls):
+        call_id = getattr(call, "id", None)
+        call_type = getattr(call, "type", None)
+        function = getattr(call, "function", None)
+        name = getattr(function, "name", None)
+        arguments = getattr(function, "arguments", None)
+        if (
+            not isinstance(call_id, str)
+            or not call_id
+            or call_type != "function"
+            or not isinstance(name, str)
+            or not isinstance(arguments, str)
+            or call_id in call_ids
+        ):
+            raise ModelProtocolError("provider returned invalid tool calls")
+        try:
+            part = ToolCallPart(
+                call_id=call_id,
+                name=name,
+                arguments_json=arguments,
+            )
+        except ValueError as error:
+            raise ModelProtocolError(
+                "provider returned invalid tool calls"
+            ) from error
+        call_ids.add(call_id)
+        parts.append(part)
+    return tuple(parts)
+
+
+def _add_tool_call_deltas(
+    value: object,
+    calls: dict[int, _ToolCallAssembly],
+    order: list[_TextAssembly | _ToolCallAssembly],
+) -> None:
+    fragments = getattr(value, "tool_calls", None)
+    if fragments is None:
+        return
+    if not isinstance(fragments, list):
+        raise ModelProtocolError("provider returned invalid tool calls")
+    for fragment in cast(list[object], fragments):
+        index = getattr(fragment, "index", None)
+        call_type = getattr(fragment, "type", None)
+        if (
+            not isinstance(index, int)
+            or index < 0
+            or call_type not in (None, "function")
+        ):
+            raise ModelProtocolError("provider returned invalid tool calls")
+        call = calls.get(index)
+        if call is None:
+            call = _ToolCallAssembly(index=index)
+            calls[index] = call
+            order.append(call)
+
+        call_id = getattr(fragment, "id", None)
+        if call_id is not None:
+            if (
+                not isinstance(call_id, str)
+                or not call_id
+                or call.call_id not in (None, call_id)
+            ):
+                raise ModelProtocolError("provider changed tool call ID")
+            call.call_id = call_id
+
+        function = getattr(fragment, "function", None)
+        if function is None:
+            continue
+        name = getattr(function, "name", None)
+        if name is not None:
+            if (
+                not isinstance(name, str)
+                or not name
+                or call.name not in (None, name)
+            ):
+                raise ModelProtocolError("provider changed tool call name")
+            call.name = name
+        arguments = getattr(function, "arguments", None)
+        if arguments is not None:
+            if not isinstance(arguments, str):
+                raise ModelProtocolError(
+                    "provider returned invalid tool arguments"
+                )
+            call.arguments.append(arguments)
+
+
+def _finalise_stream_parts(
+    order: list[_TextAssembly | _ToolCallAssembly],
+) -> tuple[TextPart | ToolCallPart, ...]:
+    parts: list[TextPart | ToolCallPart] = []
+    call_ids: set[str] = set()
+    for item in order:
+        if isinstance(item, _TextAssembly):
+            parts.append(TextPart(text="".join(item.chunks)))
+            continue
+        if item.call_id is None or item.name is None:
+            raise ModelProtocolError("provider omitted tool call fields")
+        if item.call_id in call_ids:
+            raise ModelProtocolError("provider duplicated tool call ID")
+        try:
+            part = ToolCallPart(
+                call_id=item.call_id,
+                name=item.name,
+                arguments_json="".join(item.arguments),
+            )
+        except ValueError as error:
+            raise ModelProtocolError(
+                "provider returned invalid tool calls"
+            ) from error
+        call_ids.add(item.call_id)
+        parts.append(part)
+    if not parts:
+        raise ModelProtocolError("provider returned an empty response")
+    return tuple(parts)
 
 
 def _validate_delta(value: object) -> None:

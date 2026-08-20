@@ -10,12 +10,14 @@ from ethos.models import (
     FinishReason,
     Message,
     ModelEvent,
+    ModelFeatures,
     ModelRequest,
     ModelResponse,
     ResponseCompleted,
     Role,
     TextDelta,
     TextPart,
+    ToolCallPart,
     Usage,
 )
 from ethos.provider import AIProvider, ModelProtocolError
@@ -28,6 +30,8 @@ type StreamFunction = Callable[[ModelRequest], AsyncIterator[ModelEvent]]
 
 
 class StreamModel:
+    features = ModelFeatures(tools=False)
+
     def __init__(self, stream: StreamFunction) -> None:
         self._stream = stream
         self.requests: list[ModelRequest] = []
@@ -312,6 +316,34 @@ def test_runtime_rejects_malformed_stream_without_completing(
 
     assert events == [PromptStreamEvent(text="partial")]
     assert not any(event.done for event in events)
+    assert sessions.get("my-project", str(session.id)).messages == ()
+
+
+def test_runtime_remains_text_only_without_tool_registry(
+    tmp_path: Path,
+) -> None:
+    tool_response = ModelResponse(
+        parts=(
+            ToolCallPart(
+                call_id="call-1",
+                name="read_file",
+                arguments_json="{}",
+            ),
+        ),
+        finish_reason=FinishReason.TOOL_CALL,
+    )
+    model = FakeModel([tool_response], stream_chunks=[()])
+    sessions, session, runtime = setup_runtime(tmp_path, model)
+    events: list[PromptStreamEvent] = []
+
+    async def consume() -> None:
+        async for event in runtime.run("hello", "my-project", str(session.id)):
+            events.append(event)
+
+    with pytest.raises(ModelProtocolError, match="unsupported parts"):
+        asyncio.run(consume())
+
+    assert events == []
     assert sessions.get("my-project", str(session.id)).messages == ()
 
 

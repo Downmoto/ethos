@@ -95,6 +95,10 @@ class ModelRequest(_ModelValue):
     tools: tuple[ToolDefinition, ...] = ()
 
 
+class ModelFeatures(_ModelValue):
+    tools: bool
+
+
 class Usage(_ModelValue):
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
@@ -139,6 +143,9 @@ type ModelEvent = Annotated[
 
 
 class Model(Protocol):
+    @property
+    def features(self) -> ModelFeatures: ...
+
     async def request(self, request: ModelRequest) -> ModelResponse: ...
 
     def stream(self, request: ModelRequest) -> AsyncIterator[ModelEvent]: ...

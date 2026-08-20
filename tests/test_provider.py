@@ -12,6 +12,7 @@ def test_provider_creates_litellm_model() -> None:
     assert isinstance(model, LiteLLMModel)
     assert model.provider is provider
     assert model.model_name == "gpt-5-mini"
+    assert model.features.tools
 
 
 def test_ollama_provider_uses_server_root_by_default() -> None:

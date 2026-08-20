@@ -15,13 +15,16 @@ from ethos.models import (  # noqa: E402
     FinishReason,
     Message,
     ModelEvent,
+    ModelFeatures,
     ModelRequest,
     ModelResponse,
     ResponseCompleted,
     Role,
     TextDelta,
     TextPart,
+    ToolCallPart,
     ToolDefinition,
+    ToolResultPart,
     Usage,
 )
 from ethos.provider import (  # noqa: E402
@@ -99,6 +102,26 @@ def chunk(
     )
 
 
+def tool_call_delta(
+    index: int,
+    *,
+    call_id: str | None = None,
+    name: str | None = None,
+    arguments: str | None = None,
+) -> dict[str, object]:
+    delta: dict[str, object] = {"index": index, "type": "function"}
+    if call_id is not None:
+        delta["id"] = call_id
+    function: dict[str, str] = {}
+    if name is not None:
+        function["name"] = name
+    if arguments is not None:
+        function["arguments"] = arguments
+    if function:
+        delta["function"] = function
+    return delta
+
+
 def stream(*chunks: object) -> AsyncIterator[object]:
     async def iterate() -> AsyncIterator[object]:
         for item in chunks:
@@ -161,6 +184,128 @@ def test_litellm_model_sends_exact_provider_request(
     ]
 
 
+@pytest.mark.parametrize("tool_count", [1, 2])
+def test_litellm_model_sends_tool_definitions(tool_count: int) -> None:
+    calls: list[dict[str, object]] = []
+
+    async def completion(**kwargs: object) -> object:
+        calls.append(kwargs)
+        return response()
+
+    tools = tuple(
+        ToolDefinition(
+            name=f"tool_{index}",
+            description=f"Tool {index}",
+            parameters={
+                "type": "object",
+                "properties": {"value": {"type": "integer"}},
+            },
+        )
+        for index in range(tool_count)
+    )
+    model = LiteLLMModel(
+        AIProvider(ProviderName.OPENAI, SecretStr("key")),
+        "model",
+        completion,
+    )
+
+    asyncio.run(model.request(ModelRequest(messages=(), tools=tools)))
+
+    assert calls[0]["tools"] == [
+        {
+            "type": "function",
+            "function": {
+                "name": f"tool_{index}",
+                "description": f"Tool {index}",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"value": {"type": "integer"}},
+                },
+            },
+        }
+        for index in range(tool_count)
+    ]
+
+
+def test_litellm_model_sends_tool_calls_and_results() -> None:
+    calls: list[dict[str, object]] = []
+
+    async def completion(**kwargs: object) -> object:
+        calls.append(kwargs)
+        return response()
+
+    messages = (
+        Message(
+            role=Role.ASSISTANT,
+            parts=(
+                TextPart(text="Checking"),
+                ToolCallPart(
+                    call_id="call-1",
+                    name="read_file",
+                    arguments_json='{"path":"README.md"}',
+                ),
+            ),
+        ),
+        Message(
+            role=Role.TOOL,
+            parts=(
+                ToolResultPart(
+                    call_id="call-1",
+                    name="read_file",
+                    content="contents",
+                ),
+            ),
+        ),
+        Message(
+            role=Role.TOOL,
+            parts=(
+                ToolResultPart(
+                    call_id="call-2",
+                    name="read_file",
+                    content="tool failed",
+                    is_error=True,
+                ),
+            ),
+        ),
+    )
+    model = LiteLLMModel(
+        AIProvider(ProviderName.OPENAI, SecretStr("key")),
+        "model",
+        completion,
+    )
+
+    asyncio.run(model.request(ModelRequest(messages=messages)))
+
+    assert calls[0]["messages"] == [
+        {
+            "role": "assistant",
+            "content": "Checking",
+            "tool_calls": [
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": '{"path":"README.md"}',
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call-1",
+            "name": "read_file",
+            "content": "contents",
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call-2",
+            "name": "read_file",
+            "content": "tool failed",
+        },
+    ]
+
+
 def test_litellm_model_converts_complete_response() -> None:
     async def completion(**_kwargs: object) -> object:
         return response(
@@ -186,6 +331,159 @@ def test_litellm_model_converts_complete_response() -> None:
     assert result.usage == Usage(input_tokens=7, output_tokens=3)
     assert result.finish_reason is FinishReason.LENGTH
     assert result.provider_response_id == "provider-id"
+
+
+@pytest.mark.parametrize(
+    ("content", "calls", "expected_parts"),
+    [
+        (
+            None,
+            [("call-1", "read_file", "{}")],
+            (
+                ToolCallPart(
+                    call_id="call-1",
+                    name="read_file",
+                    arguments_json="{}",
+                ),
+            ),
+        ),
+        (
+            "Checking",
+            [("call-1", "read_file", '{"path":"README.md"}')],
+            (
+                TextPart(text="Checking"),
+                ToolCallPart(
+                    call_id="call-1",
+                    name="read_file",
+                    arguments_json='{"path":"README.md"}',
+                ),
+            ),
+        ),
+        (
+            None,
+            [
+                ("call-1", "first_tool", "not JSON"),
+                ("call-2", "second_tool", "[]"),
+            ],
+            (
+                ToolCallPart(
+                    call_id="call-1",
+                    name="first_tool",
+                    arguments_json="not JSON",
+                ),
+                ToolCallPart(
+                    call_id="call-2",
+                    name="second_tool",
+                    arguments_json="[]",
+                ),
+            ),
+        ),
+    ],
+)
+def test_litellm_model_converts_complete_tool_calls(
+    content: str | None,
+    calls: list[tuple[str, str, str]],
+    expected_parts: tuple[TextPart | ToolCallPart, ...],
+) -> None:
+    async def completion(**_kwargs: object) -> object:
+        return response(
+            content,
+            finish_reason="tool_calls",
+            tool_calls=[
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {"name": name, "arguments": arguments},
+                }
+                for call_id, name, arguments in calls
+            ],
+        )
+
+    result = asyncio.run(
+        LiteLLMModel(
+            AIProvider(ProviderName.OPENAI, SecretStr("key")),
+            "model",
+            completion,
+        ).request(ModelRequest(messages=()))
+    )
+
+    assert result.parts == expected_parts
+    assert result.finish_reason is FinishReason.TOOL_CALL
+
+
+@pytest.mark.parametrize("arguments", ["", "not JSON", "[]"])
+def test_litellm_model_preserves_raw_tool_arguments(arguments: str) -> None:
+    async def completion(**_kwargs: object) -> object:
+        return response(
+            None,
+            finish_reason="tool_calls",
+            tool_calls=[
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": arguments,
+                    },
+                }
+            ],
+        )
+
+    result = asyncio.run(
+        LiteLLMModel(
+            AIProvider(ProviderName.OPENAI, SecretStr("key")),
+            "model",
+            completion,
+        ).request(ModelRequest(messages=()))
+    )
+
+    assert result.parts == (
+        ToolCallPart(
+            call_id="call-1",
+            name="read_file",
+            arguments_json=arguments,
+        ),
+    )
+
+
+@pytest.mark.parametrize("invalid", ["missing", "duplicate"])
+def test_litellm_model_rejects_invalid_complete_tool_call_ids(
+    invalid: str,
+) -> None:
+    provider_response = response(
+        None,
+        finish_reason="tool_calls",
+        tool_calls=[
+            {
+                "id": "call-1",
+                "type": "function",
+                "function": {"name": "first_tool", "arguments": "{}"},
+            },
+            {
+                "id": "call-2",
+                "type": "function",
+                "function": {"name": "second_tool", "arguments": "{}"},
+            },
+        ],
+    )
+    tool_calls = provider_response.choices[0].message.tool_calls
+    assert tool_calls is not None
+    if invalid == "missing":
+        tool_calls[0].id = None  # pyright: ignore[reportAttributeAccessIssue]
+    else:
+        tool_calls[1].id = "call-1"
+
+    async def completion(**_kwargs: object) -> object:
+        return provider_response
+
+    with pytest.raises(ModelProtocolError, match="invalid tool calls"):
+        asyncio.run(
+            LiteLLMModel(
+                AIProvider(ProviderName.OPENAI, SecretStr("key")),
+                "model",
+                completion,
+            ).request(ModelRequest(messages=()))
+        )
 
 
 @pytest.mark.parametrize(
@@ -223,15 +521,6 @@ def test_litellm_model_maps_finish_reasons(
         response(choices=0),
         response(choices=2),
         response(reasoning_content="reasoning"),
-        response(
-            tool_calls=[
-                {
-                    "id": "call-1",
-                    "type": "function",
-                    "function": {"name": "read_file", "arguments": "{}"},
-                }
-            ]
-        ),
         object(),
     ],
 )
@@ -251,7 +540,7 @@ def test_litellm_model_rejects_malformed_complete_responses(
         )
 
 
-def test_litellm_model_rejects_tools_before_tool_milestone() -> None:
+def test_litellm_model_rejects_tools_when_feature_is_disabled() -> None:
     called = False
 
     async def completion(**_kwargs: object) -> object:
@@ -263,6 +552,7 @@ def test_litellm_model_rejects_tools_before_tool_milestone() -> None:
         AIProvider(ProviderName.OPENAI, SecretStr("key")),
         "model",
         completion,
+        features=ModelFeatures(tools=False),
     )
     request_with_tools = ModelRequest(
         messages=(),
@@ -351,6 +641,172 @@ def test_litellm_model_streams_text_and_completes_once() -> None:
 
 
 @pytest.mark.parametrize(
+    ("chunks", "expected_deltas", "expected_parts"),
+    [
+        (
+            stream(
+                chunk(
+                    tool_calls=[
+                        tool_call_delta(
+                            0,
+                            call_id="call-1",
+                            name="read_file",
+                            arguments="{}",
+                        )
+                    ]
+                ),
+                chunk(finish_reason="tool_calls"),
+            ),
+            [],
+            (
+                ToolCallPart(
+                    call_id="call-1",
+                    name="read_file",
+                    arguments_json="{}",
+                ),
+            ),
+        ),
+        (
+            stream(
+                chunk("Checking"),
+                chunk(
+                    tool_calls=[
+                        tool_call_delta(
+                            0,
+                            call_id="call-1",
+                            name="read_file",
+                            arguments='{"path":"README.md"}',
+                        )
+                    ]
+                ),
+                chunk(finish_reason="tool_calls"),
+            ),
+            [TextDelta(text="Checking")],
+            (
+                TextPart(text="Checking"),
+                ToolCallPart(
+                    call_id="call-1",
+                    name="read_file",
+                    arguments_json='{"path":"README.md"}',
+                ),
+            ),
+        ),
+        (
+            stream(
+                chunk(
+                    tool_calls=[
+                        tool_call_delta(
+                            0,
+                            call_id="call-1",
+                            name="first_tool",
+                            arguments='{"value":',
+                        )
+                    ]
+                ),
+                chunk(
+                    tool_calls=[
+                        tool_call_delta(
+                            1,
+                            call_id="call-2",
+                            name="second_tool",
+                            arguments='{"value":',
+                        )
+                    ]
+                ),
+                chunk(tool_calls=[tool_call_delta(0, arguments="1}")]),
+                chunk(tool_calls=[tool_call_delta(1, arguments="2}")]),
+                chunk(finish_reason="tool_calls"),
+            ),
+            [],
+            (
+                ToolCallPart(
+                    call_id="call-1",
+                    name="first_tool",
+                    arguments_json='{"value":1}',
+                ),
+                ToolCallPart(
+                    call_id="call-2",
+                    name="second_tool",
+                    arguments_json='{"value":2}',
+                ),
+            ),
+        ),
+    ],
+)
+def test_litellm_model_assembles_streamed_tool_calls(
+    chunks: AsyncIterator[object],
+    expected_deltas: list[TextDelta],
+    expected_parts: tuple[TextPart | ToolCallPart, ...],
+) -> None:
+    async def completion(**_kwargs: object) -> object:
+        return chunks
+
+    model = LiteLLMModel(
+        AIProvider(ProviderName.OPENAI, SecretStr("key")),
+        "model",
+        completion,
+    )
+
+    async def collect() -> list[ModelEvent]:
+        return [
+            event async for event in model.stream(ModelRequest(messages=()))
+        ]
+
+    events = asyncio.run(collect())
+
+    assert events[:-1] == expected_deltas
+    completed = events[-1]
+    assert isinstance(completed, ResponseCompleted)
+    assert completed.response.parts == expected_parts
+    assert completed.response.finish_reason is FinishReason.TOOL_CALL
+
+
+@pytest.mark.parametrize("arguments", ["", "not JSON", "[]"])
+def test_litellm_model_preserves_streamed_raw_tool_arguments(
+    arguments: str,
+) -> None:
+    chunks = stream(
+        chunk(
+            tool_calls=[
+                tool_call_delta(
+                    0,
+                    call_id="call-1",
+                    name="read_file",
+                    arguments=arguments,
+                )
+            ]
+        ),
+        chunk(finish_reason="tool_calls"),
+    )
+
+    async def completion(**_kwargs: object) -> object:
+        return chunks
+
+    model = LiteLLMModel(
+        AIProvider(ProviderName.OPENAI, SecretStr("key")),
+        "model",
+        completion,
+    )
+
+    async def collect() -> list[ModelEvent]:
+        return [
+            event async for event in model.stream(ModelRequest(messages=()))
+        ]
+
+    events = asyncio.run(collect())
+
+    completed = events[-1]
+    assert isinstance(completed, ResponseCompleted)
+    assert completed.response.parts == (
+        ToolCallPart(
+            call_id="call-1",
+            name="read_file",
+            arguments_json=arguments,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
     "chunks",
     [
         stream(chunk("text")),
@@ -359,18 +815,50 @@ def test_litellm_model_streams_text_and_completes_once() -> None:
         stream(chunk("", finish_reason="stop")),
         stream(
             chunk(
-                "text",
                 tool_calls=[
-                    {
-                        "index": 0,
-                        "id": "call-1",
-                        "function": {
-                            "name": "read_file",
-                            "arguments": "{}",
-                        },
-                    }
+                    tool_call_delta(0, name="read_file", arguments="{}")
                 ],
-            )
+            ),
+            chunk(finish_reason="tool_calls"),
+        ),
+        stream(
+            chunk(
+                tool_calls=[
+                    tool_call_delta(
+                        0,
+                        call_id="duplicate",
+                        name="first_tool",
+                        arguments="{}",
+                    ),
+                    tool_call_delta(
+                        1,
+                        call_id="duplicate",
+                        name="second_tool",
+                        arguments="{}",
+                    ),
+                ]
+            ),
+            chunk(finish_reason="tool_calls"),
+        ),
+        stream(
+            chunk(
+                tool_calls=[
+                    tool_call_delta(
+                        0,
+                        call_id="call-1",
+                        name="read_file",
+                    )
+                ]
+            ),
+            chunk(
+                tool_calls=[
+                    tool_call_delta(
+                        0,
+                        call_id="call-2",
+                        arguments="{}",
+                    )
+                ]
+            ),
         ),
         stream(object()),
         response(),
