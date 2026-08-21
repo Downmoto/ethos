@@ -149,8 +149,11 @@ def stream(*chunks: object) -> AsyncIterator[object]:
                 None,
                 "http://ollama.test:11434",
             ),
-            "ollama/test-model",
-            {"base_url": "http://ollama.test:11434"},
+            "ollama_chat/test-model",
+            {
+                "base_url": "http://ollama.test:11434",
+                "reasoning_effort": "none",
+            },
         ),
     ],
 )
@@ -728,6 +731,29 @@ def test_litellm_model_streams_text_and_completes_once() -> None:
                     call_id="call-2",
                     name="second_tool",
                     arguments_json='{"value":2}',
+                ),
+            ),
+        ),
+        (
+            stream(
+                chunk(
+                    tool_calls=[
+                        tool_call_delta(
+                            0,
+                            call_id="call-1",
+                            name="read_file",
+                            arguments="{}",
+                        )
+                    ]
+                ),
+                chunk(finish_reason="stop"),
+            ),
+            [],
+            (
+                ToolCallPart(
+                    call_id="call-1",
+                    name="read_file",
+                    arguments_json="{}",
                 ),
             ),
         ),

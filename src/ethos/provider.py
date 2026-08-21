@@ -211,6 +211,10 @@ class LiteLLMModel:
         if not finished or finish_reason is None:
             raise ModelProtocolError("provider stream ended before completion")
         parts = _finalise_stream_parts(order)
+        if finish_reason is FinishReason.STOP and any(
+            isinstance(part, ToolCallPart) for part in parts
+        ):
+            finish_reason = FinishReason.TOOL_CALL
         yield ResponseCompleted(
             response=ModelResponse(
                 parts=parts,
@@ -225,11 +229,10 @@ class LiteLLMModel:
     ) -> dict[str, object]:
         if request.tools and not self.features.tools:
             raise ModelProtocolError("model does not support tools")
-        prefix = (
-            "gemini"
-            if self.provider.name is ProviderName.GOOGLE
-            else self.provider.name.value
-        )
+        prefix = {
+            ProviderName.GOOGLE: "gemini",
+            ProviderName.OLLAMA: "ollama_chat",
+        }.get(self.provider.name, self.provider.name.value)
         model = f"{prefix}/{self.model_name}"
         kwargs: dict[str, object] = {
             "model": model,
@@ -244,6 +247,7 @@ class LiteLLMModel:
             kwargs["api_key"] = self.provider.api_key.get_secret_value()
         if self.provider.name is ProviderName.OLLAMA:
             kwargs["base_url"] = self.provider.ollama_base_url
+            kwargs["reasoning_effort"] = "none"
         return kwargs
 
 
