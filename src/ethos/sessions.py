@@ -61,7 +61,11 @@ class SessionManager:
     def runtime_lock(
         self, workspace_name: str, session_id: str
     ) -> Generator[None]:
-        """Exclusively own one session runtime across processes."""
+        """Exclusively own one session runtime across processes.
+
+        Acquisition is deliberately non-blocking: a competing process fails
+        closed rather than waiting while its event loop is synchronously held.
+        """
         workspace = self.workspaces.get(workspace_name)
         canonical_id = self._validate_id(session_id)
         directory = self._workspace_path(workspace)
@@ -303,10 +307,14 @@ class SessionManager:
 
 
 class ApprovalNotFoundError(FileNotFoundError):
+    """A requested approval does not belong to the addressed session."""
+
     pass
 
 
 class ApprovalStateError(RuntimeError):
+    """An approval or session runtime cannot make the requested transition."""
+
     pass
 
 

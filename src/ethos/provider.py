@@ -1,4 +1,9 @@
-"""Model providers supported by ethos."""
+"""Translate between Ethos model contracts and LiteLLM chat completions.
+
+This is the only production module allowed to depend on LiteLLM types. It
+normalises provider responses into strict Ethos values and treats malformed or
+unsupported provider output as a protocol error.
+"""
 
 import json
 import os
@@ -66,7 +71,7 @@ class ProviderName(StrEnum):
 
 @dataclass(frozen=True)
 class AIProvider:
-    """Create Ethos models using one provider credential."""
+    """Bind configured provider credentials and addressing to model adapters."""
 
     name: ProviderName
     api_key: SecretStr | None
@@ -109,16 +114,22 @@ class ModelProtocolError(RuntimeError):
 
 @dataclass
 class _TextAssembly:
+    """Adjacent text fragments occupying one position in response order."""
+
     chunks: list[str] = dataclass_field(default_factory=lambda: list[str]())
 
 
 @dataclass
 class _ReasoningAssembly:
+    """Adjacent reasoning fragments occupying one position in response order."""
+
     chunks: list[str] = dataclass_field(default_factory=lambda: list[str]())
 
 
 @dataclass
 class _ToolCallAssembly:
+    """Fragments for one indexed tool call in a streamed response."""
+
     index: int
     call_id: str | None = None
     name: str | None = None
@@ -127,7 +138,13 @@ class _ToolCallAssembly:
 
 @dataclass(frozen=True)
 class LiteLLMModel:
-    """Translate between Ethos text models and LiteLLM chat completions."""
+    """Stateless LiteLLM adapter for complete and streamed chat responses.
+
+    The injected completion callable keeps tests off the network. Streaming
+    forwards text and reasoning immediately but buffers tool-call fragments
+    until their identifiers, names, and raw JSON arguments can be validated as
+    a complete Ethos response.
+    """
 
     provider: AIProvider
     model_name: str
@@ -167,6 +184,8 @@ class LiteLLMModel:
         if not isinstance(result, AsyncIterable):
             raise ModelProtocolError("provider returned an invalid stream")
 
+        # LiteLLM reports tool fragments by index, while Ethos preserves the
+        # first-seen order of text, reasoning, and tool calls.
         order: list[_TextAssembly | _ReasoningAssembly | _ToolCallAssembly] = []
         tool_calls: dict[int, _ToolCallAssembly] = {}
         usage_value: object | None = None
@@ -190,6 +209,9 @@ class LiteLLMModel:
                         )
                     continue
                 if finished:
+                    # Some providers send a final usage-only chunk after the
+                    # choice's finish reason. It may update usage, but never
+                    # content.
                     if chunk_usage is None or len(value.choices) != 1:
                         raise ModelProtocolError(
                             "provider streamed after completion"
@@ -327,6 +349,7 @@ def _message(message: Message) -> dict[str, object]:
         if isinstance(part, TextPart):
             text.append(part.text)
         elif isinstance(part, ReasoningPart) and message.role is Role.ASSISTANT:
+            # Reasoning is display history, not portable provider input.
             continue
         elif isinstance(part, ToolCallPart) and message.role is Role.ASSISTANT:
             tool_calls.append(
@@ -420,6 +443,8 @@ def _model_response(
     finish_reason: FinishReason,
     provider_response_id: str | None,
 ) -> ModelResponse:
+    """Normalise native tool calls whose provider reports a stop reason."""
+
     if finish_reason is FinishReason.STOP and any(
         isinstance(part, ToolCallPart) for part in parts
     ):
@@ -639,6 +664,8 @@ def _reasoning_usage(
 
 
 def _finish_reason(value: str) -> FinishReason:
+    """Collapse provider-specific terminal reasons into the Ethos vocabulary."""
+
     return {
         "stop": FinishReason.STOP,
         "eos": FinishReason.STOP,
@@ -673,6 +700,8 @@ def _provider_error(
 
 
 def _safe_capability_error(error: Exception) -> str | None:
+    """Allow only one bounded provider detail known not to contain secrets."""
+
     message = getattr(error, "message", None)
     if not isinstance(message, str):
         return None

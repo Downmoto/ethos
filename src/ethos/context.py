@@ -13,12 +13,16 @@ from ethos.models import (
     ToolDefinition,
 )
 
-# diagnostic sys instructions, not final
+# Stable identity precedes ephemeral run context and capability instructions.
 SYSTEM_INSTRUCTION: Final = "You are Ethos, a personal AI assistant."
 
 
 class ContextBuilder:
-    """Build one model request from canonical history and run-only context."""
+    """Build one model request from canonical history and run-only context.
+
+    Constructed system messages are request-only: they precede stored history
+    in a deterministic order and are never returned for persistence.
+    """
 
     def _build_run_context(self, context: RunContext) -> str:
         return "Run context: " + json.dumps(
@@ -47,6 +51,8 @@ class ContextBuilder:
         *,
         run_context: RunContext | None = None,
     ) -> ModelRequest:
+        """Prepend transient context and tools without mutating history."""
+
         context_instruction = (
             (self._build_run_context(run_context),)
             if run_context is not None

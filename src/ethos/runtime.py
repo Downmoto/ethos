@@ -69,7 +69,7 @@ INTERRUPTED_TOOL_RESULT: Final = (
 
 
 class AgentLimitError(RuntimeError):
-    """The model exceeded a bounded agent-loop limit."""
+    """The runtime exhausted a bounded reasoning, model, or tool-call limit."""
 
 
 class RuntimeEventError(RuntimeError):
@@ -164,6 +164,8 @@ class PromptStreamEvent:
 
 @dataclass(frozen=True)
 class ApprovalStreamEvent:
+    """Pause the stream after its approval request is durable."""
+
     approval: ToolApproval
 
 
@@ -235,6 +237,8 @@ class AgentRuntime:
     async def _session_lock(
         self, workspace_name: str, session_id: str
     ) -> AsyncGenerator[None]:
+        """Serialise local waiters and discard idle per-session locks."""
+
         key = (workspace_name, session_id)
         entry = self._locks.get(key)
         lock, users = entry if entry is not None else (asyncio.Lock(), 0)
@@ -263,6 +267,11 @@ class AgentRuntime:
         calls and individual results are checkpointed as the loop advances.
         Cancelling or abandoning the iterator preserves the latest completed
         checkpoint. ``done=True`` follows the durable final response.
+
+        Usage is accumulated across model rounds. Tool-call and model-round
+        limits close pending calls with durable error results before raising.
+        A reasoning-only response switches to the bounded, no-reasoning
+        fallback path rather than leaving the turn without an answer.
         """
         async with self._session_lock(workspace_name, session_id):
             with self._sessions.runtime_lock(workspace_name, session_id):
@@ -468,6 +477,8 @@ class AgentRuntime:
             ) = await self._resolve_capabilities(workspace_name, session_id)
             if approved:
                 prepared = _restore_prepared_call(registry, approval, call)
+                # Persist execution ownership before emitting or invoking the
+                # write. A restart can then make the outcome indeterminate.
                 self._sessions.transition_approval(
                     workspace_name,
                     session_id,
@@ -499,6 +510,8 @@ class AgentRuntime:
                 state = ApprovalState.DENIED
 
             messages = messages + (Message(role=Role.TOOL, parts=(result,)),)
+            # Consume the approval and its matching result in one session
+            # replacement so it can never be approved a second time.
             self._sessions.transition_approval(
                 workspace_name,
                 session_id,
@@ -591,6 +604,13 @@ class AgentRuntime:
         pending_calls: tuple[ToolCallPart, ...] = (),
         answer_now: bool = False,
     ) -> AsyncIterator[RuntimeStreamEvent]:
+        """Advance a durable run until completion, approval, or failure.
+
+        Pending calls are consumed before another model request. An approval
+        pauses after persisting all resumption state; otherwise each result is
+        checkpointed before the next call or model round.
+        """
+
         while round_number <= self._max_model_rounds:
             progress.round_number = round_number
             if pending_calls:
@@ -628,6 +648,8 @@ class AgentRuntime:
                             usage=usage,
                             answer_now=answer_now,
                         )
+                        # Persist the exact call, validated arguments, and run
+                        # position before exposing the approval to a caller.
                         self._sessions.add_approval(
                             workspace_name, session_id, approval
                         )
@@ -698,6 +720,8 @@ class AgentRuntime:
                     messages = messages + (
                         Message(role=Role.TOOL, parts=(result,)),
                     )
+                    # Make each result durable before the next call can cause a
+                    # side effect. Cancellation therefore leaves a known prefix.
                     self._sessions.replace_messages(
                         workspace_name,
                         session_id,
@@ -765,6 +789,8 @@ class AgentRuntime:
                         elif isinstance(event, ReasoningDelta):
                             streamed_reasoning += event.text
                             if event.text:
+                                # Start the deadline only when reasoning begins;
+                                # visible answer text permanently disarms it.
                                 if (
                                     not streamed_text
                                     and reasoning_deadline.when() is None
@@ -930,6 +956,12 @@ class AgentRuntime:
         workspace_name: str,
         session_id: str,
     ) -> tuple[RunContext, tuple[str, ...], ToolRegistry, ToolExecutor]:
+        """Compose one run in registration order before contacting the model.
+
+        Rebuilding the registry rejects duplicate names and keeps contributed
+        tool instances isolated to this workspace and session.
+        """
+
         context = RunContext(
             workspace_name=workspace_name,
             workspace_path=self._sessions.workspaces.get(workspace_name).path,
@@ -954,6 +986,8 @@ class AgentRuntime:
         session_id: str,
         event_location: str,
     ) -> Session:
+        """Make interrupted writes non-replayable and emit trace events."""
+
         session = self._sessions.get(workspace_name, session_id)
         interrupted = tuple(
             approval
@@ -1139,6 +1173,8 @@ def _assistant_message(
     streamed_text: str,
     streamed_reasoning: str,
 ) -> Message:
+    """Validate streamed output while preserving completed response order."""
+
     text = "".join(
         part.text for part in response.parts if isinstance(part, TextPart)
     )
@@ -1177,6 +1213,8 @@ def _add_usage(first: Usage, second: Usage) -> Usage:
 
 
 def _validate_tool_history(messages: tuple[Message, ...]) -> None:
+    """Reject calls whose execution state cannot be determined from history."""
+
     if _unresolved_tool_calls(messages):
         raise ModelProtocolError(
             "session contains unresolved tool call history"
@@ -1186,6 +1224,8 @@ def _validate_tool_history(messages: tuple[Message, ...]) -> None:
 def _unresolved_tool_calls(
     messages: tuple[Message, ...],
 ) -> tuple[ToolCallPart, ...]:
+    """Return the valid unresolved suffix without guessing side-effect state."""
+
     unresolved: dict[str, ToolCallPart] = {}
     call_ids: set[str] = set()
     for message in messages:
@@ -1235,6 +1275,8 @@ def _restore_prepared_call(
     approval: ToolApproval,
     call: ToolCallPart,
 ) -> PreparedToolCall:
+    """Revalidate durable approval data against the current tool registry."""
+
     tool = registry.get(approval.tool_name)
     if tool is None or tool.effect is not approval.effect:
         raise ApprovalStateError(f"approval tool changed: {approval.id}")

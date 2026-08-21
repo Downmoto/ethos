@@ -1,4 +1,9 @@
-"""Provider-independent model request, response, and streaming values."""
+"""Provider-independent model request, response, and streaming values.
+
+These strict, frozen values are the contract between persistence, the runtime,
+and provider adapters. Provider-specific shapes must be translated at the
+adapter boundary rather than leaking into this module.
+"""
 
 from collections.abc import AsyncIterator
 from enum import StrEnum
@@ -36,11 +41,15 @@ class TextPart(_ModelValue):
 
 
 class ReasoningPart(_ModelValue):
+    """Provider-reported reasoning retained for display, but not replayed."""
+
     kind: Literal["reasoning"] = "reasoning"
     text: NonEmptyString
 
 
 class ToolCallPart(_ModelValue):
+    """A provider-requested call whose JSON remains unparsed until execution."""
+
     kind: Literal["tool_call"] = "tool_call"
     call_id: NonEmptyString
     name: ToolName
@@ -62,6 +71,13 @@ type MessagePart = Annotated[
 
 
 class Message(_ModelValue):
+    """One canonical conversation message stored in session history.
+
+    The role validator keeps invalid provider combinations out of persistence;
+    adapters may accept broader wire formats but must reduce them to these
+    combinations before returning them to Ethos.
+    """
+
     role: Role
     parts: Annotated[tuple[MessagePart, ...], Field(min_length=1)]
 
@@ -81,6 +97,8 @@ class Message(_ModelValue):
 
 
 class ToolDefinition(_ModelValue):
+    """Provider-neutral function metadata advertised to a model."""
+
     name: ToolName
     description: NonEmptyString
     parameters_schema: dict[str, object]
@@ -96,11 +114,15 @@ class ToolDefinition(_ModelValue):
 
 
 class ModelRequest(_ModelValue):
+    """Complete conversation context for one stateless model invocation."""
+
     messages: tuple[Message, ...]
     tools: tuple[ToolDefinition, ...] = ()
 
 
 class ModelFeatures(_ModelValue):
+    """Adapter capabilities that callers must check before making a request."""
+
     tools: bool
     reasoning: bool = False
 
@@ -113,6 +135,12 @@ class ReasoningEffort(StrEnum):
 
 
 class Usage(_ModelValue):
+    """Token accounting with reasoning represented as an output-token subset.
+
+    ``reasoning_tokens_estimated`` marks counts that are adapter-estimated or
+    originate from a provider route with approximate reasoning accounting.
+    """
+
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
     reasoning_tokens: int = Field(default=0, ge=0)
@@ -145,6 +173,8 @@ type ResponsePart = Annotated[
 
 
 class ModelResponse(_ModelValue):
+    """A complete response assembled and validated by a model adapter."""
+
     parts: Annotated[tuple[ResponsePart, ...], Field(min_length=1)]
     usage: Usage = Field(default_factory=Usage)
     finish_reason: FinishReason = FinishReason.OTHER
@@ -152,11 +182,15 @@ class ModelResponse(_ModelValue):
 
 
 class TextDelta(_ModelValue):
+    """One non-overlapping text fragment emitted before stream completion."""
+
     kind: Literal["text_delta"] = "text_delta"
     text: str
 
 
 class ReasoningDelta(_ModelValue):
+    """One non-overlapping reasoning fragment emitted before completion."""
+
     kind: Literal["reasoning_delta"] = "reasoning_delta"
     text: str
 
@@ -173,6 +207,13 @@ type ModelEvent = Annotated[
 
 
 class Model(Protocol):
+    """Stateless model boundary implemented by production and fake adapters.
+
+    ``stream`` yields zero or more text or reasoning deltas followed by exactly
+    one ``ResponseCompleted`` event. Its completed response is authoritative
+    and contains every response part, including content emitted as deltas.
+    """
+
     @property
     def features(self) -> ModelFeatures: ...
 

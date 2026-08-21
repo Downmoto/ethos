@@ -116,6 +116,8 @@ def _resolve_workspace_path(
     workspace_path: Path,
     requested_path: str,
 ) -> tuple[Path, Path]:
+    """Resolve links, then enforce containment beneath the canonical root."""
+
     relative_path = Path(requested_path)
     if relative_path.is_absolute():
         raise ToolExecutionError(
@@ -131,6 +133,8 @@ def _resolve_workspace_path(
 
 
 class ReadOnlyFilesystemCapability:
+    """Contribute bounded file reads scoped to the active workspace."""
+
     def __init__(
         self,
         *,

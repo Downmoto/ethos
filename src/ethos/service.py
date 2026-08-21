@@ -333,6 +333,13 @@ class Ethos:
         session_id: str,
         context: RequestContext,
     ) -> AsyncIterator[ChatEvent]:
+        """Translate runtime events and always record the resulting session.
+
+        A paused, abandoned, or failed stream has no final ``done`` event, but
+        may still have durable checkpoints. The fallback emission preserves
+        the service-level contract that ``SESSION_CHAT`` reflects that state.
+        """
+
         emitted = False
         async for event in events:
             if isinstance(event, ApprovalStreamEvent):

@@ -159,6 +159,8 @@ async def _resolve_cli_approvals(
     events: AsyncIterator[ChatEvent],
     context: RequestContext,
 ) -> AsyncIterator[ChatEvent]:
+    """Drain and resume each approval pause until the chat actually finishes."""
+
     while True:
         approval: ApprovalChunk | None = None
         async for event in events:

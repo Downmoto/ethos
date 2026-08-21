@@ -1,4 +1,10 @@
-"""Policy-guarded model tool registration and execution."""
+"""Policy-guarded model tool registration and execution.
+
+Model output is untrusted at this boundary. Every call is resolved, decoded,
+schema-validated, and authorised before user tool code can run. Definitive
+failures become bounded, model-facing results; indeterminate write outcomes
+propagate without exposing exception or argument details.
+"""
 
 import asyncio
 import json
@@ -34,6 +40,8 @@ class ToolEffect(StrEnum):
 
 
 class Tool(Protocol):
+    """A registered async operation with validated arguments and an effect."""
+
     definition: ToolDefinition
     effect: ToolEffect
     arguments_type: type[BaseModel]
@@ -63,12 +71,16 @@ class RequireApproval:
 
 
 class ToolPolicy(Protocol):
+    """Authorise one validated call immediately before tool execution."""
+
     async def decide(
         self, call: ToolCallPart, tool: Tool
     ) -> Allow | Deny | RequireApproval: ...
 
 
 class DefaultToolPolicy:
+    """Permit reads and require explicit approval for write side effects."""
+
     async def decide(
         self, call: ToolCallPart, tool: Tool
     ) -> Allow | Deny | RequireApproval:
@@ -106,6 +118,13 @@ class ToolPreparationOutcome(StrEnum):
 
 
 class ToolApproval(BaseModel):
+    """Durable, single-use state for a validated write-tool request.
+
+    The stored call and normalised arguments bind approval to the exact payload
+    that was shown to the user; runtime resumption revalidates both. The
+    ``answer_now`` flag preserves fallback mode across an approval pause.
+    """
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str = Field(min_length=1)
@@ -139,6 +158,8 @@ class ToolApproval(BaseModel):
 
 @dataclass(frozen=True)
 class PreparedToolCall:
+    """A resolved, validated call that is allowed or awaiting approval."""
+
     call: ToolCallPart
     tool: Tool
     arguments: BaseModel
@@ -147,16 +168,22 @@ class PreparedToolCall:
 
 @dataclass(frozen=True)
 class RejectedToolCall:
+    """A safe model-facing result for a call that must not execute."""
+
     result: ToolResultPart
     outcome: ToolPreparationOutcome
     effect: ToolEffect | None
 
 
 def approval_request_id(session_id: str, call_id: str) -> str:
+    """Derive the stable, session-bound identifier for one provider call."""
+
     return str(uuid5(NAMESPACE_URL, f"ethos:{session_id}:{call_id}"))
 
 
 class ToolRegistry:
+    """Store uniquely named tools in deterministic registration order."""
+
     def __init__(self, tools: Iterable[Tool] = ()) -> None:
         self._tools: dict[str, Tool] = {}
         for tool in tools:
@@ -181,6 +208,14 @@ class ToolRegistry:
 
 
 class ToolExecutor:
+    """Validate, authorise, and execute calls through one mandatory path.
+
+    Preparation converts unknown calls, invalid arguments, and denials into
+    safe results. Execution converts definitive tool failures into safe results
+    while cancellation, policy failure, and indeterminate write outcomes
+    propagate for the runtime to checkpoint or recover.
+    """
+
     def __init__(
         self,
         registry: ToolRegistry,
@@ -190,11 +225,15 @@ class ToolExecutor:
         self._policy = policy if policy is not None else DefaultToolPolicy()
 
     def for_registry(self, registry: ToolRegistry) -> "ToolExecutor":
+        """Reuse this executor's policy with an isolated per-run registry."""
+
         return ToolExecutor(registry, self._policy)
 
     async def prepare(
         self, call: ToolCallPart
     ) -> PreparedToolCall | RejectedToolCall:
+        """Resolve, validate, and authorise a call without executing it."""
+
         tool = self._registry.get(call.name)
         if tool is None:
             return RejectedToolCall(
@@ -233,6 +272,14 @@ class ToolExecutor:
         return PreparedToolCall(call, tool, arguments, decision)
 
     async def run(self, prepared: PreparedToolCall) -> ToolResultPart:
+        """Execute a prepared call while preserving side-effect certainty.
+
+        Read calls have a deadline and can safely become error results. Write
+        calls are not cancelled by an executor deadline because interruption
+        cannot prove whether their side effect occurred; unexpected write
+        failures are therefore reported as indeterminate.
+        """
+
         try:
             if prepared.tool.effect is ToolEffect.WRITE:
                 content = cast(

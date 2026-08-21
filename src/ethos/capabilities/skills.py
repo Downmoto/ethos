@@ -36,6 +36,8 @@ class SkillMetadata(BaseModel):
 
 @dataclass(frozen=True)
 class Skill:
+    """Validated catalogue metadata and the deferred instruction location."""
+
     metadata: SkillMetadata
     location: Path
 
@@ -244,6 +246,8 @@ def _parse_skill(
 
 
 def _load_frontmatter(frontmatter: str) -> object:
+    """Parse YAML, repairing common unquoted colon values when necessary."""
+
     try:
         return cast(object, yaml.safe_load(frontmatter))
     except yaml.YAMLError as original_error:
@@ -425,6 +429,8 @@ def _skill_content(
 
 
 def _get_skill_resources(skill: Skill, max_resources: int) -> tuple[str, ...]:
+    """List at most ``max_resources`` files that resolve inside the skill."""
+
     root = skill.directory.resolve()
     resources: list[str] = []
     for path in root.rglob("*"):
@@ -446,6 +452,8 @@ def _read_skill_resource_file(
     requested_path: str,
     max_resource_file_bytes: int,
 ) -> str:
+    """Revalidate containment and size when a disclosed resource is read."""
+
     relative_path = Path(requested_path)
     if relative_path.is_absolute():
         raise ToolExecutionError("skill file path must be relative")
@@ -464,7 +472,12 @@ def _read_skill_resource_file(
 
 
 class SkillsCapability:
-    """Discover, disclose, and activate user and project Agent Skills."""
+    """Discover, disclose, and activate user and project Agent Skills.
+
+    Discovery is deferred to each run. ``instructions`` retains that run's
+    snapshot until ``tools`` consumes it, ensuring the catalogue and generated
+    tool schemas describe the same set of skills.
+    """
 
     def __init__(
         self,

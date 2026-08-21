@@ -56,6 +56,8 @@ def _is_loopback(host: str) -> bool:
 async def _event_stream(
     events: AsyncIterator[ChatEvent],
 ) -> StreamingResponse:
+    """Prefetch once so pre-stream failures retain normal HTTP error mapping."""
+
     try:
         first = await anext(events)
     except StopAsyncIteration:
