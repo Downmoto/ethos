@@ -11,6 +11,8 @@ from ethos.models import (
     ModelEvent,
     ModelRequest,
     ModelResponse,
+    ReasoningDelta,
+    ReasoningPart,
     ResponseCompleted,
     Role,
     TextDelta,
@@ -40,6 +42,7 @@ def test_model_request_json_round_trip_covers_every_message_part() -> None:
             Message(
                 role=Role.ASSISTANT,
                 parts=(
+                    ReasoningPart(text="I should inspect the file."),
                     TextPart(text="checking"),
                     ToolCallPart(
                         call_id="call-1",
@@ -76,6 +79,7 @@ def test_model_request_json_round_trip_covers_every_message_part() -> None:
 def test_model_response_json_round_trip_covers_response_parts() -> None:
     response = ModelResponse(
         parts=(
+            ReasoningPart(text="I should inspect the file."),
             TextPart(text="checking"),
             ToolCallPart(
                 call_id="call-1",
@@ -98,6 +102,7 @@ def test_model_response_json_round_trip_covers_response_parts() -> None:
     "event",
     [
         TextDelta(text="hel"),
+        ReasoningDelta(text="think"),
         ResponseCompleted(response=text_response()),
     ],
 )
@@ -111,6 +116,7 @@ def test_model_event_json_round_trip(event: ModelEvent) -> None:
     ("value", "message"),
     [
         ({"kind": "text", "text": ""}, "at least 1 character"),
+        ({"kind": "reasoning", "text": ""}, "at least 1 character"),
         (
             {
                 "kind": "tool_call",

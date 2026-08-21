@@ -18,6 +18,7 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
+from ethos.models import ReasoningEffort
 from ethos.provider import ProviderName
 
 HOME_PATH: Final = Path.home() / ".ethos"
@@ -30,6 +31,7 @@ class ProviderConfig(BaseModel):
 
     name: ProviderName
     model_name: str
+    reasoning_effort: ReasoningEffort = ReasoningEffort.NONE
     ollama_base_url: str = "http://localhost:11434"
 
 

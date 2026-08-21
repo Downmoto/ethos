@@ -69,7 +69,8 @@ class _TokenTracker:
         self._started_at = monotonic()
 
     def update(self, chunk: ChatChunk) -> None:
-        self._characters += len(chunk.text)
+        if chunk.text_kind == "answer":
+            self._characters += len(chunk.text)
         usage = (
             chunk.usage if chunk.usage and chunk.usage.total_tokens else None
         )
@@ -122,14 +123,24 @@ async def _stream_response(
 
 async def _print_response(chunks: AsyncIterator[ChatChunk]) -> None:
     wrote_output = False
+    wrote_reasoning = False
     try:
         async for chunk in _stream_response(chunks):
-            if chunk.text:
+            if chunk.text and chunk.text_kind == "reasoning":
+                if not wrote_reasoning:
+                    click.echo("Reasoning", err=True)
+                click.secho(chunk.text, nl=False, dim=True, err=True)
+                wrote_reasoning = True
+            elif chunk.text:
+                if wrote_reasoning and not wrote_output:
+                    click.echo(err=True)
                 click.echo(chunk.text, nl=False)
                 wrote_output = True
     finally:
         if wrote_output:
             click.echo()
+        elif wrote_reasoning:
+            click.echo(err=True)
 
 
 async def _write_response(
@@ -140,7 +151,7 @@ async def _write_response(
     try:
         with output:
             async for chunk in _stream_response(chunks):
-                if chunk.text:
+                if chunk.text and chunk.text_kind == "answer":
                     output.write(chunk.text)
                     output.flush()
                 tracker.update(chunk)

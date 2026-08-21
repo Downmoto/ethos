@@ -8,6 +8,7 @@ import click
 import yaml  # type: ignore[import-untyped]
 
 from ethos.config import CONFIG_FILE, EthosSettings
+from ethos.models import ReasoningEffort
 from ethos.provider import ProviderName
 
 type Config = dict[str, Any]
@@ -32,6 +33,16 @@ def configure_provider(config: Config) -> None:
 def configure_model(config: Config) -> None:
     """Select the model exposed by the provider."""
     _section(config, "provider")["model_name"] = click.prompt("Model")
+
+
+def configure_reasoning(config: Config) -> None:
+    """Choose how much model reasoning to request."""
+    provider = _section(config, "provider")
+    provider["reasoning_effort"] = click.prompt(
+        "Reasoning effort",
+        type=click.Choice([effort.value for effort in ReasoningEffort]),
+        default=provider.get("reasoning_effort", ReasoningEffort.NONE.value),
+    )
 
 
 def configure_credentials(config: Config) -> None:
@@ -66,6 +77,7 @@ def configure_credentials(config: Config) -> None:
 ONBOARDING_STEPS: Final[tuple[OnboardingStep, ...]] = (
     configure_provider,
     configure_model,
+    configure_reasoning,
     configure_credentials,
 )
 

@@ -12,7 +12,7 @@ from ethos.events.emitters import EnvelopeEventEmitter
 from ethos.events.models import EventPayload
 from ethos.events.types import EventType
 from ethos.home import DB_PATH
-from ethos.models import Role, TextPart
+from ethos.models import ReasoningPart, Role, TextPart
 from ethos.runtime import AgentRuntime
 from ethos.sessions import SESSIONS_DIR, Session, SessionManager
 from ethos.storage import Storage
@@ -68,6 +68,7 @@ class HistoryMessage(BaseModel):
 
     role: Literal["user", "assistant"]
     text: str
+    reasoning: str = ""
 
 
 class Usage(BaseModel):
@@ -85,6 +86,7 @@ class ChatChunk(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     text: str = ""
+    text_kind: Literal["answer", "reasoning"] = "answer"
     workspace: str
     session_id: str
     usage: Usage | None = None
@@ -243,6 +245,7 @@ class Ethos:
                 emitted = True
             yield ChatChunk(
                 text=event.text,
+                text_kind=event.text_kind,
                 workspace=workspace,
                 session_id=session_id,
                 usage=usage,
@@ -336,6 +339,17 @@ def _history(session: Session) -> tuple[HistoryMessage, ...]:
         parts = [
             part.text for part in message.parts if isinstance(part, TextPart)
         ]
-        if parts:
-            messages.append(HistoryMessage(role=role, text="\n".join(parts)))
+        reasoning = [
+            part.text
+            for part in message.parts
+            if isinstance(part, ReasoningPart)
+        ]
+        if parts or reasoning:
+            messages.append(
+                HistoryMessage(
+                    role=role,
+                    text="\n".join(parts),
+                    reasoning="\n".join(reasoning),
+                )
+            )
     return tuple(messages)

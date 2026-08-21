@@ -35,6 +35,11 @@ class TextPart(_ModelValue):
     text: NonEmptyString
 
 
+class ReasoningPart(_ModelValue):
+    kind: Literal["reasoning"] = "reasoning"
+    text: NonEmptyString
+
+
 class ToolCallPart(_ModelValue):
     kind: Literal["tool_call"] = "tool_call"
     call_id: NonEmptyString
@@ -51,7 +56,7 @@ class ToolResultPart(_ModelValue):
 
 
 type MessagePart = Annotated[
-    TextPart | ToolCallPart | ToolResultPart,
+    TextPart | ReasoningPart | ToolCallPart | ToolResultPart,
     Field(discriminator="kind"),
 ]
 
@@ -65,7 +70,7 @@ class Message(_ModelValue):
         allowed: dict[Role, tuple[type[_ModelValue], ...]] = {
             Role.SYSTEM: (TextPart,),
             Role.USER: (TextPart,),
-            Role.ASSISTANT: (TextPart, ToolCallPart),
+            Role.ASSISTANT: (TextPart, ReasoningPart, ToolCallPart),
             Role.TOOL: (ToolResultPart,),
         }
         if not all(isinstance(part, allowed[self.role]) for part in self.parts):
@@ -97,6 +102,14 @@ class ModelRequest(_ModelValue):
 
 class ModelFeatures(_ModelValue):
     tools: bool
+    reasoning: bool = False
+
+
+class ReasoningEffort(StrEnum):
+    NONE = "none"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
 
 
 class Usage(_ModelValue):
@@ -114,7 +127,7 @@ class FinishReason(StrEnum):
 
 
 type ResponsePart = Annotated[
-    TextPart | ToolCallPart,
+    TextPart | ReasoningPart | ToolCallPart,
     Field(discriminator="kind"),
 ]
 
@@ -131,13 +144,18 @@ class TextDelta(_ModelValue):
     text: str
 
 
+class ReasoningDelta(_ModelValue):
+    kind: Literal["reasoning_delta"] = "reasoning_delta"
+    text: str
+
+
 class ResponseCompleted(_ModelValue):
     kind: Literal["response_completed"] = "response_completed"
     response: ModelResponse
 
 
 type ModelEvent = Annotated[
-    TextDelta | ResponseCompleted,
+    TextDelta | ReasoningDelta | ResponseCompleted,
     Field(discriminator="kind"),
 ]
 

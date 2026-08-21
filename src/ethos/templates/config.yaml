@@ -11,6 +11,8 @@ provider:
   name: null
   # Model name exposed by the selected provider.
   model_name: null
+  # Requested model reasoning: none, low, medium, or high.
+  reasoning_effort: none
   # Ollama server root used by LiteLLM.
   ollama_base_url: http://localhost:11434
 

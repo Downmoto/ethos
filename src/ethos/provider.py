@@ -1,5 +1,6 @@
 """Model providers supported by ethos."""
 
+import json
 import os
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
@@ -12,11 +13,14 @@ from pydantic import SecretStr
 # ponytail: Ethos does not use LiteLLM pricing, so keep imports offline.
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
+import litellm  # noqa: E402
 from litellm import ModelResponse as LiteLLMResponse  # noqa: E402
 from litellm import ModelResponseStream as LiteLLMStreamChunk  # noqa: E402
 from litellm import (
     acompletion,  # pyright: ignore[reportUnknownVariableType]  # noqa: E402
 )
+
+litellm.suppress_debug_info = True
 
 from ethos.models import (  # noqa: E402
     FinishReason,
@@ -26,6 +30,9 @@ from ethos.models import (  # noqa: E402
     ModelFeatures,
     ModelRequest,
     ModelResponse,
+    ReasoningDelta,
+    ReasoningEffort,
+    ReasoningPart,
     ResponseCompleted,
     Role,
     TextDelta,
@@ -76,11 +83,16 @@ class AIProvider:
             settings.provider.ollama_base_url,
         )
 
-    def model(self, model_name: str) -> Model:
+    def model(
+        self,
+        model_name: str,
+        reasoning_effort: ReasoningEffort = ReasoningEffort.NONE,
+    ) -> Model:
         return LiteLLMModel(
             self,
             model_name,
-            features=ModelFeatures(tools=True),
+            reasoning_effort=reasoning_effort,
+            features=ModelFeatures(tools=True, reasoning=True),
         )
 
 
@@ -94,6 +106,11 @@ class ModelProtocolError(RuntimeError):
 
 @dataclass
 class _TextAssembly:
+    chunks: list[str] = dataclass_field(default_factory=lambda: list[str]())
+
+
+@dataclass
+class _ReasoningAssembly:
     chunks: list[str] = dataclass_field(default_factory=lambda: list[str]())
 
 
@@ -116,14 +133,15 @@ class LiteLLMModel:
         repr=False,
         compare=False,
     )
-    features: ModelFeatures = ModelFeatures(tools=True)
+    reasoning_effort: ReasoningEffort = ReasoningEffort.NONE
+    features: ModelFeatures = ModelFeatures(tools=True, reasoning=True)
 
     async def request(self, request: ModelRequest) -> ModelResponse:
         kwargs = self._kwargs(request, stream=False)
         try:
             result = await self.completion(**kwargs)
         except Exception as error:
-            raise ModelProviderError("model provider request failed") from error
+            raise _provider_error("request", error) from error
         if not isinstance(result, LiteLLMResponse):
             raise ModelProtocolError("provider returned an invalid response")
         return _response(result)
@@ -133,11 +151,11 @@ class LiteLLMModel:
         try:
             result = await self.completion(**kwargs)
         except Exception as error:
-            raise ModelProviderError("model provider request failed") from error
+            raise _provider_error("request", error) from error
         if not isinstance(result, AsyncIterable):
             raise ModelProtocolError("provider returned an invalid stream")
 
-        order: list[_TextAssembly | _ToolCallAssembly] = []
+        order: list[_TextAssembly | _ReasoningAssembly | _ToolCallAssembly] = []
         tool_calls: dict[int, _ToolCallAssembly] = {}
         usage = Usage()
         finish_reason: FinishReason | None = None
@@ -168,6 +186,7 @@ class LiteLLMModel:
                     if (
                         final_choice.index != 0
                         or final_choice.delta.content
+                        or _reasoning_content(final_choice.delta)
                         or final_choice.delta.tool_calls
                         or final_choice.finish_reason is not None
                     ):
@@ -188,6 +207,13 @@ class LiteLLMModel:
                 _validate_delta(delta)
                 if response_id is None:
                     response_id = value.id
+                reasoning = _reasoning_content(delta)
+                if reasoning:
+                    if order and isinstance(order[-1], _ReasoningAssembly):
+                        order[-1].chunks.append(reasoning)
+                    else:
+                        order.append(_ReasoningAssembly(chunks=[reasoning]))
+                    yield ReasoningDelta(text=reasoning)
                 content = cast(object, delta.content)
                 if content is not None and not isinstance(content, str):
                     raise ModelProtocolError(
@@ -206,7 +232,7 @@ class LiteLLMModel:
         except ModelProtocolError:
             raise
         except Exception as error:
-            raise ModelProviderError("model provider stream failed") from error
+            raise _provider_error("stream", error) from error
 
         if not finished or finish_reason is None:
             raise ModelProtocolError("provider stream ended before completion")
@@ -229,6 +255,11 @@ class LiteLLMModel:
     ) -> dict[str, object]:
         if request.tools and not self.features.tools:
             raise ModelProtocolError("model does not support tools")
+        if (
+            self.reasoning_effort is not ReasoningEffort.NONE
+            and not self.features.reasoning
+        ):
+            raise ModelProtocolError("model does not support reasoning")
         prefix = {
             ProviderName.GOOGLE: "gemini",
             ProviderName.OLLAMA: "ollama_chat",
@@ -247,7 +278,11 @@ class LiteLLMModel:
             kwargs["api_key"] = self.provider.api_key.get_secret_value()
         if self.provider.name is ProviderName.OLLAMA:
             kwargs["base_url"] = self.provider.ollama_base_url
-            kwargs["reasoning_effort"] = "none"
+        if (
+            self.reasoning_effort is not ReasoningEffort.NONE
+            or self.provider.name is ProviderName.OLLAMA
+        ):
+            kwargs["reasoning_effort"] = self.reasoning_effort.value
         return kwargs
 
 
@@ -267,6 +302,8 @@ def _message(message: Message) -> dict[str, object]:
     for part in message.parts:
         if isinstance(part, TextPart):
             text.append(part.text)
+        elif isinstance(part, ReasoningPart) and message.role is Role.ASSISTANT:
+            continue
         elif isinstance(part, ToolCallPart) and message.role is Role.ASSISTANT:
             tool_calls.append(
                 {
@@ -310,7 +347,10 @@ def _response(value: LiteLLMResponse) -> ModelResponse:
     if message.role != "assistant":
         raise ModelProtocolError("provider returned an invalid role")
     _validate_content(message)
-    parts: list[TextPart | ToolCallPart] = []
+    parts: list[TextPart | ReasoningPart | ToolCallPart] = []
+    reasoning = _reasoning_content(message)
+    if reasoning:
+        parts.append(ReasoningPart(text=reasoning))
     content = cast(object, message.content)
     if content is not None and not isinstance(content, str):
         raise ModelProtocolError("provider returned unsupported content")
@@ -343,13 +383,19 @@ def _validate_content(value: object) -> None:
         "function_call",
         "audio",
         "images",
-        "reasoning_content",
         "thinking_blocks",
         "reasoning_items",
         "annotations",
     )
     if any(getattr(value, name, None) for name in unsupported):
         raise ModelProtocolError("provider returned unsupported content")
+
+
+def _reasoning_content(value: object) -> str | None:
+    reasoning = getattr(value, "reasoning_content", None)
+    if reasoning is not None and not isinstance(reasoning, str):
+        raise ModelProtocolError("provider returned unsupported reasoning")
+    return reasoning
 
 
 def _tool_calls(value: object) -> tuple[ToolCallPart, ...]:
@@ -393,7 +439,7 @@ def _tool_calls(value: object) -> tuple[ToolCallPart, ...]:
 def _add_tool_call_deltas(
     value: object,
     calls: dict[int, _ToolCallAssembly],
-    order: list[_TextAssembly | _ToolCallAssembly],
+    order: list[_TextAssembly | _ReasoningAssembly | _ToolCallAssembly],
 ) -> None:
     fragments = getattr(value, "tool_calls", None)
     if fragments is None:
@@ -447,13 +493,16 @@ def _add_tool_call_deltas(
 
 
 def _finalise_stream_parts(
-    order: list[_TextAssembly | _ToolCallAssembly],
-) -> tuple[TextPart | ToolCallPart, ...]:
-    parts: list[TextPart | ToolCallPart] = []
+    order: list[_TextAssembly | _ReasoningAssembly | _ToolCallAssembly],
+) -> tuple[TextPart | ReasoningPart | ToolCallPart, ...]:
+    parts: list[TextPart | ReasoningPart | ToolCallPart] = []
     call_ids: set[str] = set()
     for item in order:
         if isinstance(item, _TextAssembly):
             parts.append(TextPart(text="".join(item.chunks)))
+            continue
+        if isinstance(item, _ReasoningAssembly):
+            parts.append(ReasoningPart(text="".join(item.chunks)))
             continue
         if item.call_id is None or item.name is None:
             raise ModelProtocolError("provider omitted tool call fields")
@@ -481,6 +530,7 @@ def _validate_delta(value: object) -> None:
     if role not in (None, "assistant"):
         raise ModelProtocolError("provider returned an invalid role")
     _validate_content(value)
+    _reasoning_content(value)
 
 
 def _usage(value: object) -> Usage | None:
@@ -507,3 +557,34 @@ def _finish_reason(value: str) -> FinishReason:
         "content_filter": FinishReason.CONTENT_FILTER,
         "guardrail_intervened": FinishReason.CONTENT_FILTER,
     }.get(value, FinishReason.OTHER)
+
+
+def _provider_error(action: str, error: Exception) -> ModelProviderError:
+    reason = _safe_capability_error(error)
+    detail = f": {reason}" if reason is not None else ""
+    return ModelProviderError(f"model provider {action} failed{detail}")
+
+
+def _safe_capability_error(error: Exception) -> str | None:
+    message = getattr(error, "message", None)
+    if not isinstance(message, str):
+        return None
+    _prefix, separator, encoded = message.rpartition(" - ")
+    if not separator:
+        return None
+    try:
+        payload = cast(object, json.loads(encoded))
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    reason = cast(dict[str, object], payload).get("error")
+    if (
+        not isinstance(reason, str)
+        or len(reason) > 200
+        or "\n" in reason
+        or "\r" in reason
+        or not reason.endswith(" does not support thinking")
+    ):
+        return None
+    return reason

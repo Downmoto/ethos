@@ -18,6 +18,9 @@ from ethos.models import (  # noqa: E402
     ModelFeatures,
     ModelRequest,
     ModelResponse,
+    ReasoningDelta,
+    ReasoningEffort,
+    ReasoningPart,
     ResponseCompleted,
     Role,
     TextDelta,
@@ -46,7 +49,10 @@ def request() -> ModelRequest:
             ),
             Message(
                 role=Role.ASSISTANT,
-                parts=(TextPart(text="Previous answer."),),
+                parts=(
+                    ReasoningPart(text="Previous reasoning."),
+                    TextPart(text="Previous answer."),
+                ),
             ),
         )
     )
@@ -228,6 +234,109 @@ def test_litellm_model_sends_tool_definitions(tool_count: int) -> None:
         }
         for index in range(tool_count)
     ]
+
+
+def test_litellm_model_sends_configured_reasoning_effort() -> None:
+    calls: list[dict[str, object]] = []
+
+    async def completion(**kwargs: object) -> object:
+        calls.append(kwargs)
+        return response()
+
+    model = LiteLLMModel(
+        AIProvider(ProviderName.OPENAI, SecretStr("key")),
+        "model",
+        completion,
+        reasoning_effort=ReasoningEffort.HIGH,
+    )
+
+    asyncio.run(model.request(ModelRequest(messages=())))
+
+    assert calls[0]["reasoning_effort"] == "high"
+
+
+def test_litellm_model_converts_complete_reasoning() -> None:
+    async def completion(**_kwargs: object) -> object:
+        return response("answer", reasoning_content="thinking")
+
+    result = asyncio.run(
+        LiteLLMModel(
+            AIProvider(ProviderName.OPENAI, SecretStr("key")),
+            "model",
+            completion,
+        ).request(ModelRequest(messages=()))
+    )
+
+    assert result.parts == (
+        ReasoningPart(text="thinking"),
+        TextPart(text="answer"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("reasoning_content", {"text": "invalid"}),
+        ("thinking_blocks", [{"text": "opaque"}]),
+        ("reasoning_items", [{"text": "opaque"}]),
+    ],
+)
+def test_litellm_model_rejects_unsupported_reasoning(
+    field: str,
+    value: object,
+) -> None:
+    provider_response = response("answer")
+    setattr(provider_response.choices[0].message, field, value)
+
+    async def completion(**_kwargs: object) -> object:
+        return provider_response
+
+    with pytest.raises(ModelProtocolError):
+        asyncio.run(
+            LiteLLMModel(
+                AIProvider(ProviderName.OPENAI, SecretStr("key")),
+                "model",
+                completion,
+            ).request(ModelRequest(messages=()))
+        )
+
+
+def test_litellm_model_streams_reasoning_separately() -> None:
+    chunks = stream(
+        chunk(reasoning_content="think"),
+        chunk(reasoning_content="ing"),
+        chunk("answer"),
+        chunk(finish_reason="stop"),
+    )
+
+    async def completion(**_kwargs: object) -> object:
+        return chunks
+
+    model = LiteLLMModel(
+        AIProvider(ProviderName.OLLAMA, None),
+        "qwen3",
+        completion,
+        reasoning_effort=ReasoningEffort.HIGH,
+    )
+
+    async def collect() -> list[ModelEvent]:
+        return [
+            event async for event in model.stream(ModelRequest(messages=()))
+        ]
+
+    events = asyncio.run(collect())
+
+    assert events[:-1] == [
+        ReasoningDelta(text="think"),
+        ReasoningDelta(text="ing"),
+        TextDelta(text="answer"),
+    ]
+    completed = events[-1]
+    assert isinstance(completed, ResponseCompleted)
+    assert completed.response.parts == (
+        ReasoningPart(text="thinking"),
+        TextPart(text="answer"),
+    )
 
 
 def test_litellm_model_sends_tool_calls_and_results() -> None:
@@ -523,7 +632,6 @@ def test_litellm_model_maps_finish_reasons(
         response(None),
         response(choices=0),
         response(choices=2),
-        response(reasoning_content="reasoning"),
         object(),
     ],
 )
@@ -590,6 +698,31 @@ def test_litellm_model_wraps_provider_error_without_secret() -> None:
     assert "secret-key" not in str(caught.value)
     assert "secret-key" not in repr(model)
     assert isinstance(caught.value.__cause__, RuntimeError)
+
+
+def test_litellm_model_exposes_safe_unsupported_thinking_error() -> None:
+    class LiteLLMError(RuntimeError):
+        message = (
+            "litellm.APIConnectionError: Ollama_chatException - "
+            '{"error":"\\"llama3.1:8b\\" does not support thinking"}'
+        )
+
+    async def completion(**_kwargs: object) -> object:
+        raise LiteLLMError
+
+    model = LiteLLMModel(
+        AIProvider(ProviderName.OLLAMA, None),
+        "llama3.1:8b",
+        completion,
+        reasoning_effort=ReasoningEffort.MEDIUM,
+    )
+
+    with pytest.raises(
+        ModelProviderError,
+        match='model provider request failed: "llama3.1:8b" '
+        "does not support thinking",
+    ):
+        asyncio.run(model.request(ModelRequest(messages=())))
 
 
 def test_litellm_model_streams_text_and_completes_once() -> None:

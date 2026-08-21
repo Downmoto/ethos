@@ -547,6 +547,48 @@ Exit criteria:
   restart between any two durable checkpoints.
 - No write side effect occurs in this milestone.
 
+## Milestone 6.5 — Add model reasoning streams
+
+Commit: `feat: add model reasoning streams`
+
+Implementation:
+
+- Add `ReasoningEffort` with `none`, `low`, `medium`, and `high`; configure it
+  under `provider.reasoning_effort`, defaulting to `none`.
+- Add provider-neutral `ReasoningPart` and `ReasoningDelta` contracts. Allow
+  reasoning only in assistant messages and model responses.
+- Translate configured effort to LiteLLM's `reasoning_effort`. Continue sending
+  `none` explicitly to Ollama so thinking is disabled by default.
+- Convert LiteLLM textual `reasoning_content` in complete and streamed
+  responses. Preserve its order relative to answer text and tool calls.
+- Persist reasoning in assistant messages, but omit it from replayed provider
+  messages. Textual reasoning is diagnostic output, not conversation context.
+- Add `text_kind` to `PromptStreamEvent` and `ChatChunk` so reasoning and answer
+  text remain distinct through Vox.
+- Render reasoning on CLI stderr and answer text on stdout. Files written by
+  `ethos ask --to` contain only the answer.
+- Expose stored reasoning separately in history projections.
+- Reject provider-native thinking blocks, reasoning items, signatures, and
+  encrypted or opaque reasoning. Add an opaque contract only when a supported
+  provider requires round-tripping it.
+
+Tests:
+
+- Configuration defaults, validation, onboarding, and provider translation.
+- Complete and streamed reasoning conversion and event ordering.
+- Stream/completion mismatch rejection for both reasoning and answer text.
+- Persistence, history projection, Vox serialization, CLI display, and answer-
+  only file output.
+- Malformed textual reasoning and unsupported opaque reasoning rejection.
+
+Exit criteria:
+
+- A compatible Ollama model can stream reasoning followed by an answer without
+  `provider returned unsupported content`.
+- Reasoning never appears in answer stdout or `--to` output files.
+- A completed assistant message durably retains its reasoning separately from
+  answer text.
+
 ## Milestone 7 — Add explicit write approval to Vox and CLI
 
 Commit: `feat: add tool approval workflow`

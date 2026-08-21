@@ -8,6 +8,8 @@ from ethos.models import (
     ModelFeatures,
     ModelRequest,
     ModelResponse,
+    ReasoningDelta,
+    ReasoningPart,
     ResponseCompleted,
     TextDelta,
     TextPart,
@@ -22,6 +24,7 @@ class FakeModel:
         outcomes: Sequence[ModelResponse | Exception],
         *,
         stream_chunks: Sequence[tuple[str, ...]] | None = None,
+        reasoning_chunks: Sequence[tuple[str, ...]] | None = None,
         features: ModelFeatures | None = None,
     ) -> None:
         self.features = features or ModelFeatures(tools=False)
@@ -32,17 +35,24 @@ class FakeModel:
         )
         if len(chunks) != len(outcomes):
             raise ValueError("each fake outcome requires one chunk sequence")
-        self._outcomes = deque(zip(outcomes, chunks, strict=True))
+        reasoning = (
+            reasoning_chunks
+            if reasoning_chunks is not None
+            else [() for _ in outcomes]
+        )
+        if len(reasoning) != len(outcomes):
+            raise ValueError("each fake outcome requires reasoning chunks")
+        self._outcomes = deque(zip(outcomes, chunks, reasoning, strict=True))
         self.requests: list[ModelRequest] = []
 
     async def request(self, request: ModelRequest) -> ModelResponse:
-        outcome, _chunks = self._next(request)
+        outcome, _chunks, _reasoning_chunks = self._next(request)
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelEvent]:
-        outcome, chunks = self._next(request)
+        outcome, chunks, reasoning_chunks = self._next(request)
         if isinstance(outcome, Exception):
             raise outcome
         expected = "".join(
@@ -52,13 +62,28 @@ class FakeModel:
             raise AssertionError(
                 "fake stream chunks do not match response text"
             )
+        expected_reasoning = "".join(
+            part.text
+            for part in outcome.parts
+            if isinstance(part, ReasoningPart)
+        )
+        if "".join(reasoning_chunks) != expected_reasoning:
+            raise AssertionError(
+                "fake reasoning chunks do not match response reasoning"
+            )
+        for chunk in reasoning_chunks:
+            yield ReasoningDelta(text=chunk)
         for chunk in chunks:
             yield TextDelta(text=chunk)
         yield ResponseCompleted(response=outcome)
 
     def _next(
         self, request: ModelRequest
-    ) -> tuple[ModelResponse | Exception, tuple[str, ...]]:
+    ) -> tuple[
+        ModelResponse | Exception,
+        tuple[str, ...],
+        tuple[str, ...],
+    ]:
         self.requests.append(request)
         if not self._outcomes:
             raise AssertionError("fake model has no queued outcomes")

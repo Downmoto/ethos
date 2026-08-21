@@ -7,7 +7,7 @@ import pytest
 
 from ethos.events.types import EventType
 from ethos.home import initialise_home
-from ethos.models import Message, Role, TextPart
+from ethos.models import Message, ReasoningPart, Role, TextPart
 from ethos.runtime import AgentRuntime, PromptStreamEvent
 from ethos.service import Ethos, HistoryMessage, RequestContext
 from ethos.sessions import Session
@@ -62,7 +62,10 @@ def test_service_projects_ethos_messages_into_history(tmp_path: Path) -> None:
                     ),
                     Message(
                         role=Role.ASSISTANT,
-                        parts=(TextPart(text="answer"),),
+                        parts=(
+                            ReasoningPart(text="thinking"),
+                            TextPart(text="answer"),
+                        ),
                     ),
                 ),
             )
@@ -73,7 +76,11 @@ def test_service_projects_ethos_messages_into_history(tmp_path: Path) -> None:
 
             assert history == (
                 HistoryMessage(role="user", text="first\nsecond"),
-                HistoryMessage(role="assistant", text="answer"),
+                HistoryMessage(
+                    role="assistant",
+                    text="answer",
+                    reasoning="thinking",
+                ),
             )
 
     asyncio.run(exercise())

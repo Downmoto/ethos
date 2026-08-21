@@ -60,12 +60,13 @@ def test_onboarding_configures_provider(
     result = CliRunner().invoke(
         app.main,
         ["onboard"],
-        input="openai\ngpt-5-mini\ntest-key\n",
+        input="openai\ngpt-5-mini\nnone\ntest-key\n",
     )
 
     config = yaml.safe_load((home / "config.yaml").read_text())
     assert result.exit_code == 0
     assert config["provider"]["name"] == "openai"
+    assert config["provider"]["reasoning_effort"] == "none"
 
 
 def test_start_runs_vox_in_foreground(
@@ -178,3 +179,64 @@ def test_ask_streams_response(
 
     assert result.exit_code == 0
     assert "hello" in result.output
+
+
+def test_ask_renders_reasoning_separately(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    monkeypatch.setattr(app, "HOME_PATH", home)
+
+    async def chunks(_prompt: str) -> AsyncIterator[ChatChunk]:
+        yield ChatChunk(
+            text="thinking",
+            text_kind="reasoning",
+            workspace="default",
+            session_id="session",
+        )
+        yield ChatChunk(
+            text="answer",
+            workspace="default",
+            session_id="session",
+            done=True,
+        )
+
+    monkeypatch.setattr(app, "_ask_requests", chunks)
+
+    result = CliRunner().invoke(app.main, ["ask", "hi"])
+
+    assert result.exit_code == 0
+    assert result.stdout == "answer\n"
+    assert "Reasoning\nthinking" in result.stderr
+
+
+def test_ask_file_excludes_reasoning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    output = tmp_path / "answer.txt"
+    monkeypatch.setattr(app, "HOME_PATH", home)
+
+    async def chunks(_prompt: str) -> AsyncIterator[ChatChunk]:
+        yield ChatChunk(
+            text="thinking",
+            text_kind="reasoning",
+            workspace="default",
+            session_id="session",
+        )
+        yield ChatChunk(
+            text="answer",
+            workspace="default",
+            session_id="session",
+            done=True,
+        )
+
+    monkeypatch.setattr(app, "_ask_requests", chunks)
+
+    result = CliRunner().invoke(
+        app.main,
+        ["ask", "hi", "--to", str(output)],
+    )
+
+    assert result.exit_code == 0
+    assert output.read_text() == "answer"

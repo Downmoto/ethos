@@ -4,6 +4,7 @@ import pytest
 from pydantic import SecretStr, ValidationError
 
 from ethos.config import EthosSettings
+from ethos.models import ReasoningEffort
 from ethos.provider import ProviderName
 
 
@@ -16,6 +17,21 @@ def test_settings_accept_nested_api_keys() -> None:
     )
 
     assert settings.keys.openai_api_key == SecretStr("secret-key")
+    assert settings.provider.reasoning_effort is ReasoningEffort.NONE
+
+
+def test_settings_accept_reasoning_effort() -> None:
+    settings = EthosSettings.model_validate(
+        {
+            "provider": {
+                "name": "ollama",
+                "model_name": "qwen3",
+                "reasoning_effort": "high",
+            }
+        }
+    )
+
+    assert settings.provider.reasoning_effort is ReasoningEffort.HIGH
 
 
 def test_settings_load_provider_from_environment(

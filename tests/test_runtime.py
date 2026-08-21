@@ -13,6 +13,9 @@ from ethos.models import (
     ModelFeatures,
     ModelRequest,
     ModelResponse,
+    ReasoningDelta,
+    ReasoningEffort,
+    ReasoningPart,
     ResponseCompleted,
     Role,
     TextDelta,
@@ -96,6 +99,41 @@ def test_runtime_returns_model_output(tmp_path: Path) -> None:
     )
 
 
+def test_runtime_streams_and_persists_reasoning_separately(
+    tmp_path: Path,
+) -> None:
+    model_response = ModelResponse(
+        parts=(
+            ReasoningPart(text="thinking"),
+            TextPart(text="answer"),
+        ),
+        finish_reason=FinishReason.STOP,
+    )
+    model = FakeModel(
+        [model_response],
+        stream_chunks=[("answer",)],
+        reasoning_chunks=[("think", "ing")],
+    )
+    sessions, session, runtime = setup_runtime(tmp_path, model)
+
+    events = asyncio.run(collect(runtime, session))
+
+    assert events == [
+        PromptStreamEvent(text="think", text_kind="reasoning"),
+        PromptStreamEvent(text="ing", text_kind="reasoning"),
+        PromptStreamEvent(text="answer"),
+        PromptStreamEvent(usage=Usage(), done=True),
+    ]
+    stored = sessions.get("my-project", str(session.id)).messages
+    assert stored[-1] == Message(
+        role=Role.ASSISTANT,
+        parts=(
+            ReasoningPart(text="thinking"),
+            TextPart(text="answer"),
+        ),
+    )
+
+
 def test_runtime_default_factory_resolves_settings_once_per_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -115,8 +153,13 @@ def test_runtime_default_factory_resolves_settings_once_per_turn(
             }
         )
 
-    def create_model(_provider: AIProvider, model_name: str) -> FakeModel:
+    def create_model(
+        _provider: AIProvider,
+        model_name: str,
+        reasoning_effort: ReasoningEffort,
+    ) -> FakeModel:
         assert model_name == "model"
+        assert reasoning_effort is ReasoningEffort.NONE
         return model
 
     monkeypatch.setattr("ethos.runtime.get_settings", load_settings)
@@ -316,6 +359,32 @@ def test_runtime_rejects_malformed_stream_without_completing(
 
     assert events == [PromptStreamEvent(text="partial")]
     assert not any(event.done for event in events)
+    assert sessions.get("my-project", str(session.id)).messages == ()
+
+
+def test_runtime_rejects_reasoning_completion_mismatch(
+    tmp_path: Path,
+) -> None:
+    async def malformed(_request: ModelRequest) -> AsyncIterator[ModelEvent]:
+        yield ReasoningDelta(text="streamed")
+        yield ResponseCompleted(
+            response=ModelResponse(
+                parts=(ReasoningPart(text="different"),),
+                finish_reason=FinishReason.STOP,
+            )
+        )
+
+    sessions, session, runtime = setup_runtime(tmp_path, StreamModel(malformed))
+    events: list[PromptStreamEvent] = []
+
+    async def consume() -> None:
+        async for event in runtime.run("hello", "my-project", str(session.id)):
+            events.append(event)
+
+    with pytest.raises(ModelProtocolError, match="did not match stream"):
+        asyncio.run(consume())
+
+    assert events == [PromptStreamEvent(text="streamed", text_kind="reasoning")]
     assert sessions.get("my-project", str(session.id)).messages == ()
 
 

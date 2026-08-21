@@ -1,6 +1,7 @@
 from pydantic import SecretStr
 
 from ethos.config import EthosSettings
+from ethos.models import ReasoningEffort
 from ethos.provider import AIProvider, LiteLLMModel, ProviderName
 
 
@@ -13,6 +14,16 @@ def test_provider_creates_litellm_model() -> None:
     assert model.provider is provider
     assert model.model_name == "gpt-5-mini"
     assert model.features.tools
+    assert model.features.reasoning
+
+
+def test_provider_configures_model_reasoning_effort() -> None:
+    provider = AIProvider(ProviderName.OLLAMA, None)
+
+    model = provider.model("qwen3", ReasoningEffort.HIGH)
+
+    assert isinstance(model, LiteLLMModel)
+    assert model.reasoning_effort is ReasoningEffort.HIGH
 
 
 def test_ollama_provider_uses_server_root_by_default() -> None:

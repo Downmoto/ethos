@@ -7,6 +7,7 @@ and runtime concurrency compose.
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
+from typing import Literal
 
 from ethos.config import get_settings
 from ethos.models import (
@@ -15,6 +16,8 @@ from ethos.models import (
     Model,
     ModelRequest,
     ModelResponse,
+    ReasoningDelta,
+    ReasoningPart,
     Role,
     TextDelta,
     TextPart,
@@ -41,6 +44,7 @@ class PromptStreamEvent:
     """Provider-neutral prompt text and usage update."""
 
     text: str = ""
+    text_kind: Literal["answer", "reasoning"] = "answer"
     usage: Usage | None = None
     done: bool = False
 
@@ -118,6 +122,7 @@ class AgentRuntime:
             for round_number in range(1, self._max_model_rounds + 1):
                 request = ModelRequest(messages=messages, tools=tools)
                 streamed_text = ""
+                streamed_reasoning = ""
                 completed: ModelResponse | None = None
 
                 async for event in model.stream(request):
@@ -129,6 +134,13 @@ class AgentRuntime:
                         streamed_text += event.text
                         if event.text:
                             yield PromptStreamEvent(text=event.text)
+                    elif isinstance(event, ReasoningDelta):
+                        streamed_reasoning += event.text
+                        if event.text:
+                            yield PromptStreamEvent(
+                                text=event.text,
+                                text_kind="reasoning",
+                            )
                     else:
                         completed = event.response
 
@@ -136,7 +148,11 @@ class AgentRuntime:
                     raise ModelProtocolError(
                         "model stream ended before completion"
                     )
-                assistant_message = _assistant_message(completed, streamed_text)
+                assistant_message = _assistant_message(
+                    completed,
+                    streamed_text,
+                    streamed_reasoning,
+                )
                 calls = tuple(
                     part
                     for part in completed.parts
@@ -206,12 +222,24 @@ class AgentRuntime:
 def _model_from_settings() -> Model:
     settings = get_settings()
     provider = AIProvider.from_settings(settings)
-    return provider.model(settings.provider.model_name)
+    return provider.model(
+        settings.provider.model_name,
+        settings.provider.reasoning_effort,
+    )
 
 
-def _assistant_message(response: ModelResponse, streamed_text: str) -> Message:
-    parts = tuple(part for part in response.parts if isinstance(part, TextPart))
-    if "".join(part.text for part in parts) != streamed_text:
+def _assistant_message(
+    response: ModelResponse,
+    streamed_text: str,
+    streamed_reasoning: str,
+) -> Message:
+    text = "".join(
+        part.text for part in response.parts if isinstance(part, TextPart)
+    )
+    reasoning = "".join(
+        part.text for part in response.parts if isinstance(part, ReasoningPart)
+    )
+    if text != streamed_text or reasoning != streamed_reasoning:
         raise ModelProtocolError("model completion did not match stream")
     return Message(role=Role.ASSISTANT, parts=response.parts)
 

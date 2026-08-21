@@ -94,6 +94,12 @@ class FakeEthos:
     ) -> AsyncIterator[ChatChunk]:
         self.record("chat", workspace, session_id, prompt, context)
         yield ChatChunk(
+            text="thinking",
+            text_kind="reasoning",
+            workspace=workspace,
+            session_id=session_id,
+        )
+        yield ChatChunk(
             text="hello ", workspace=workspace, session_id=session_id
         )
         yield ChatChunk(
@@ -210,7 +216,16 @@ def test_vox_streams_chat_as_server_sent_events() -> None:
             if line.startswith("data: ")
         ]
 
-    assert [event["text"] for event in events] == ["hello ", "there"]
+    assert [event["text"] for event in events] == [
+        "thinking",
+        "hello ",
+        "there",
+    ]
+    assert [event["text_kind"] for event in events] == [
+        "reasoning",
+        "answer",
+        "answer",
+    ]
     assert events[-1]["done"]
     assert ethos.calls[0][0] == "chat"
 
