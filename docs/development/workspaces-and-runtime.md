@@ -122,13 +122,20 @@ For each turn it:
 1. acquires the session's lock;
 2. reloads the session from disk;
 3. rejects an archived session;
-4. loads the application settings and constructs the selected model;
-5. appends one user text message to the stored history in memory;
-6. streams that Ethos request through the selected LiteLLM-backed model;
-7. yields non-overlapping text deltas;
-8. validates the terminal response against the streamed text;
-9. atomically persists the user and assistant messages;
-10. yields usage in a final event with `done=True`.
+4. rejects stored tool calls without exactly one later result;
+5. loads the application settings and constructs the selected model;
+6. appends one user text message to the stored history in memory;
+7. advertises registered tools when the model supports them;
+8. streams and validates responses up to the configured round limit;
+9. checkpoints an assistant tool-call response;
+10. executes its calls sequentially through the mandatory tool policy and
+    checkpoints each result;
+11. atomically persists the final assistant response;
+12. yields aggregate usage in one final event with `done=True`.
+
+`AgentRuntime` accepts per-instance model-round and per-response tool-call
+limits. They default to eight rounds and sixteen calls respectively, and both
+must be positive.
 
 Models do not hold conversation history. The complete history is supplied in
 an Ethos `ModelRequest` for every run, which keeps sessions isolated even when
@@ -146,9 +153,11 @@ constructed runtimes.
 
 ### Completion and failure
 
-History is replaced only after the provider's text stream finishes normally.
-If provider execution raises, the stream is cancelled, or the caller stops
-consuming early, the new history is not persisted.
+A response without tool calls is persisted only after its provider stream
+finishes normally. A response with tool calls is checkpointed before tool
+execution, and every result is a separate checkpoint. If execution fails or
+is cancelled, the latest successful checkpoint remains durable. A later user
+turn rejects an assistant tool call without exactly one stored result.
 
 Text may already have reached a caller before completion or a later
 persistence failure. Streamed output therefore does not by itself prove that
