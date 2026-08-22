@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Final, Protocol, Self, cast
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from pydantic import (
     BaseModel,
@@ -78,6 +78,10 @@ class DefaultToolPolicy:
         return RequireApproval(reason="write tool requires approval")
 
 
+class ToolPolicyError(RuntimeError):
+    """A tool policy failed without exposing its internal exception."""
+
+
 class ApprovalState(StrEnum):
     PENDING = "pending"
     EXECUTING = "executing"
@@ -86,10 +90,19 @@ class ApprovalState(StrEnum):
     INDETERMINATE = "indeterminate"
 
 
+class ToolPreparationOutcome(StrEnum):
+    ALLOW = "allow"
+    DENY = "deny"
+    REQUIRE_APPROVAL = "require_approval"
+    INVALID = "invalid"
+    UNKNOWN = "unknown"
+
+
 class ToolApproval(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str = Field(min_length=1)
+    run_id: UUID
     call: ToolCallPart
     tool_name: str = Field(min_length=1)
     arguments: dict[str, object]
@@ -122,6 +135,13 @@ class PreparedToolCall:
     tool: Tool
     arguments: BaseModel
     decision: Allow | RequireApproval
+
+
+@dataclass(frozen=True)
+class RejectedToolCall:
+    result: ToolResultPart
+    outcome: ToolPreparationOutcome
+    effect: ToolEffect | None
 
 
 def approval_request_id(session_id: str, call_id: str) -> str:
@@ -159,10 +179,14 @@ class ToolExecutor:
 
     async def prepare(
         self, call: ToolCallPart
-    ) -> PreparedToolCall | ToolResultPart:
+    ) -> PreparedToolCall | RejectedToolCall:
         tool = self._registry.get(call.name)
         if tool is None:
-            return _error(call, "unknown tool")
+            return RejectedToolCall(
+                _error(call, "unknown tool"),
+                ToolPreparationOutcome.UNKNOWN,
+                None,
+            )
 
         try:
             value = json.loads(
@@ -173,13 +197,24 @@ class ToolExecutor:
                 raise ValueError
             arguments = tool.arguments_type.model_validate(value)
         except (json.JSONDecodeError, ValidationError, ValueError):
-            return _error(call, "invalid tool arguments")
+            return RejectedToolCall(
+                _error(call, "invalid tool arguments"),
+                ToolPreparationOutcome.INVALID,
+                tool.effect,
+            )
 
-        decision = cast(object, await self._policy.decide(call, tool))
+        try:
+            decision = cast(object, await self._policy.decide(call, tool))
+        except Exception as error:
+            raise ToolPolicyError("tool policy failed") from error
         if isinstance(decision, Deny):
-            return _error(call, decision.reason)
+            return RejectedToolCall(
+                _error(call, decision.reason),
+                ToolPreparationOutcome.DENY,
+                tool.effect,
+            )
         if not isinstance(decision, (Allow, RequireApproval)):
-            raise TypeError("tool policy returned an invalid decision")
+            raise ToolPolicyError("tool policy failed")
         return PreparedToolCall(call, tool, arguments, decision)
 
     async def run(self, prepared: PreparedToolCall) -> ToolResultPart:

@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import cast
+from uuid import uuid4
 
 import pytest
 
@@ -111,8 +112,14 @@ def test_service_emits_chat_event_for_incomplete_stream(
 
             class FakeRuntime:
                 async def run(
-                    self, prompt: str, workspace: str, session_id: str
+                    self,
+                    prompt: str,
+                    workspace: str,
+                    session_id: str,
+                    *,
+                    event_location: str,
                 ) -> AsyncIterator[PromptStreamEvent]:
+                    assert event_location == "test"
                     assert (prompt, workspace, session_id) == (
                         "hello",
                         "default",
@@ -160,8 +167,14 @@ def test_service_emits_chat_event_after_persistence(
 
             class FakeRuntime:
                 async def run(
-                    self, prompt: str, workspace: str, session_id: str
+                    self,
+                    prompt: str,
+                    workspace: str,
+                    session_id: str,
+                    *,
+                    event_location: str,
                 ) -> AsyncIterator[PromptStreamEvent]:
+                    assert event_location == "test"
                     ethos.sessions.replace_messages(
                         workspace,
                         session_id,
@@ -207,6 +220,7 @@ def test_service_projects_and_resolves_approval_events(tmp_path: Path) -> None:
             session = await ethos.create_session("default", context())
             approval = ToolApproval(
                 id="approval-1",
+                run_id=uuid4(),
                 call=ToolCallPart(
                     call_id="call-1",
                     name="write_file",
@@ -222,8 +236,14 @@ def test_service_projects_and_resolves_approval_events(tmp_path: Path) -> None:
 
             class FakeRuntime:
                 async def run(
-                    self, prompt: str, workspace: str, session_id: str
+                    self,
+                    prompt: str,
+                    workspace: str,
+                    session_id: str,
+                    *,
+                    event_location: str,
                 ) -> AsyncIterator[ApprovalStreamEvent]:
+                    assert event_location == "test"
                     del prompt, workspace, session_id
                     yield ApprovalStreamEvent(approval)
 
@@ -234,7 +254,9 @@ def test_service_projects_and_resolves_approval_events(tmp_path: Path) -> None:
                     approval_id: str,
                     *,
                     approved: bool,
+                    event_location: str,
                 ) -> AsyncIterator[PromptStreamEvent]:
+                    assert event_location == "test"
                     assert (workspace, session_id, approval_id, approved) == (
                         "default",
                         session.id,

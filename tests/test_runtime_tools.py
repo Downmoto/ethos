@@ -6,6 +6,7 @@ from typing import cast
 import pytest
 from pydantic import BaseModel
 
+from ethos.events.emitters import EnvelopeEventEmitter
 from ethos.models import (
     FinishReason,
     Message,
@@ -123,7 +124,12 @@ def setup_runtime(
     session = sessions.create("my-project")
     registered = tool or RuntimeTool()
     registry = ToolRegistry((registered,))
-    runtime = AgentRuntime(sessions, lambda: model, registry)
+    runtime = AgentRuntime(
+        sessions,
+        lambda: model,
+        registry,
+        events=EnvelopeEventEmitter(),
+    )
     return sessions, session, runtime, registered
 
 
@@ -370,6 +376,7 @@ def test_pending_approval_survives_runtime_restart(tmp_path: Path) -> None:
         sessions,
         lambda: restarted_model,
         ToolRegistry((tool,)),
+        events=EnvelopeEventEmitter(),
     )
 
     events = asyncio.run(
@@ -467,6 +474,7 @@ def test_interrupted_execution_becomes_indeterminate(tmp_path: Path) -> None:
         sessions,
         lambda: FakeModel(()),
         ToolRegistry((tool,)),
+        events=EnvelopeEventEmitter(),
     )
 
     with pytest.raises(ApprovalStateError, match="indeterminate"):
@@ -806,6 +814,7 @@ def test_cancellation_after_result_checkpoint_preserves_result(
             sessions,
             lambda: model,
             ToolRegistry((tool,)),
+            events=EnvelopeEventEmitter(),
         )
         task = asyncio.create_task(collect(runtime, session))
         await blocked.wait()
@@ -930,6 +939,7 @@ def test_restarted_runtime_rejects_unresolved_tool_history(
         sessions,
         lambda: model,
         ToolRegistry((RuntimeTool(),)),
+        events=EnvelopeEventEmitter(),
     )
 
     with pytest.raises(ModelProtocolError, match="unresolved tool call"):
@@ -967,6 +977,7 @@ def test_restarted_runtime_rejects_malformed_tool_history(
         sessions,
         lambda: model,
         ToolRegistry((RuntimeTool(),)),
+        events=EnvelopeEventEmitter(),
     )
 
     with pytest.raises(ModelProtocolError, match="unresolved tool call"):
@@ -1000,6 +1011,7 @@ def test_runtime_uses_configured_tool_call_limit(tmp_path: Path) -> None:
         sessions,
         lambda: model,
         ToolRegistry((tool,)),
+        events=EnvelopeEventEmitter(),
         max_tool_calls_per_response=1,
     )
 
@@ -1019,6 +1031,7 @@ def test_runtime_uses_configured_model_round_limit(tmp_path: Path) -> None:
         sessions,
         lambda: model,
         ToolRegistry((tool,)),
+        events=EnvelopeEventEmitter(),
         max_model_rounds=1,
     )
 
@@ -1053,6 +1066,7 @@ def test_runtime_rejects_non_positive_limits(
             sessions,
             lambda: model,
             ToolRegistry((tool,)),
+            events=EnvelopeEventEmitter(),
             max_model_rounds=max_model_rounds,
             max_tool_calls_per_response=max_tool_calls,
         )
@@ -1266,6 +1280,7 @@ def test_concurrent_approval_cannot_execute_twice(tmp_path: Path) -> None:
             sessions,
             lambda: FakeModel(()),
             ToolRegistry((tool,)),
+            events=EnvelopeEventEmitter(),
         )
         executing = asyncio.create_task(
             _collect_runtime(

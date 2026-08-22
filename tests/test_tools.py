@@ -11,10 +11,13 @@ from ethos.tools import (
     DefaultToolPolicy,
     Deny,
     PreparedToolCall,
+    RejectedToolCall,
     RequireApproval,
     Tool,
     ToolEffect,
     ToolExecutor,
+    ToolPolicyError,
+    ToolPreparationOutcome,
     ToolRegistry,
     approval_request_id,
 )
@@ -177,9 +180,10 @@ def test_falsey_custom_policy_is_not_replaced() -> None:
         ToolExecutor(ToolRegistry((tool,)), policy).prepare(call())
     )
 
-    assert isinstance(result, ToolResultPart)
-    assert result.content == "custom denial"
-    assert result.is_error
+    assert isinstance(result, RejectedToolCall)
+    assert result.outcome is ToolPreparationOutcome.DENY
+    assert result.result.content == "custom denial"
+    assert result.result.is_error
     assert len(policy.calls) == 1
     assert tool.arguments == []
 
@@ -207,9 +211,10 @@ def test_invalid_arguments_never_reach_policy_or_tool(
         )
     )
 
-    assert isinstance(result, ToolResultPart)
-    assert result.content == "invalid tool arguments"
-    assert result.is_error
+    assert isinstance(result, RejectedToolCall)
+    assert result.outcome is ToolPreparationOutcome.INVALID
+    assert result.result.content == "invalid tool arguments"
+    assert result.result.is_error
     assert policy.calls == []
     assert tool.arguments == []
 
@@ -221,9 +226,10 @@ def test_unknown_tool_returns_safe_error() -> None:
         ToolExecutor(ToolRegistry(), policy).prepare(call(name="missing"))
     )
 
-    assert isinstance(result, ToolResultPart)
-    assert result.content == "unknown tool"
-    assert result.is_error
+    assert isinstance(result, RejectedToolCall)
+    assert result.outcome is ToolPreparationOutcome.UNKNOWN
+    assert result.result.content == "unknown tool"
+    assert result.result.is_error
     assert policy.calls == []
 
 
@@ -235,9 +241,10 @@ def test_policy_denial_returns_bounded_reason_without_execution() -> None:
         ToolExecutor(ToolRegistry((tool,)), policy).prepare(call())
     )
 
-    assert isinstance(result, ToolResultPart)
-    assert result.content == "not permitted"
-    assert result.is_error
+    assert isinstance(result, RejectedToolCall)
+    assert result.outcome is ToolPreparationOutcome.DENY
+    assert result.result.content == "not permitted"
+    assert result.result.is_error
     assert len(policy.calls) == 1
     assert tool.arguments == []
 
@@ -310,7 +317,7 @@ def test_policy_failure_propagates_as_runtime_bug() -> None:
             raise RuntimeError("policy bug")
 
     async def run() -> None:
-        with pytest.raises(RuntimeError, match="policy bug"):
+        with pytest.raises(ToolPolicyError, match="tool policy failed"):
             await ToolExecutor(
                 ToolRegistry((FakeTool("weather"),)), BrokenPolicy()
             ).prepare(call())

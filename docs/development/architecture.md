@@ -96,6 +96,21 @@ Lifecycle events are always emitted and stored before in-process listeners
 run. Domain mutations and event writes are not one transaction, so an event
 failure can follow a successful filesystem mutation.
 
+The runtime records finer-grained events in the same envelope store. A single
+`run_id` correlates model requests, tool preparation and execution, approval
+pauses and resumptions, and the terminal run outcome. These traces contain
+identifiers, bounded status values, token usage, and failure categories; they
+exclude prompts, model text and reasoning, tool arguments and results,
+credentials, and exception messages. They are internal events, not CLI output
+or Vox server-sent events. `session.chat` remains the coarse application
+operation emitted by the service.
+
+Runtime events are awaited in execution order. In particular, an approval and
+`tool.execution.started` are durable before a write tool can run, while
+`tool.execution.completed` follows the durable result. A cancelled process can
+therefore leave a started event without a terminal event. Ethos preserves that
+incomplete trace instead of inventing a completion during cleanup.
+
 ## Deferred AI design
 
 Personas, persona memory, cross-persona conversation, and expanded skill/tool
@@ -104,6 +119,7 @@ abstractions exist until those behaviours are designed.
 
 ## Current limits
 
-- Session serialisation locks are process-local.
+- Session turns are serialised in-process and by a per-session OS file lock
+  across processes on the same filesystem.
 - Session files have atomic replacement but no cross-process transaction.
 - The application event database is write-only through the current API.

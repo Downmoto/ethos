@@ -6,6 +6,7 @@ from typing import cast
 import pytest
 
 from ethos.config import EthosSettings
+from ethos.events.emitters import EnvelopeEventEmitter
 from ethos.models import (
     FinishReason,
     Message,
@@ -63,7 +64,11 @@ def setup_runtime(
     workspaces.create("my-project")
     sessions = SessionManager(workspaces, tmp_path / "sessions")
     session = sessions.create("my-project")
-    return sessions, session, AgentRuntime(sessions, lambda: model)
+    return (
+        sessions,
+        session,
+        AgentRuntime(sessions, lambda: model, events=EnvelopeEventEmitter()),
+    )
 
 
 async def collect(
@@ -168,7 +173,7 @@ def test_runtime_default_factory_resolves_settings_once_per_turn(
     monkeypatch.setattr("ethos.runtime.get_settings", load_settings)
     monkeypatch.setattr(AIProvider, "model", create_model)
     sessions, session, _runtime = setup_runtime(tmp_path, model)
-    runtime = AgentRuntime(sessions)
+    runtime = AgentRuntime(sessions, events=EnvelopeEventEmitter())
 
     async def run_turns() -> None:
         await collect(runtime, session, "first")
@@ -434,12 +439,15 @@ def test_runtime_keeps_conversation_history_isolated(tmp_path: Path) -> None:
     second = sessions.create("my-project")
 
     async def run_turns() -> None:
-        runtime = AgentRuntime(sessions, lambda: model)
+        runtime = AgentRuntime(
+            sessions, lambda: model, events=EnvelopeEventEmitter()
+        )
         await collect(runtime, first, "first")
 
         restarted = AgentRuntime(
             SessionManager(WorkspaceManager(workspace_root), sessions_root),
             lambda: model,
+            events=EnvelopeEventEmitter(),
         )
         await collect(restarted, first, "second")
         await collect(restarted, second, "separate")
@@ -476,7 +484,9 @@ def test_runtime_serialises_each_conversation(tmp_path: Path) -> None:
     sessions = SessionManager(workspaces, tmp_path / "sessions")
     first = sessions.create("my-project")
     second = sessions.create("my-project")
-    runtime = AgentRuntime(sessions, lambda: model)
+    runtime = AgentRuntime(
+        sessions, lambda: model, events=EnvelopeEventEmitter()
+    )
 
     async def run_concurrently() -> None:
         nonlocal most_active

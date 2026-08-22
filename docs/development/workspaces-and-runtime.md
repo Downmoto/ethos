@@ -75,6 +75,7 @@ Each session is an immutable Pydantic value containing:
 - its owning workspace name;
 - creation and optional archival timestamps;
 - the complete Ethos message history.
+- durable tool approvals, including the originating runtime `run_id`.
 
 The workspace association is permanent. Loading verifies that the requested
 workspace exists, the supplied UUID is in canonical lower-case form, the
@@ -98,10 +99,11 @@ session directory, permissioned to `0600`, and replaced into the final path.
 Readers therefore see the old complete record or the new complete record, not
 a partially written JSON document.
 
-Atomic replacement does not provide cross-process concurrency control. Two
-processes can both read the same history and later replace one another's
-updates. Avoid mutating one session concurrently from separate Ethos
-processes unless cross-process locking is added.
+Atomic replacement alone does not provide cross-process concurrency control.
+Runtime turns and approval resolutions additionally hold the session's OS file
+lock, preventing two processes from replacing the same runtime history.
+Administrative session mutations outside that runtime boundary are not part of
+the same cross-process transaction.
 
 ### Archival
 
@@ -180,6 +182,36 @@ history replacement succeeds.
 Under the normal `session.chat` path, the lifecycle event is emitted after
 that final runtime event. A completed `session.chat` event therefore describes
 the newly persisted session state.
+
+### Runtime traces
+
+Every user turn has one UUID `run_id`. The same identifier is stored with a
+pending approval, so a later approval resolution or indeterminate recovery
+continues the original trace even after a process restart. Model rounds are
+one-based, and tool events add call, tool, and approval identifiers as
+applicable.
+
+The event database uses the existing envelope and emitter for these ordered
+runtime events:
+
+- run start, pause, resume, completion, and failure;
+- model-request start, completion, and failure;
+- tool-call request and preparation;
+- tool-execution start and completion;
+- approval request, approval, denial, and indeterminate recovery.
+
+Runtime payloads use schema `runtime.trace` version 1. They deliberately omit
+prompts, answers, reasoning, tool arguments and result content, credentials,
+headers, and exception messages. Failures use stable categories instead.
+These events are internal tracing records and do not appear in CLI or Vox
+streams.
+
+Emission is synchronous and durable-first. A tool cannot run unless its
+execution-start event was stored successfully, and an execution-completed
+event follows the durable result. If event delivery fails after a side effect,
+the persisted result or consumed approval is retained and never replayed
+automatically. Cancellation or process death may leave a trace without a
+terminal event; that accurately represents incomplete work.
 
 ## Contributor invariants
 

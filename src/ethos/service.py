@@ -177,7 +177,7 @@ class Ethos:
 
     def _runtime(self) -> AgentRuntime:
         if self._agent is None:
-            self._agent = AgentRuntime(self.sessions)
+            self._agent = AgentRuntime(self.sessions, events=self.events)
         return self._agent
 
     async def create_workspace(
@@ -256,7 +256,12 @@ class Ethos:
         if not prompt:
             raise ValueError("prompt must not be empty")
         async for event in self._chat_events(
-            self._runtime().run(prompt, workspace, session_id),
+            self._runtime().run(
+                prompt,
+                workspace,
+                session_id,
+                event_location=context.source,
+            ),
             workspace,
             session_id,
             context,
@@ -277,6 +282,7 @@ class Ethos:
                 session_id,
                 approval_id,
                 approved=approved,
+                event_location=context.source,
             ),
             workspace,
             session_id,

@@ -631,6 +631,129 @@ Exit criteria:
 - Replaying the same approval cannot execute the tool twice.
 - CLI and Vox documentation identify the protocol change.
 
+## Milestone 7.5 — Add durable runtime tracing
+
+Commit: `feat: add durable runtime trace events`
+
+This milestone extends the existing event envelope and emitter. It does not
+introduce a second log, tracing backend, or public stream protocol.
+
+Contracts:
+
+- Extend the existing `EventType` enum with these exact durable event types:
+  - `run.started`, `run.paused`, `run.resumed`, `run.completed`, `run.failed`;
+  - `model.request.started`, `model.request.completed`,
+    `model.request.failed`;
+  - `tool.call.requested`, `tool.call.prepared`,
+    `tool.execution.started`, `tool.execution.completed`;
+  - `tool.approval.requested`, `tool.approval.approved`,
+    `tool.approval.denied`, `tool.approval.indeterminate`.
+- Add strict write-time payload models beside the existing event contracts in
+  `src/ethos/events/models.py`. Reuse `EventPayload`, `EventEnvelope`,
+  `event_factory`, and `EnvelopeEventEmitter`; do not add a tracing module or
+  another event abstraction. The envelope's `EventType` is the discriminator.
+- Every runtime payload contains a UUID `run_id`, workspace name, canonical
+  session ID, and one-based model round. Tool payloads also contain call ID and
+  tool name. Approval payloads additionally contain approval ID and effect.
+- A `model.request.completed` event contains finish reason, round usage, and
+  optional provider response ID. A `tool.call.prepared` event contains exactly
+  one outcome:
+  `allow`, `deny`, `require_approval`, `invalid`, or `unknown`. A
+  `tool.execution.completed` event contains only whether its stored result is
+  an error.
+- Failure traces contain a stable category such as `provider`, `protocol`,
+  `persistence`, `limit`, `policy`, or `internal`; never copy exception text.
+- Runtime payloads use schema name `runtime.trace` and schema version 1. Tag
+  envelopes with prefixed workspace, session, and run IDs, plus call, tool,
+  and approval IDs when present. Use the invocation's trusted CLI or Vox source
+  as the existing event-envelope source and the event type as its detail.
+
+Correlation and privacy:
+
+- Generate one `run_id` when a user turn starts and carry it through every
+  model round and tool call belonging to that turn.
+- Persist the `run_id` in `ToolApproval` so approval, denial, restart, and
+  indeterminate recovery continue the original trace rather than starting a
+  new one. Never derive correlation from provider response IDs.
+- Do not store prompts, answer text, reasoning, raw or validated arguments,
+  tool-result content, credentials, headers, or exception messages in trace
+  payloads. Those values remain in their existing canonical stores where
+  applicable; traces identify them by session, call, and approval IDs.
+- Runtime trace events are internal. `ChatEvent`, CLI output, and Vox SSE must
+  never expose them.
+
+Wiring:
+
+- Give `AgentRuntime` the existing `EnvelopeEventEmitter` as a required
+  constructor dependency. `Ethos._runtime()` supplies its application emitter.
+  `run()` and `resolve_approval()` receive the trusted invocation source from
+  the service, construct typed payloads and envelopes with `event_factory`, and
+  await `EnvelopeEventEmitter.emit()` at each trace point.
+- Do not schedule background event tasks. Event ordering must match runtime
+  ordering, durable-first listener delivery remains unchanged, and event
+  persistence failure must be observable.
+- Refine tool preparation to return a tagged prepared or rejected outcome so
+  tracing never infers `deny`, `invalid`, or `unknown` from human-readable tool
+  result text.
+- Emit traces in this exact order relative to work:
+  1. `run.started` before the first model action;
+  2. `model.request.started` immediately before provider streaming;
+  3. `model.request.completed` after stream/completion validation and before
+     response checkpointing, or `model.request.failed` before propagating a
+     provider/protocol failure;
+  4. `tool.call.requested` only after its assistant call is durable;
+  5. `tool.call.prepared` after registry, schema, and policy evaluation;
+  6. `tool.approval.requested` only after pending approval persistence,
+     followed by `run.paused` before the public approval event;
+  7. `run.resumed` after a pending approval and exact payload are validated;
+  8. `tool.approval.approved` after `pending -> executing`, then
+     `tool.execution.started` immediately before execution;
+  9. `tool.approval.denied` only after denial and its error result are durable;
+  10. `tool.execution.completed` only after its result and corresponding
+      history or approval completion are durable;
+  11. `tool.approval.indeterminate` only after crash recovery is durable;
+  12. `run.completed` after the final assistant history checkpoint and before
+      public `done=True`, or `run.failed` before propagating a handled failure.
+- A cancellation or process death may leave a started trace without a terminal
+  trace. Never fabricate completion or failure during async-generator cleanup.
+- Event persistence failure before tool execution must prevent execution. If a
+  post-side-effect trace write fails, retain the already-durable tool result
+  and consumed approval state; tracing must never cause an automatic replay.
+
+Tests:
+
+- Exact ordered trace sequences for text-only, read-tool, approved write-tool,
+  denied write-tool, rejected/invalid/unknown tool, and multi-round runs.
+- One `run_id` across approval pause, service restart, resolution, and final
+  completion; distinct turns receive distinct IDs.
+- Approved execution has a durable `approval.approved` and `tool.started`
+  trace before the tool observes execution.
+- Indeterminate recovery emits once and retains the original run ID.
+- Provider failure, protocol failure, model/tool limits, policy failure, tool
+  error result, persistence failure, and event-emission failure.
+- Event-database round trip, schema version, request source, and prefixed tags.
+- Payload inspection proving forbidden content and credentials are absent.
+- Event-emission failure releases session locks and cannot execute or replay a
+  write tool.
+- CLI and Vox streams contain no runtime trace events.
+
+Documentation:
+
+- Document the runtime trace taxonomy, correlation rules, privacy exclusions,
+  persistence ordering, incomplete-span semantics, and the fact that
+  `session.chat` remains the coarse application-operation event.
+- Correct any concurrency documentation that still describes session locking
+  as process-local.
+
+Exit criteria:
+
+- Stored events reconstruct one ordered model/tool/approval run across a
+  process restart using `run_id` without inspecting prompt or result content.
+- Every write execution is preceded by durable approval and execution-started
+  traces, and trace failure cannot produce an unapproved or duplicate effect.
+- Runtime tracing adds no new module, database, event abstraction, background
+  worker, public SSE variant, or dependency.
+
 ## Milestone 8 — Separate conversation context from persistence
 
 Commit: `refactor: add model context builder`

@@ -7,11 +7,17 @@ and runtime concurrency compose.
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from typing import Literal, cast
+from enum import StrEnum
+from typing import Annotated, Literal, cast
+from uuid import UUID, uuid4
 
-from pydantic import ValidationError
+from pydantic import ConfigDict, Field, ValidationError, field_validator
 
 from ethos.config import get_settings
+from ethos.events import event_factory
+from ethos.events.emitters import EnvelopeEventEmitter
+from ethos.events.models import EventPayload, NonEmptyString
+from ethos.events.types import EventType
 from ethos.models import (
     FinishReason,
     Message,
@@ -28,15 +34,19 @@ from ethos.models import (
     ToolResultPart,
     Usage,
 )
-from ethos.provider import AIProvider, ModelProtocolError
-from ethos.sessions import ApprovalStateError, SessionManager
+from ethos.provider import AIProvider, ModelProtocolError, ModelProviderError
+from ethos.sessions import ApprovalStateError, Session, SessionManager
 from ethos.tools import (
     Allow,
     ApprovalState,
     PreparedToolCall,
+    RejectedToolCall,
     RequireApproval,
     ToolApproval,
+    ToolEffect,
     ToolExecutor,
+    ToolPolicyError,
+    ToolPreparationOutcome,
     ToolRegistry,
     approval_request_id,
 )
@@ -49,6 +59,86 @@ MAX_TOOL_CALLS_PER_RESPONSE = 16
 
 class AgentLimitError(RuntimeError):
     """The model exceeded a bounded agent-loop limit."""
+
+
+class RuntimeEventError(RuntimeError):
+    """A runtime trace event could not be emitted."""
+
+
+class RuntimeFailure(StrEnum):
+    PROVIDER = "provider"
+    PROTOCOL = "protocol"
+    PERSISTENCE = "persistence"
+    LIMIT = "limit"
+    POLICY = "policy"
+    INTERNAL = "internal"
+
+
+class RuntimeEventPayload(EventPayload):
+    """Common correlation fields for one agent run event."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_name: NonEmptyString | None = "runtime.trace"
+    schema_version: int = 1
+    run_id: UUID
+    workspace_name: NonEmptyString
+    session_id: UUID
+    round_number: Annotated[int, Field(ge=1)]
+
+    @field_validator("schema_name")
+    @classmethod
+    def schema_name_must_be_runtime_trace(cls, value: str | None) -> str:
+        if value != "runtime.trace":
+            raise ValueError("runtime event schema name must be runtime.trace")
+        return value
+
+    @field_validator("schema_version")
+    @classmethod
+    def schema_version_must_be_one(cls, value: int) -> int:
+        if value != 1:
+            raise ValueError("runtime event schema version must be 1")
+        return value
+
+
+class RunFailedEventPayload(RuntimeEventPayload):
+    failure: RuntimeFailure
+
+
+class ModelCompletedEventPayload(RuntimeEventPayload):
+    finish_reason: FinishReason
+    usage: Usage
+    provider_response_id: str | None = None
+
+
+class ModelFailedEventPayload(RuntimeEventPayload):
+    failure: RuntimeFailure
+
+
+class ToolEventPayload(RuntimeEventPayload):
+    call_id: NonEmptyString
+    tool_name: NonEmptyString
+
+
+class ToolPreparedEventPayload(ToolEventPayload):
+    outcome: ToolPreparationOutcome
+    effect: ToolEffect | None = None
+
+
+class ToolExecutionEventPayload(ToolEventPayload):
+    effect: ToolEffect
+
+
+class ToolCompletedEventPayload(ToolExecutionEventPayload):
+    is_error: bool
+
+
+class ApprovalEventPayload(ToolExecutionEventPayload):
+    approval_id: UUID
+
+
+class ApprovalRequestedEventPayload(ApprovalEventPayload):
+    reason: NonEmptyString
 
 
 @dataclass(frozen=True)
@@ -64,6 +154,11 @@ class PromptStreamEvent:
 @dataclass(frozen=True)
 class ApprovalStreamEvent:
     approval: ToolApproval
+
+
+@dataclass
+class _RunProgress:
+    round_number: int
 
 
 type RuntimeStreamEvent = PromptStreamEvent | ApprovalStreamEvent
@@ -83,6 +178,7 @@ class AgentRuntime:
         tool_registry: ToolRegistry | None = None,
         tool_executor: ToolExecutor | None = None,
         *,
+        events: EnvelopeEventEmitter,
         max_model_rounds: int = MAX_MODEL_ROUNDS,
         max_tool_calls_per_response: int = MAX_TOOL_CALLS_PER_RESPONSE,
     ) -> None:
@@ -91,6 +187,7 @@ class AgentRuntime:
         if max_tool_calls_per_response < 1:
             raise ValueError("max_tool_calls_per_response must be positive")
         self._sessions = sessions
+        self._events = events
         self._model_factory = (
             model_factory if model_factory is not None else _model_from_settings
         )
@@ -111,6 +208,8 @@ class AgentRuntime:
         prompt: str,
         workspace_name: str,
         session_id: str,
+        *,
+        event_location: str = "runtime",
     ) -> AsyncIterator[RuntimeStreamEvent]:
         """Stream and commit one turn for an active session.
 
@@ -123,34 +222,65 @@ class AgentRuntime:
         lock = self._locks.setdefault(key, asyncio.Lock())
         async with lock:
             with self._sessions.runtime_lock(workspace_name, session_id):
-                session = self._sessions.recover_executing_approvals(
-                    workspace_name, session_id
+                session = await self._recover_executing_approvals(
+                    workspace_name,
+                    session_id,
+                    event_location,
                 )
                 if session.archived:
                     raise ValueError(f"session is archived: {session_id}")
                 _validate_tool_history(session.messages)
+
+                run_id = uuid4()
+                await self._emit(
+                    EventType.RUN_STARTED,
+                    RuntimeEventPayload(
+                        run_id=run_id,
+                        workspace_name=workspace_name,
+                        session_id=UUID(session_id),
+                        round_number=1,
+                    ),
+                    event_location,
+                )
 
                 user_message = Message(
                     role=Role.USER,
                     parts=(TextPart(text=prompt),),
                 )
                 messages = (*session.messages, user_message)
-                model = self._model_factory()
-                tools = (
-                    self._tool_registry.definitions
-                    if model.features.tools
-                    else ()
-                )
-                async for event in self._continue(
-                    workspace_name,
-                    session_id,
-                    messages,
-                    model,
-                    tools,
-                    Usage(),
-                    round_number=1,
-                ):
-                    yield event
+                progress = _RunProgress(round_number=1)
+                try:
+                    model = self._model_factory()
+                    tools = (
+                        self._tool_registry.definitions
+                        if model.features.tools
+                        else ()
+                    )
+                    async for event in self._continue(
+                        workspace_name,
+                        session_id,
+                        messages,
+                        model,
+                        tools,
+                        Usage(),
+                        run_id=run_id,
+                        event_location=event_location,
+                        round_number=1,
+                        progress=progress,
+                    ):
+                        yield event
+                except (asyncio.CancelledError, RuntimeEventError):
+                    raise
+                except Exception as error:
+                    await self._emit_run_failed(
+                        run_id,
+                        workspace_name,
+                        session_id,
+                        progress.round_number,
+                        event_location,
+                        error,
+                    )
+                    raise
 
     async def resolve_approval(
         self,
@@ -159,6 +289,7 @@ class AgentRuntime:
         approval_id: str,
         *,
         approved: bool,
+        event_location: str = "runtime",
     ) -> AsyncIterator[RuntimeStreamEvent]:
         """Consume one pending approval and resume its interrupted turn."""
         key = (workspace_name, session_id)
@@ -170,6 +301,7 @@ class AgentRuntime:
                     session_id,
                     approval_id,
                     approved=approved,
+                    event_location=event_location,
                 ):
                     yield event
 
@@ -180,9 +312,12 @@ class AgentRuntime:
         approval_id: str,
         *,
         approved: bool,
+        event_location: str,
     ) -> AsyncIterator[RuntimeStreamEvent]:
-        session = self._sessions.recover_executing_approvals(
-            workspace_name, session_id
+        session = await self._recover_executing_approvals(
+            workspace_name,
+            session_id,
+            event_location,
         )
         if session.archived:
             raise ValueError(f"session is archived: {session_id}")
@@ -195,60 +330,121 @@ class AgentRuntime:
             )
         call = _approval_call(session.messages, approval)
         messages = session.messages
+        progress = _RunProgress(round_number=approval.round_number)
 
-        if approved:
-            prepared = _restore_prepared_call(
-                self._tool_registry, approval, call
-            )
+        await self._emit(
+            EventType.RUN_RESUMED,
+            RuntimeEventPayload(
+                run_id=approval.run_id,
+                workspace_name=workspace_name,
+                session_id=UUID(session_id),
+                round_number=approval.round_number,
+            ),
+            event_location,
+        )
+
+        try:
+            if approved:
+                prepared = _restore_prepared_call(
+                    self._tool_registry, approval, call
+                )
+                self._sessions.transition_approval(
+                    workspace_name,
+                    session_id,
+                    approval_id,
+                    expected=ApprovalState.PENDING,
+                    state=ApprovalState.EXECUTING,
+                )
+                await self._emit(
+                    EventType.TOOL_APPROVAL_APPROVED,
+                    _approval_payload(approval, workspace_name, session_id),
+                    event_location,
+                )
+                await self._emit(
+                    EventType.TOOL_EXECUTION_STARTED,
+                    _tool_execution_payload(
+                        approval, workspace_name, session_id
+                    ),
+                    event_location,
+                )
+                result = await self._tool_executor.run(prepared)
+                state = ApprovalState.COMPLETED
+            else:
+                result = ToolResultPart(
+                    call_id=call.call_id,
+                    name=call.name,
+                    content="tool execution denied",
+                    is_error=True,
+                )
+                state = ApprovalState.DENIED
+
+            messages = (*messages, Message(role=Role.TOOL, parts=(result,)))
             self._sessions.transition_approval(
                 workspace_name,
                 session_id,
                 approval_id,
-                expected=ApprovalState.PENDING,
-                state=ApprovalState.EXECUTING,
+                expected=(
+                    ApprovalState.EXECUTING
+                    if approved
+                    else ApprovalState.PENDING
+                ),
+                state=state,
+                result=result,
+                messages=messages,
             )
-            result = await self._tool_executor.run(prepared)
-            state = ApprovalState.COMPLETED
-        else:
-            result = ToolResultPart(
-                call_id=call.call_id,
-                name=call.name,
-                content="tool execution denied",
-                is_error=True,
+            if approved:
+                await self._emit(
+                    EventType.TOOL_EXECUTION_COMPLETED,
+                    ToolCompletedEventPayload(
+                        **_tool_execution_payload(
+                            approval, workspace_name, session_id
+                        ).model_dump(),
+                        is_error=result.is_error,
+                    ),
+                    event_location,
+                )
+            else:
+                await self._emit(
+                    EventType.TOOL_APPROVAL_DENIED,
+                    _approval_payload(approval, workspace_name, session_id),
+                    event_location,
+                )
+
+            model = self._model_factory()
+            tools = (
+                self._tool_registry.definitions if model.features.tools else ()
             )
-            state = ApprovalState.DENIED
-
-        messages = (*messages, Message(role=Role.TOOL, parts=(result,)))
-        self._sessions.transition_approval(
-            workspace_name,
-            session_id,
-            approval_id,
-            expected=(
-                ApprovalState.EXECUTING if approved else ApprovalState.PENDING
-            ),
-            state=state,
-            result=result,
-            messages=messages,
-        )
-
-        model = self._model_factory()
-        tools = self._tool_registry.definitions if model.features.tools else ()
-        pending_calls = _unresolved_tool_calls(messages)
-        async for event in self._continue(
-            workspace_name,
-            session_id,
-            messages,
-            model,
-            tools,
-            approval.usage,
-            round_number=(
-                approval.round_number
-                if pending_calls
-                else approval.round_number + 1
-            ),
-            pending_calls=pending_calls,
-        ):
-            yield event
+            pending_calls = _unresolved_tool_calls(messages)
+            async for event in self._continue(
+                workspace_name,
+                session_id,
+                messages,
+                model,
+                tools,
+                approval.usage,
+                run_id=approval.run_id,
+                event_location=event_location,
+                round_number=(
+                    approval.round_number
+                    if pending_calls
+                    else approval.round_number + 1
+                ),
+                progress=progress,
+                pending_calls=pending_calls,
+            ):
+                yield event
+        except (asyncio.CancelledError, RuntimeEventError):
+            raise
+        except Exception as error:
+            await self._emit_run_failed(
+                approval.run_id,
+                workspace_name,
+                session_id,
+                progress.round_number,
+                event_location,
+                error,
+            )
+            raise
 
     async def _continue(
         self,
@@ -259,15 +455,32 @@ class AgentRuntime:
         tools: tuple[ToolDefinition, ...],
         usage: Usage,
         *,
+        run_id: UUID,
+        event_location: str,
         round_number: int,
+        progress: _RunProgress,
         pending_calls: tuple[ToolCallPart, ...] = (),
     ) -> AsyncIterator[RuntimeStreamEvent]:
         while round_number <= self._max_model_rounds:
+            progress.round_number = round_number
             if pending_calls:
                 for call in pending_calls:
                     prepared = await self._tool_executor.prepare(call)
-                    if isinstance(prepared, ToolResultPart):
-                        result = prepared
+                    if isinstance(prepared, RejectedToolCall):
+                        await self._emit(
+                            EventType.TOOL_CALL_PREPARED,
+                            _tool_prepared_payload(
+                                run_id,
+                                workspace_name,
+                                session_id,
+                                round_number,
+                                call,
+                                prepared.outcome,
+                                prepared.effect,
+                            ),
+                            event_location,
+                        )
+                        result = prepared.result
                     elif isinstance(prepared.decision, RequireApproval):
                         arguments = cast(
                             dict[str, object],
@@ -275,6 +488,7 @@ class AgentRuntime:
                         )
                         approval = ToolApproval(
                             id=approval_request_id(session_id, call.call_id),
+                            run_id=run_id,
                             call=call,
                             tool_name=prepared.tool.definition.name,
                             arguments=arguments,
@@ -286,9 +500,69 @@ class AgentRuntime:
                         self._sessions.add_approval(
                             workspace_name, session_id, approval
                         )
+                        await self._emit(
+                            EventType.TOOL_CALL_PREPARED,
+                            _tool_prepared_payload(
+                                run_id,
+                                workspace_name,
+                                session_id,
+                                round_number,
+                                call,
+                                ToolPreparationOutcome.REQUIRE_APPROVAL,
+                                prepared.tool.effect,
+                            ),
+                            event_location,
+                        )
+                        await self._emit(
+                            EventType.TOOL_APPROVAL_REQUESTED,
+                            ApprovalRequestedEventPayload(
+                                **_approval_payload(
+                                    approval,
+                                    workspace_name,
+                                    session_id,
+                                ).model_dump(),
+                                reason=approval.reason,
+                            ),
+                            event_location,
+                        )
+                        await self._emit(
+                            EventType.RUN_PAUSED,
+                            RuntimeEventPayload(
+                                run_id=approval.run_id,
+                                workspace_name=workspace_name,
+                                session_id=UUID(session_id),
+                                round_number=approval.round_number,
+                            ),
+                            event_location,
+                        )
                         yield ApprovalStreamEvent(approval)
                         return
                     else:
+                        await self._emit(
+                            EventType.TOOL_CALL_PREPARED,
+                            _tool_prepared_payload(
+                                run_id,
+                                workspace_name,
+                                session_id,
+                                round_number,
+                                call,
+                                ToolPreparationOutcome.ALLOW,
+                                prepared.tool.effect,
+                            ),
+                            event_location,
+                        )
+                        await self._emit(
+                            EventType.TOOL_EXECUTION_STARTED,
+                            _tool_execution_payload_from_call(
+                                run_id,
+                                workspace_name,
+                                session_id,
+                                round_number,
+                                call,
+                                prepared.tool.effect,
+                            ),
+                            event_location,
+                        )
                         result = await self._tool_executor.run(prepared)
                     messages = (
                         *messages,
@@ -299,6 +573,24 @@ class AgentRuntime:
                         session_id,
                         messages,
                     )
+                    if isinstance(prepared, PreparedToolCall) and isinstance(
+                        prepared.decision, Allow
+                    ):
+                        await self._emit(
+                            EventType.TOOL_EXECUTION_COMPLETED,
+                            ToolCompletedEventPayload(
+                                **_tool_execution_payload_from_call(
+                                    run_id,
+                                    workspace_name,
+                                    session_id,
+                                    round_number,
+                                    call,
+                                    prepared.tool.effect,
+                                ).model_dump(),
+                                is_error=result.is_error,
+                            ),
+                            event_location,
+                        )
                 pending_calls = ()
                 round_number += 1
                 continue
@@ -308,36 +600,91 @@ class AgentRuntime:
             streamed_reasoning = ""
             completed: ModelResponse | None = None
 
-            async for event in model.stream(request):
-                if completed is not None:
-                    raise ModelProtocolError("model streamed after completion")
-                if isinstance(event, TextDelta):
-                    streamed_text += event.text
-                    if event.text:
-                        yield PromptStreamEvent(text=event.text)
-                elif isinstance(event, ReasoningDelta):
-                    streamed_reasoning += event.text
-                    if event.text:
-                        yield PromptStreamEvent(
-                            text=event.text,
-                            text_kind="reasoning",
+            await self._emit(
+                EventType.MODEL_REQUEST_STARTED,
+                RuntimeEventPayload(
+                    run_id=run_id,
+                    workspace_name=workspace_name,
+                    session_id=UUID(session_id),
+                    round_number=round_number,
+                ),
+                event_location,
+            )
+            try:
+                async for event in model.stream(request):
+                    if completed is not None:
+                        raise ModelProtocolError(
+                            "model streamed after completion"
                         )
-                else:
-                    completed = event.response
+                    if isinstance(event, TextDelta):
+                        streamed_text += event.text
+                        if event.text:
+                            yield PromptStreamEvent(text=event.text)
+                    elif isinstance(event, ReasoningDelta):
+                        streamed_reasoning += event.text
+                        if event.text:
+                            yield PromptStreamEvent(
+                                text=event.text,
+                                text_kind="reasoning",
+                            )
+                    else:
+                        completed = event.response
 
-            if completed is None:
-                raise ModelProtocolError("model stream ended before completion")
-            assistant_message = _assistant_message(
-                completed,
-                streamed_text,
-                streamed_reasoning,
-            )
-            calls = tuple(
-                part
-                for part in completed.parts
-                if isinstance(part, ToolCallPart)
-            )
+                if completed is None:
+                    raise ModelProtocolError(
+                        "model stream ended before completion"
+                    )
+                assistant_message = _assistant_message(
+                    completed,
+                    streamed_text,
+                    streamed_reasoning,
+                )
+                calls = tuple(
+                    part
+                    for part in completed.parts
+                    if isinstance(part, ToolCallPart)
+                )
+                if calls and not tools:
+                    raise ModelProtocolError(
+                        "text runtime received unsupported parts"
+                    )
+                if calls and completed.finish_reason not in (
+                    FinishReason.TOOL_CALL,
+                    FinishReason.OTHER,
+                ):
+                    raise ModelProtocolError(
+                        "tool response has contradictory finish reason"
+                    )
+            except (asyncio.CancelledError, RuntimeEventError):
+                raise
+            except Exception as error:
+                await self._emit(
+                    EventType.MODEL_REQUEST_FAILED,
+                    ModelFailedEventPayload(
+                        run_id=run_id,
+                        workspace_name=workspace_name,
+                        session_id=UUID(session_id),
+                        round_number=round_number,
+                        failure=_failure_kind(error),
+                    ),
+                    event_location,
+                )
+                raise
+
             usage = _add_usage(usage, completed.usage)
+            await self._emit(
+                EventType.MODEL_REQUEST_COMPLETED,
+                ModelCompletedEventPayload(
+                    run_id=run_id,
+                    workspace_name=workspace_name,
+                    session_id=UUID(session_id),
+                    round_number=round_number,
+                    finish_reason=completed.finish_reason,
+                    usage=completed.usage,
+                    provider_response_id=completed.provider_response_id,
+                ),
+                event_location,
+            )
 
             if not calls:
                 messages = (*messages, assistant_message)
@@ -346,20 +693,18 @@ class AgentRuntime:
                     session_id,
                     messages,
                 )
+                await self._emit(
+                    EventType.RUN_COMPLETED,
+                    RuntimeEventPayload(
+                        run_id=run_id,
+                        workspace_name=workspace_name,
+                        session_id=UUID(session_id),
+                        round_number=round_number,
+                    ),
+                    event_location,
+                )
                 yield PromptStreamEvent(usage=usage, done=True)
                 return
-
-            if not tools:
-                raise ModelProtocolError(
-                    "text runtime received unsupported parts"
-                )
-            if completed.finish_reason not in (
-                FinishReason.TOOL_CALL,
-                FinishReason.OTHER,
-            ):
-                raise ModelProtocolError(
-                    "tool response has contradictory finish reason"
-                )
 
             messages = (*messages, assistant_message)
             self._sessions.replace_messages(
@@ -367,6 +712,18 @@ class AgentRuntime:
                 session_id,
                 messages,
             )
+            for call in calls:
+                await self._emit(
+                    EventType.TOOL_CALL_REQUESTED,
+                    _tool_payload(
+                        run_id,
+                        workspace_name,
+                        session_id,
+                        round_number,
+                        call,
+                    ),
+                    event_location,
+                )
 
             limit_error: str | None = None
             if len(calls) > self._max_tool_calls_per_response:
@@ -387,6 +744,69 @@ class AgentRuntime:
 
         raise AssertionError("unreachable model round")
 
+    async def _recover_executing_approvals(
+        self,
+        workspace_name: str,
+        session_id: str,
+        event_location: str,
+    ) -> Session:
+        session = self._sessions.get(workspace_name, session_id)
+        interrupted = tuple(
+            approval
+            for approval in session.approvals
+            if approval.state is ApprovalState.EXECUTING
+        )
+        recovered = self._sessions.recover_executing_approvals(
+            workspace_name, session_id
+        )
+        for approval in interrupted:
+            await self._emit(
+                EventType.TOOL_APPROVAL_INDETERMINATE,
+                _approval_payload(approval, workspace_name, session_id),
+                event_location,
+            )
+        return recovered
+
+    async def _emit(
+        self,
+        event_type: EventType,
+        payload: RuntimeEventPayload,
+        event_location: str,
+    ) -> None:
+        try:
+            await self._events.emit(
+                event_factory(
+                    event_type,
+                    location=event_location,
+                    details=event_type.value,
+                    payload=payload,
+                    tags=_runtime_tags(payload),
+                )
+            )
+        except Exception as error:
+            raise RuntimeEventError("runtime event emission failed") from error
+
+    async def _emit_run_failed(
+        self,
+        run_id: UUID,
+        workspace_name: str,
+        session_id: str,
+        round_number: int,
+        event_location: str,
+        error: Exception,
+    ) -> None:
+        await self._emit(
+            EventType.RUN_FAILED,
+            RunFailedEventPayload(
+                run_id=run_id,
+                workspace_name=workspace_name,
+                session_id=UUID(session_id),
+                round_number=round_number,
+                failure=_failure_kind(error),
+            ),
+            event_location,
+        )
+
 
 def _model_from_settings() -> Model:
     settings = get_settings()
@@ -395,6 +815,125 @@ def _model_from_settings() -> Model:
         settings.provider.model_name,
         settings.provider.reasoning_effort,
     )
+
+
+def _failure_kind(error: Exception) -> RuntimeFailure:
+    if isinstance(error, ModelProviderError):
+        return RuntimeFailure.PROVIDER
+    if isinstance(error, ModelProtocolError):
+        return RuntimeFailure.PROTOCOL
+    if isinstance(error, AgentLimitError):
+        return RuntimeFailure.LIMIT
+    if isinstance(error, ToolPolicyError):
+        return RuntimeFailure.POLICY
+    if isinstance(error, OSError):
+        return RuntimeFailure.PERSISTENCE
+    return RuntimeFailure.INTERNAL
+
+
+def _tool_payload(
+    run_id: UUID,
+    workspace_name: str,
+    session_id: str,
+    round_number: int,
+    call: ToolCallPart,
+) -> ToolEventPayload:
+    return ToolEventPayload(
+        run_id=run_id,
+        workspace_name=workspace_name,
+        session_id=UUID(session_id),
+        round_number=round_number,
+        call_id=call.call_id,
+        tool_name=call.name,
+    )
+
+
+def _tool_prepared_payload(
+    run_id: UUID,
+    workspace_name: str,
+    session_id: str,
+    round_number: int,
+    call: ToolCallPart,
+    outcome: ToolPreparationOutcome,
+    effect: ToolEffect | None,
+) -> ToolPreparedEventPayload:
+    return ToolPreparedEventPayload(
+        **_tool_payload(
+            run_id,
+            workspace_name,
+            session_id,
+            round_number,
+            call,
+        ).model_dump(),
+        outcome=outcome,
+        effect=effect,
+    )
+
+
+def _tool_execution_payload_from_call(
+    run_id: UUID,
+    workspace_name: str,
+    session_id: str,
+    round_number: int,
+    call: ToolCallPart,
+    effect: ToolEffect,
+) -> ToolExecutionEventPayload:
+    return ToolExecutionEventPayload(
+        **_tool_payload(
+            run_id,
+            workspace_name,
+            session_id,
+            round_number,
+            call,
+        ).model_dump(),
+        effect=effect,
+    )
+
+
+def _approval_payload(
+    approval: ToolApproval,
+    workspace_name: str,
+    session_id: str,
+) -> ApprovalEventPayload:
+    return ApprovalEventPayload(
+        run_id=approval.run_id,
+        workspace_name=workspace_name,
+        session_id=UUID(session_id),
+        round_number=approval.round_number,
+        call_id=approval.call.call_id,
+        tool_name=approval.tool_name,
+        effect=approval.effect,
+        approval_id=UUID(approval.id),
+    )
+
+
+def _tool_execution_payload(
+    approval: ToolApproval,
+    workspace_name: str,
+    session_id: str,
+) -> ToolExecutionEventPayload:
+    return ToolExecutionEventPayload(
+        run_id=approval.run_id,
+        workspace_name=workspace_name,
+        session_id=UUID(session_id),
+        round_number=approval.round_number,
+        call_id=approval.call.call_id,
+        tool_name=approval.tool_name,
+        effect=approval.effect,
+    )
+
+
+def _runtime_tags(payload: RuntimeEventPayload) -> tuple[str, ...]:
+    tags = [
+        f"workspace:{payload.workspace_name}",
+        f"session:{payload.session_id}",
+        f"run:{payload.run_id}",
+    ]
+    if isinstance(payload, ToolEventPayload):
+        tags.extend((f"call:{payload.call_id}", f"tool:{payload.tool_name}"))
+    if isinstance(payload, ApprovalEventPayload):
+        tags.append(f"approval:{payload.approval_id}")
+    return tuple(tags)
 
 
 def _assistant_message(
