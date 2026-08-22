@@ -486,6 +486,48 @@ def test_interrupted_execution_becomes_indeterminate(tmp_path: Path) -> None:
     assert tool.values == []
 
 
+def test_session_rejects_invalid_approval_transitions(tmp_path: Path) -> None:
+    model = FakeModel(
+        (call_response(tool_call()),),
+        features=ModelFeatures(tools=True),
+    )
+    sessions, session, runtime, _tool = setup_runtime(
+        tmp_path,
+        model,
+        RuntimeTool(effect=ToolEffect.WRITE),
+    )
+    pending = asyncio.run(
+        _collect_runtime(runtime.run("hello", "my-project", str(session.id)))
+    )
+    event = pending[0]
+    assert isinstance(event, ApprovalStreamEvent)
+
+    with pytest.raises(ApprovalStateError, match="pending -> completed"):
+        sessions.transition_approval(
+            "my-project",
+            str(session.id),
+            event.approval.id,
+            expected=ApprovalState.PENDING,
+            state=ApprovalState.COMPLETED,
+            result=ToolResultPart(
+                call_id="call-1",
+                name="echo",
+                content="result",
+            ),
+        )
+    with pytest.raises(ApprovalStateError, match="invalid approval transition"):
+        sessions.transition_approval(
+            "my-project",
+            str(session.id),
+            event.approval.id,
+            expected=ApprovalState.PENDING,
+            state=ApprovalState.DENIED,
+        )
+
+    stored = sessions.get("my-project", str(session.id))
+    assert stored.approvals[0].state is ApprovalState.PENDING
+
+
 async def _collect_runtime(
     events: AsyncIterator[PromptStreamEvent | ApprovalStreamEvent],
 ) -> list[PromptStreamEvent | ApprovalStreamEvent]:
@@ -882,6 +924,43 @@ def test_restarted_runtime_rejects_unresolved_tool_history(
             )
             for _index in range(result_count)
         ),
+    )
+    sessions.replace_messages("my-project", str(session.id), messages)
+    restarted = AgentRuntime(
+        sessions,
+        lambda: model,
+        ToolRegistry((RuntimeTool(),)),
+    )
+
+    with pytest.raises(ModelProtocolError, match="unresolved tool call"):
+        asyncio.run(collect(restarted, session))
+
+    assert model.requests == []
+
+
+@pytest.mark.parametrize("case", ("result-before-call", "wrong-tool-name"))
+def test_restarted_runtime_rejects_malformed_tool_history(
+    tmp_path: Path,
+    case: str,
+) -> None:
+    model = FakeModel(())
+    sessions, session, _runtime, _tool = setup_runtime(tmp_path, model)
+    call = tool_call()
+    result = Message(
+        role=Role.TOOL,
+        parts=(
+            ToolResultPart(
+                call_id=call.call_id,
+                name="other" if case == "wrong-tool-name" else call.name,
+                content="result",
+            ),
+        ),
+    )
+    assistant = Message(role=Role.ASSISTANT, parts=(call,))
+    messages = (
+        (result, assistant)
+        if case == "result-before-call"
+        else (assistant, result)
     )
     sessions.replace_messages("my-project", str(session.id), messages)
     restarted = AgentRuntime(

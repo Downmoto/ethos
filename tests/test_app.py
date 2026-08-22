@@ -215,38 +215,6 @@ def test_ask_renders_reasoning_separately(
     assert "Reasoning\nthinking" in result.stderr
 
 
-def test_ask_file_excludes_reasoning(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    home = initialise_home(tmp_path / ".ethos")
-    output = tmp_path / "answer.txt"
-    monkeypatch.setattr(app, "HOME_PATH", home)
-
-    async def chunks(_prompt: str) -> AsyncIterator[ChatChunk]:
-        yield ChatChunk(
-            text="thinking",
-            text_kind="reasoning",
-            workspace="default",
-            session_id="session",
-        )
-        yield ChatChunk(
-            text="answer",
-            workspace="default",
-            session_id="session",
-            done=True,
-        )
-
-    monkeypatch.setattr(app, "_ask_requests", chunks)
-
-    result = CliRunner().invoke(
-        app.main,
-        ["ask", "hi", "--to", str(output)],
-    )
-
-    assert result.exit_code == 0
-    assert output.read_text() == "answer"
-
-
 def approval_chunk() -> ApprovalChunk:
     return ApprovalChunk(
         approval_id="approval-1",

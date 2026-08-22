@@ -53,6 +53,28 @@ def _is_loopback(host: str) -> bool:
         return host == "localhost"
 
 
+async def _event_stream(
+    events: AsyncIterator[ChatEvent],
+) -> StreamingResponse:
+    try:
+        first = await anext(events)
+    except StopAsyncIteration:
+        first = None
+
+    async def encoded() -> AsyncIterator[str]:
+        try:
+            if first is not None:
+                yield f"data: {first.model_dump_json()}\n\n"
+            async for event in events:
+                yield f"data: {event.model_dump_json()}\n\n"
+        finally:
+            close = getattr(events, "aclose", None)
+            if close is not None:
+                await close()
+
+    return StreamingResponse(encoded(), media_type="text/event-stream")
+
+
 class VoxServer:
     """Expose Ethos through its sole external application protocol."""
 
@@ -117,22 +139,6 @@ class VoxServer:
             _request: Request, error: ApprovalStateError
         ) -> JSONResponse:
             return JSONResponse(status_code=409, content={"detail": str(error)})
-
-        async def stream(
-            events: AsyncIterator[ChatEvent],
-        ) -> StreamingResponse:
-            try:
-                first = await anext(events)
-            except StopAsyncIteration:
-                first = None
-
-            async def encoded() -> AsyncIterator[str]:
-                if first is not None:
-                    yield f"data: {first.model_dump_json()}\n\n"
-                async for event in events:
-                    yield f"data: {event.model_dump_json()}\n\n"
-
-            return StreamingResponse(encoded(), media_type="text/event-stream")
 
         @app.post("/workspaces", status_code=status.HTTP_201_CREATED)
         async def create_workspace(
@@ -199,7 +205,7 @@ class VoxServer:
             request: Request,
         ) -> StreamingResponse:
             request_context = context(request)
-            return await stream(
+            return await _event_stream(
                 ethos.chat(workspace, session_id, body.prompt, request_context)
             )
 
@@ -213,7 +219,7 @@ class VoxServer:
             approval_id: str,
             request: Request,
         ) -> StreamingResponse:
-            return await stream(
+            return await _event_stream(
                 ethos.resolve_approval(
                     workspace,
                     session_id,
@@ -233,7 +239,7 @@ class VoxServer:
             approval_id: str,
             request: Request,
         ) -> StreamingResponse:
-            return await stream(
+            return await _event_stream(
                 ethos.resolve_approval(
                     workspace,
                     session_id,

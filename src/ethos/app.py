@@ -4,16 +4,13 @@ import asyncio
 import getpass
 import json
 import logging
-import math
 import shutil
 import subprocess
 import sys
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import suppress
 from functools import wraps
 from pathlib import Path
-from time import monotonic
 from typing import TypeGuard
 
 import click
@@ -31,7 +28,6 @@ from ethos.home import initialise_home
 from ethos.onboarding import run_onboarding
 from ethos.service import (
     ApprovalChunk,
-    ChatChunk,
     ChatEvent,
     Ethos,
     RequestContext,
@@ -49,93 +45,11 @@ logging.getLogger("opentelemetry.context").addFilter(
 )
 
 
-class _ThinkingStatus:
-    def __init__(self) -> None:
-        self._started_at = monotonic()
-        self._line_width = 0
-
-    async def show(self) -> None:
-        while True:
-            await asyncio.sleep(0.1)
-            self.render()
-
-    def render(self) -> None:
-        status = f"Thinking · {monotonic() - self._started_at:.1f}s"
-        self._line_width = max(self._line_width, len(status))
-        click.echo(f"\r{status}", nl=False, err=True)
-
-    def clear(self) -> None:
-        click.echo(f"\r{' ' * self._line_width}\r", nl=False, err=True)
-
-
-class _TokenTracker:
-    def __init__(self, output_path: Path) -> None:
-        self._output_path = output_path
-        self._characters = 0
-        self._line_width = 0
-        self._started_at = monotonic()
-
-    def update(self, chunk: ChatChunk) -> None:
-        if chunk.text_kind == "answer":
-            self._characters += len(chunk.text)
-        usage = (
-            chunk.usage if chunk.usage and chunk.usage.total_tokens else None
-        )
-        action = "Wrote" if chunk.done else "Writing"
-        tokens = (
-            f"~{math.ceil(self._characters / 4):,} output tokens"
-            if usage is None
-            else f"{usage.input_tokens:,} input + {usage.output_tokens:,} "
-            f"output = {usage.total_tokens:,} tokens"
-        )
-        self._render(
-            f"{action} {self._output_path} · {tokens} · "
-            f"{monotonic() - self._started_at:.1f}s",
-            done=chunk.done,
-        )
-
-    def fail(self) -> None:
-        self._render(
-            f"Stopped {self._output_path} · partial output retained",
-            done=True,
-        )
-
-    def _render(self, status: str, *, done: bool) -> None:
-        self._line_width = max(self._line_width, len(status))
-        click.echo(f"\r{status.ljust(self._line_width)}", nl=done, err=True)
-
-
-async def _stream_response(
-    chunks: AsyncIterator[ChatEvent],
-) -> AsyncIterator[ChatEvent]:
-    status = _ThinkingStatus()
-    status.render()
-    status_task: asyncio.Task[None] | None = asyncio.create_task(status.show())
-    try:
-        async for chunk in chunks:
-            visible = (
-                isinstance(chunk, ApprovalChunk) or chunk.text or chunk.done
-            )
-            if status_task is not None and visible:
-                status_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await status_task
-                status.clear()
-                status_task = None
-            yield chunk
-    finally:
-        if status_task is not None:
-            status_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await status_task
-            status.clear()
-
-
 async def _print_response(chunks: AsyncIterator[ChatEvent]) -> None:
     wrote_output = False
     wrote_reasoning = False
     try:
-        async for chunk in _stream_response(chunks):
+        async for chunk in chunks:
             if isinstance(chunk, ApprovalChunk):
                 continue
             if chunk.text and chunk.text_kind == "reasoning":
@@ -153,25 +67,6 @@ async def _print_response(chunks: AsyncIterator[ChatEvent]) -> None:
             click.echo()
         elif wrote_reasoning:
             click.echo(err=True)
-
-
-async def _write_response(
-    chunks: AsyncIterator[ChatEvent], output_path: Path
-) -> None:
-    output = output_path.open("x", encoding="utf-8")
-    tracker = _TokenTracker(output_path)
-    try:
-        with output:
-            async for chunk in _stream_response(chunks):
-                if isinstance(chunk, ApprovalChunk):
-                    continue
-                if chunk.text and chunk.text_kind == "answer":
-                    output.write(chunk.text)
-                    output.flush()
-                tracker.update(chunk)
-    except Exception:
-        tracker.fail()
-        raise
 
 
 def _cli_context() -> RequestContext:
@@ -530,24 +425,11 @@ def session_chat(workspace_name: str, session_id: str, prompt: str) -> None:
 
 @main.command()
 @click.argument("prompt")
-@click.option(
-    "-o",
-    "--to",
-    "output_path",
-    type=click.Path(path_type=Path, dir_okay=False),
-)
 @requires_home
-def ask(prompt: str, output_path: Path | None) -> None:
+def ask(prompt: str) -> None:
     """Send one prompt in a fresh default-workspace session."""
     try:
-        if output_path is None:
-            asyncio.run(_print_response(_ask_requests(prompt)))
-        else:
-            asyncio.run(_write_response(_ask_requests(prompt), output_path))
-    except FileExistsError as error:
-        raise click.ClickException(
-            f"output file already exists: {output_path}"
-        ) from error
+        asyncio.run(_print_response(_ask_requests(prompt)))
     except ValidationError as error:
         message = (
             "ethos is not configured. Run [ethos onboard] first."
@@ -556,12 +438,7 @@ def ask(prompt: str, output_path: Path | None) -> None:
         )
         raise click.ClickException(message) from error
     except Exception as error:
-        retained = (
-            f"\nOutput retained at: {output_path}"
-            if output_path is not None and output_path.exists()
-            else ""
-        )
-        raise click.ClickException(f"{error}{retained}") from error
+        raise click.ClickException(str(error)) from error
 
 
 if __name__ == "__main__":

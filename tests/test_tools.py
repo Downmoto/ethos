@@ -5,7 +5,7 @@ import pytest
 from pydantic import BaseModel
 
 import ethos.tools as tools_module
-from ethos.models import ToolCallPart, ToolDefinition
+from ethos.models import ToolCallPart, ToolDefinition, ToolResultPart
 from ethos.tools import (
     Allow,
     DefaultToolPolicy,
@@ -74,6 +74,15 @@ def call(
     )
 
 
+async def run_allowed(
+    executor: ToolExecutor, requested_call: ToolCallPart
+) -> ToolResultPart:
+    prepared = await executor.prepare(requested_call)
+    assert isinstance(prepared, PreparedToolCall)
+    assert isinstance(prepared.decision, Allow)
+    return await executor.run(prepared)
+
+
 def test_registry_preserves_registration_order_and_lookup() -> None:
     first = FakeTool("first")
     second = FakeTool("second")
@@ -112,9 +121,12 @@ def test_executor_validates_then_asks_policy_then_executes(
         return "23 degrees"
 
     tool = FakeTool("weather", effect=effect, execute=execute)
-    result = asyncio.run(
-        ToolExecutor(ToolRegistry((tool,)), OrderedPolicy()).execute(call())
-    )
+    executor = ToolExecutor(ToolRegistry((tool,)), OrderedPolicy())
+    prepared = asyncio.run(executor.prepare(call()))
+
+    assert isinstance(prepared, PreparedToolCall)
+    assert order == ["policy"]
+    result = asyncio.run(executor.run(prepared))
 
     assert order == ["policy", "execute"]
     assert result.call_id == "call-1"
@@ -126,21 +138,13 @@ def test_executor_validates_then_asks_policy_then_executes(
 def test_default_policy_allows_read_tools() -> None:
     tool = FakeTool("weather")
 
-    result = asyncio.run(ToolExecutor(ToolRegistry((tool,))).execute(call()))
+    result = asyncio.run(
+        run_allowed(ToolExecutor(ToolRegistry((tool,))), call())
+    )
 
     assert result.content == "23 degrees"
     assert not result.is_error
     assert tool.arguments == [WeatherArguments(location="Toronto")]
-
-
-def test_default_policy_requires_write_approval_before_execution() -> None:
-    tool = FakeTool("weather", effect=ToolEffect.WRITE)
-
-    result = asyncio.run(ToolExecutor(ToolRegistry((tool,))).execute(call()))
-
-    assert result.content == "write tool requires approval"
-    assert result.is_error
-    assert tool.arguments == []
 
 
 def test_executor_prepares_validated_approval_without_execution() -> None:
@@ -170,9 +174,10 @@ def test_falsey_custom_policy_is_not_replaced() -> None:
     policy = FalseyPolicy(Deny(reason="custom denial"))
 
     result = asyncio.run(
-        ToolExecutor(ToolRegistry((tool,)), policy).execute(call())
+        ToolExecutor(ToolRegistry((tool,)), policy).prepare(call())
     )
 
+    assert isinstance(result, ToolResultPart)
     assert result.content == "custom denial"
     assert result.is_error
     assert len(policy.calls) == 1
@@ -197,11 +202,12 @@ def test_invalid_arguments_never_reach_policy_or_tool(
     policy = RecordingPolicy(Allow())
 
     result = asyncio.run(
-        ToolExecutor(ToolRegistry((tool,)), policy).execute(
+        ToolExecutor(ToolRegistry((tool,)), policy).prepare(
             call(arguments_json=arguments_json)
         )
     )
 
+    assert isinstance(result, ToolResultPart)
     assert result.content == "invalid tool arguments"
     assert result.is_error
     assert policy.calls == []
@@ -212,9 +218,10 @@ def test_unknown_tool_returns_safe_error() -> None:
     policy = RecordingPolicy(Allow())
 
     result = asyncio.run(
-        ToolExecutor(ToolRegistry(), policy).execute(call(name="missing"))
+        ToolExecutor(ToolRegistry(), policy).prepare(call(name="missing"))
     )
 
+    assert isinstance(result, ToolResultPart)
     assert result.content == "unknown tool"
     assert result.is_error
     assert policy.calls == []
@@ -225,9 +232,10 @@ def test_policy_denial_returns_bounded_reason_without_execution() -> None:
     policy = RecordingPolicy(Deny(reason="not permitted"))
 
     result = asyncio.run(
-        ToolExecutor(ToolRegistry((tool,)), policy).execute(call())
+        ToolExecutor(ToolRegistry((tool,)), policy).prepare(call())
     )
 
+    assert isinstance(result, ToolResultPart)
     assert result.content == "not permitted"
     assert result.is_error
     assert len(policy.calls) == 1
@@ -245,9 +253,10 @@ def test_tool_exception_does_not_expose_exception_text() -> None:
         raise RuntimeError("secret argument was Toronto")
 
     result = asyncio.run(
-        ToolExecutor(
-            ToolRegistry((FakeTool("weather", execute=fail),))
-        ).execute(call())
+        run_allowed(
+            ToolExecutor(ToolRegistry((FakeTool("weather", execute=fail),))),
+            call(),
+        )
     )
 
     assert result.content == "tool execution failed"
@@ -267,9 +276,9 @@ def test_tool_timeout_returns_stable_error(
                 await asyncio.Event().wait()
                 return "unreachable"
 
-        result = await ToolExecutor(
-            ToolRegistry((SlowTool("weather"),))
-        ).execute(call())
+        result = await run_allowed(
+            ToolExecutor(ToolRegistry((SlowTool("weather"),))), call()
+        )
 
         assert result.content == "tool execution timed out"
         assert result.is_error
@@ -285,9 +294,10 @@ def test_cancelled_tool_execution_propagates() -> None:
 
     async def run() -> None:
         with pytest.raises(asyncio.CancelledError):
-            await ToolExecutor(
-                ToolRegistry((CancelledTool("weather"),))
-            ).execute(call())
+            await run_allowed(
+                ToolExecutor(ToolRegistry((CancelledTool("weather"),))),
+                call(),
+            )
 
     asyncio.run(run())
 
@@ -303,7 +313,7 @@ def test_policy_failure_propagates_as_runtime_bug() -> None:
         with pytest.raises(RuntimeError, match="policy bug"):
             await ToolExecutor(
                 ToolRegistry((FakeTool("weather"),)), BrokenPolicy()
-            ).execute(call())
+            ).prepare(call())
 
     asyncio.run(run())
 

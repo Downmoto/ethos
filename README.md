@@ -22,14 +22,10 @@ uv run ethos onboard
 
 ```sh
 uv run ethos ask "hello"
-uv run ethos ask "write a report" --to report.md
 uv run ethos start
 uv run ethos start --bg
 uv run ethos stop
 ```
-
-File output is streamed incrementally and includes a token tracker on stderr.
-Existing output files are never overwritten.
 
 Write tools require explicit approval. Interactive CLI commands show the tool
 name and validated arguments; non-interactive commands deny by default. Vox

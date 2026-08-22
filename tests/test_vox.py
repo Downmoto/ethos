@@ -1,6 +1,6 @@
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import UTC, datetime
 from typing import cast
 
@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 from ethos.config import VoxConfig
-from ethos.gateway.vox import VoxServer
+from ethos.gateway.vox import VoxServer, _event_stream
 from ethos.service import (
     ApprovalChunk,
     ChatChunk,
@@ -301,6 +301,32 @@ def test_vox_frames_approval_event() -> None:
     assert event["approval_id"] == "approval-1"
     assert event["tool_name"] == "write_file"
     assert event["arguments"] == {"path": "README.md"}
+
+
+def test_vox_event_stream_closes_source_when_consumer_stops() -> None:
+    closed = False
+
+    async def events() -> AsyncIterator[ChatEvent]:
+        nonlocal closed
+        try:
+            yield ChatChunk(
+                text="first",
+                workspace="my-project",
+                session_id="session-id",
+            )
+            await asyncio.Event().wait()
+        finally:
+            closed = True
+
+    async def stop_after_first() -> None:
+        response = await _event_stream(events())
+        iterator = cast(AsyncGenerator[str, None], response.body_iterator)
+        assert "first" in await anext(iterator)
+        await iterator.aclose()
+
+    asyncio.run(stop_after_first())
+
+    assert closed
 
 
 @pytest.mark.parametrize(

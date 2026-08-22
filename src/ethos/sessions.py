@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Final
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ethos.models import Message, ToolResultPart
 from ethos.tools import ApprovalState, ToolApproval
@@ -195,9 +195,27 @@ class SessionManager:
             raise ApprovalStateError(
                 f"approval request is {current.state.value}: {approval_id}"
             )
-        replacement = current.model_copy(
-            update={"state": state, "result": result}
-        )
+        if (expected, state) not in (
+            (ApprovalState.PENDING, ApprovalState.EXECUTING),
+            (ApprovalState.PENDING, ApprovalState.DENIED),
+            (ApprovalState.EXECUTING, ApprovalState.COMPLETED),
+        ):
+            raise ApprovalStateError(
+                "invalid approval transition: "
+                f"{expected.value} -> {state.value}"
+            )
+        try:
+            replacement = ToolApproval.model_validate(
+                {
+                    **current.model_dump(),
+                    "state": state,
+                    "result": result,
+                }
+            )
+        except ValidationError as error:
+            raise ApprovalStateError(
+                f"invalid approval transition: {approval_id}"
+            ) from error
         approvals = tuple(
             replacement if item.id == approval_id else item
             for item in session.approvals
@@ -220,7 +238,12 @@ class SessionManager:
         ):
             return session
         approvals = tuple(
-            item.model_copy(update={"state": ApprovalState.INDETERMINATE})
+            ToolApproval.model_validate(
+                {
+                    **item.model_dump(),
+                    "state": ApprovalState.INDETERMINATE,
+                }
+            )
             if item.state is ApprovalState.EXECUTING
             else item
             for item in session.approvals

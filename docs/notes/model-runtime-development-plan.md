@@ -565,8 +565,7 @@ Implementation:
   messages. Textual reasoning is diagnostic output, not conversation context.
 - Add `text_kind` to `PromptStreamEvent` and `ChatChunk` so reasoning and answer
   text remain distinct through Vox.
-- Render reasoning on CLI stderr and answer text on stdout. Files written by
-  `ethos ask --to` contain only the answer.
+- Render reasoning on CLI stderr and answer text on stdout.
 - Expose stored reasoning separately in history projections.
 - Reject provider-native thinking blocks, reasoning items, signatures, and
   encrypted or opaque reasoning. Add an opaque contract only when a supported
@@ -577,15 +576,14 @@ Tests:
 - Configuration defaults, validation, onboarding, and provider translation.
 - Complete and streamed reasoning conversion and event ordering.
 - Stream/completion mismatch rejection for both reasoning and answer text.
-- Persistence, history projection, Vox serialization, CLI display, and answer-
-  only file output.
+- Persistence, history projection, Vox serialization, and CLI display.
 - Malformed textual reasoning and unsupported opaque reasoning rejection.
 
 Exit criteria:
 
 - A compatible Ollama model can stream reasoning followed by an answer without
   `provider returned unsupported content`.
-- Reasoning never appears in answer stdout or `--to` output files.
+- Reasoning never appears in answer stdout.
 - A completed assistant message durably retains its reasoning separately from
   answer text.
 

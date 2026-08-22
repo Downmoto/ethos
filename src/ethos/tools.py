@@ -108,6 +108,11 @@ class ToolApproval(BaseModel):
         finished = self.state in (ApprovalState.COMPLETED, ApprovalState.DENIED)
         if finished != (self.result is not None):
             raise ValueError("approval state and result do not match")
+        if self.result is not None and (
+            self.result.call_id != self.call.call_id
+            or self.result.name != self.tool_name
+        ):
+            raise ValueError("approval result does not match call")
         return self
 
 
@@ -195,14 +200,6 @@ class ToolExecutor:
             name=prepared.call.name,
             content=content,
         )
-
-    async def execute(self, call: ToolCallPart) -> ToolResultPart:
-        prepared = await self.prepare(call)
-        if isinstance(prepared, ToolResultPart):
-            return prepared
-        if isinstance(prepared.decision, RequireApproval):
-            return _error(call, prepared.decision.reason)
-        return await self.run(prepared)
 
 
 def _error(call: ToolCallPart, content: str) -> ToolResultPart:

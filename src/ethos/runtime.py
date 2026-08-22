@@ -444,33 +444,34 @@ def _validate_tool_history(messages: tuple[Message, ...]) -> None:
 def _unresolved_tool_calls(
     messages: tuple[Message, ...],
 ) -> tuple[ToolCallPart, ...]:
-    calls: list[ToolCallPart] = []
+    unresolved: dict[str, ToolCallPart] = {}
     call_ids: set[str] = set()
     for message in messages:
-        if message.role is not Role.ASSISTANT:
-            continue
-        for part in message.parts:
-            if not isinstance(part, ToolCallPart):
-                continue
-            if part.call_id in call_ids:
+        if unresolved and message.role is not Role.TOOL:
+            raise ModelProtocolError(
+                "session contains unresolved tool call history"
+            )
+        if message.role is Role.ASSISTANT:
+            for part in message.parts:
+                if not isinstance(part, ToolCallPart):
+                    continue
+                if part.call_id in call_ids:
+                    raise ModelProtocolError(
+                        "session contains unresolved tool call history"
+                    )
+                call_ids.add(part.call_id)
+                unresolved[part.call_id] = part
+        elif message.role is Role.TOOL:
+            part = message.parts[0]
+            if not isinstance(part, ToolResultPart):
+                raise AssertionError("tool message without tool result")
+            call = unresolved.get(part.call_id)
+            if call is None or call.name != part.name:
                 raise ModelProtocolError(
                     "session contains unresolved tool call history"
                 )
-            call_ids.add(part.call_id)
-            calls.append(part)
-
-    results: dict[str, int] = {}
-    for message in messages:
-        if message.role is not Role.TOOL:
-            continue
-        part = message.parts[0]
-        if isinstance(part, ToolResultPart):
-            results[part.call_id] = results.get(part.call_id, 0) + 1
-    if any(count > 1 for count in results.values()):
-        raise ModelProtocolError(
-            "session contains unresolved tool call history"
-        )
-    return tuple(call for call in calls if results.get(call.call_id, 0) == 0)
+            del unresolved[part.call_id]
+    return tuple(unresolved.values())
 
 
 def _approval_call(
