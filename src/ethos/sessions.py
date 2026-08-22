@@ -4,7 +4,10 @@ See ``docs/development/workspaces-and-runtime.md`` for lifecycle, durability,
 and concurrency guarantees.
 """
 
-from collections.abc import Iterable
+import fcntl
+import os
+from collections.abc import Generator, Iterable
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
@@ -12,7 +15,8 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ethos.models import Message
+from ethos.models import Message, ToolResultPart
+from ethos.tools import ApprovalState, ToolApproval
 from ethos.workspaces import Workspace, WorkspaceManager
 
 SESSIONS_DIR: Final = "sessions"
@@ -28,6 +32,7 @@ class Session(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     archived_at: datetime | None = None
     messages: tuple[Message, ...] = ()
+    approvals: tuple[ToolApproval, ...] = ()
 
     @property
     def archived(self) -> bool:
@@ -37,8 +42,8 @@ class Session(BaseModel):
 class SessionManager:
     """Validate and persist sessions beneath the Ethos home.
 
-    File replacement is atomic for readers, but this manager has no
-    cross-process lock. Callers must serialise competing updates separately.
+    File replacement is atomic for readers. Agent runtimes use the explicit
+    per-session file lock to serialise turns across processes.
     """
 
     def __init__(self, workspaces: WorkspaceManager, root: Path) -> None:
@@ -51,6 +56,29 @@ class SessionManager:
         session = Session(workspace_name=workspace.name)
         self._write(workspace, session, create=True)
         return session
+
+    @contextmanager
+    def runtime_lock(
+        self, workspace_name: str, session_id: str
+    ) -> Generator[None]:
+        """Exclusively own one session runtime across processes."""
+        workspace = self.workspaces.get(workspace_name)
+        canonical_id = self._validate_id(session_id)
+        directory = self._workspace_path(workspace)
+        lock_path = directory / f".{canonical_id}.lock"
+        flags = os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW
+        descriptor = os.open(lock_path, flags, 0o600)
+        with os.fdopen(descriptor, "r+b") as lock:
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as error:
+                raise ApprovalStateError(
+                    f"session runtime is busy: {canonical_id}"
+                ) from error
+            try:
+                yield
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
     def get(self, workspace_name: str, session_id: str) -> Session:
         """Load a session without trusting its requested path or stored owner.
@@ -118,6 +146,94 @@ class SessionManager:
         self._write(workspace, updated)
         return updated
 
+    def add_approval(
+        self,
+        workspace_name: str,
+        session_id: str,
+        approval: ToolApproval,
+    ) -> Session:
+        """Persist one new approval request before it is exposed."""
+        workspace = self.workspaces.get(workspace_name)
+        session = self.get(workspace.name, session_id)
+        self._require_active(session)
+        if any(item.id == approval.id for item in session.approvals):
+            raise ApprovalStateError(
+                f"approval request already exists: {approval.id}"
+            )
+        updated = session.model_copy(
+            update={"approvals": (*session.approvals, approval)}
+        )
+        self._write(workspace, updated)
+        return updated
+
+    def get_approval(
+        self,
+        workspace_name: str,
+        session_id: str,
+        approval_id: str,
+    ) -> ToolApproval:
+        session = self.get(workspace_name, session_id)
+        return _approval(session, approval_id)
+
+    def transition_approval(
+        self,
+        workspace_name: str,
+        session_id: str,
+        approval_id: str,
+        *,
+        expected: ApprovalState,
+        state: ApprovalState,
+        result: ToolResultPart | None = None,
+        messages: Iterable[Message] | None = None,
+    ) -> Session:
+        """Atomically consume an approval and optionally checkpoint history."""
+        workspace = self.workspaces.get(workspace_name)
+        session = self.get(workspace.name, session_id)
+        self._require_active(session)
+        current = _approval(session, approval_id)
+        if current.state is not expected:
+            raise ApprovalStateError(
+                f"approval request is {current.state.value}: {approval_id}"
+            )
+        replacement = current.model_copy(
+            update={"state": state, "result": result}
+        )
+        approvals = tuple(
+            replacement if item.id == approval_id else item
+            for item in session.approvals
+        )
+        updates: dict[str, object] = {"approvals": approvals}
+        if messages is not None:
+            updates["messages"] = tuple(messages)
+        updated = session.model_copy(update=updates)
+        self._write(workspace, updated)
+        return updated
+
+    def recover_executing_approvals(
+        self, workspace_name: str, session_id: str
+    ) -> Session:
+        """Make interrupted executions permanently non-executable."""
+        workspace = self.workspaces.get(workspace_name)
+        session = self.get(workspace.name, session_id)
+        if not any(
+            item.state is ApprovalState.EXECUTING for item in session.approvals
+        ):
+            return session
+        approvals = tuple(
+            item.model_copy(update={"state": ApprovalState.INDETERMINATE})
+            if item.state is ApprovalState.EXECUTING
+            else item
+            for item in session.approvals
+        )
+        recovered = session.model_copy(update={"approvals": approvals})
+        self._write(workspace, recovered)
+        return recovered
+
+    @staticmethod
+    def _require_active(session: Session) -> None:
+        if session.archived:
+            raise ValueError(f"session is archived: {session.id}")
+
     def _write(
         self, workspace: Workspace, session: Session, *, create: bool = False
     ) -> None:
@@ -161,3 +277,20 @@ class SessionManager:
         if session_id != canonical:
             raise ValueError(f"invalid session ID: {session_id!r}")
         return canonical
+
+
+class ApprovalNotFoundError(FileNotFoundError):
+    pass
+
+
+class ApprovalStateError(RuntimeError):
+    pass
+
+
+def _approval(session: Session, approval_id: str) -> ToolApproval:
+    for approval in session.approvals:
+        if approval.id == approval_id:
+            return approval
+    raise ApprovalNotFoundError(
+        f"approval request does not exist: {approval_id}"
+    )

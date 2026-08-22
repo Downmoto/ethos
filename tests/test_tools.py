@@ -10,10 +10,13 @@ from ethos.tools import (
     Allow,
     DefaultToolPolicy,
     Deny,
+    PreparedToolCall,
+    RequireApproval,
     Tool,
     ToolEffect,
     ToolExecutor,
     ToolRegistry,
+    approval_request_id,
 )
 
 
@@ -50,11 +53,13 @@ class FakeTool:
 
 
 class RecordingPolicy:
-    def __init__(self, decision: Allow | Deny) -> None:
+    def __init__(self, decision: Allow | Deny | RequireApproval) -> None:
         self.decision = decision
         self.calls: list[tuple[ToolCallPart, Tool]] = []
 
-    async def decide(self, call: ToolCallPart, tool: Tool) -> Allow | Deny:
+    async def decide(
+        self, call: ToolCallPart, tool: Tool
+    ) -> Allow | Deny | RequireApproval:
         self.calls.append((call, tool))
         return self.decision
 
@@ -128,14 +133,32 @@ def test_default_policy_allows_read_tools() -> None:
     assert tool.arguments == [WeatherArguments(location="Toronto")]
 
 
-def test_default_policy_denies_write_tools_before_execution() -> None:
+def test_default_policy_requires_write_approval_before_execution() -> None:
     tool = FakeTool("weather", effect=ToolEffect.WRITE)
 
     result = asyncio.run(ToolExecutor(ToolRegistry((tool,))).execute(call()))
 
-    assert result.content == "write tools are not allowed"
+    assert result.content == "write tool requires approval"
     assert result.is_error
     assert tool.arguments == []
+
+
+def test_executor_prepares_validated_approval_without_execution() -> None:
+    tool = FakeTool("weather", effect=ToolEffect.WRITE)
+    prepared = asyncio.run(ToolExecutor(ToolRegistry((tool,))).prepare(call()))
+
+    assert isinstance(prepared, PreparedToolCall)
+    assert isinstance(prepared.decision, RequireApproval)
+    assert prepared.arguments == WeatherArguments(location="Toronto")
+    assert tool.arguments == []
+
+
+def test_approval_request_id_is_stable_and_bound_to_session_and_call() -> None:
+    approval_id = approval_request_id("session-1", "call-1")
+
+    assert approval_request_id("session-1", "call-1") == approval_id
+    assert approval_request_id("session-2", "call-1") != approval_id
+    assert approval_request_id("session-1", "call-2") != approval_id
 
 
 def test_falsey_custom_policy_is_not_replaced() -> None:
@@ -291,6 +314,6 @@ def test_default_policy_decides_from_effect() -> None:
     write = FakeTool("write", effect=ToolEffect.WRITE)
 
     assert isinstance(asyncio.run(policy.decide(call(), read)), Allow)
-    assert asyncio.run(policy.decide(call(), write)) == Deny(
-        reason="write tools are not allowed"
+    assert asyncio.run(policy.decide(call(), write)) == RequireApproval(
+        reason="write tool requires approval"
     )

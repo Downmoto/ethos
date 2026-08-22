@@ -1,6 +1,7 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import cast
 
 import pytest
@@ -11,13 +12,17 @@ from pydantic import SecretStr
 from ethos.config import VoxConfig
 from ethos.gateway.vox import VoxServer
 from ethos.service import (
+    ApprovalChunk,
     ChatChunk,
+    ChatEvent,
     Ethos,
     HistoryMessage,
     RequestContext,
     SessionView,
     WorkspaceView,
 )
+from ethos.sessions import ApprovalNotFoundError, ApprovalStateError
+from ethos.tools import ToolEffect
 
 WORKSPACE = WorkspaceView(name="my-project", path="/workspaces/my-project")
 SESSION = SessionView(
@@ -91,7 +96,7 @@ class FakeEthos:
         session_id: str,
         prompt: str,
         context: RequestContext,
-    ) -> AsyncIterator[ChatChunk]:
+    ) -> AsyncIterator[ChatEvent]:
         self.record("chat", workspace, session_id, prompt, context)
         yield ChatChunk(
             text="thinking",
@@ -104,6 +109,33 @@ class FakeEthos:
         )
         yield ChatChunk(
             text="there",
+            workspace=workspace,
+            session_id=session_id,
+            done=True,
+        )
+
+    async def resolve_approval(
+        self,
+        workspace: str,
+        session_id: str,
+        approval_id: str,
+        approved: bool,
+        context: RequestContext,
+    ) -> AsyncIterator[ChatChunk]:
+        self.record(
+            "resolve_approval",
+            workspace,
+            session_id,
+            approval_id,
+            approved,
+            context,
+        )
+        if workspace == "other":
+            raise ApprovalNotFoundError("approval request does not exist")
+        if approval_id == "stale":
+            raise ApprovalStateError("approval request is completed")
+        yield ChatChunk(
+            text="resolved",
             workspace=workspace,
             session_id=session_id,
             done=True,
@@ -230,6 +262,95 @@ def test_vox_streams_chat_as_server_sent_events() -> None:
     assert ethos.calls[0][0] == "chat"
 
 
+def test_vox_frames_approval_event() -> None:
+    class ApprovalEthos(FakeEthos):
+        async def chat(
+            self,
+            workspace: str,
+            session_id: str,
+            prompt: str,
+            context: RequestContext,
+        ) -> AsyncIterator[ChatEvent]:
+            self.record("chat", workspace, session_id, prompt, context)
+            yield ApprovalChunk(
+                approval_id="approval-1",
+                call_id="call-1",
+                tool_name="write_file",
+                arguments={"path": "README.md"},
+                effect=ToolEffect.WRITE,
+                reason="write tool requires approval",
+                created_at=datetime(2026, 8, 21, tzinfo=UTC),
+                workspace=workspace,
+                session_id=session_id,
+            )
+
+    app = VoxServer(VoxConfig()).create_app(cast(Ethos, ApprovalEthos()))
+
+    with TestClient(app).stream(
+        "POST",
+        "/workspaces/my-project/sessions/session-id/messages",
+        json={"prompt": "hi"},
+    ) as response:
+        event = next(
+            json.loads(line.removeprefix("data: "))
+            for line in response.iter_lines()
+            if line.startswith("data: ")
+        )
+
+    assert event["kind"] == "approval"
+    assert event["approval_id"] == "approval-1"
+    assert event["tool_name"] == "write_file"
+    assert event["arguments"] == {"path": "README.md"}
+
+
+@pytest.mark.parametrize(
+    ("decision", "approved"),
+    (("approve", True), ("deny", False)),
+)
+def test_vox_resolves_approval_as_server_sent_events(
+    decision: str,
+    approved: bool,
+) -> None:
+    ethos = FakeEthos()
+    app = VoxServer(VoxConfig()).create_app(cast(Ethos, ethos))
+    path = (
+        "/workspaces/my-project/sessions/session-id/"
+        f"approvals/approval-1/{decision}"
+    )
+
+    with TestClient(app).stream("POST", path) as response:
+        events = [
+            json.loads(line.removeprefix("data: "))
+            for line in response.iter_lines()
+            if line.startswith("data: ")
+        ]
+
+    assert response.status_code == 200
+    assert events[-1]["done"]
+    assert ethos.calls[0][0] == "resolve_approval"
+    assert ethos.calls[0][1][3] is approved
+
+
+@pytest.mark.parametrize(
+    ("workspace", "approval_id", "status_code"),
+    (("other", "approval-1", 404), ("my-project", "stale", 409)),
+)
+def test_vox_rejects_cross_session_or_stale_approval(
+    workspace: str,
+    approval_id: str,
+    status_code: int,
+) -> None:
+    app = VoxServer(VoxConfig()).create_app(cast(Ethos, FakeEthos()))
+    path = (
+        f"/workspaces/{workspace}/sessions/session-id/"
+        f"approvals/{approval_id}/approve"
+    )
+
+    response = TestClient(app).post(path)
+
+    assert response.status_code == status_code
+
+
 def test_vox_enforces_configured_bearer_token() -> None:
     ethos = FakeEthos()
     app = VoxServer(VoxConfig(bearer_token=SecretStr("secret"))).create_app(
@@ -238,6 +359,13 @@ def test_vox_enforces_configured_bearer_token() -> None:
     client = TestClient(app)
 
     assert client.get("/workspaces").status_code == 401
+    assert (
+        client.post(
+            "/workspaces/my-project/sessions/session-id/"
+            "approvals/approval-1/approve"
+        ).status_code
+        == 401
+    )
     assert (
         client.get(
             "/workspaces", headers={"Authorization": "Bearer wrong"}

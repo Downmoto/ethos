@@ -31,6 +31,10 @@ uv run ethos stop
 File output is streamed incrementally and includes a token tracker on stderr.
 Existing output files are never overwritten.
 
+Write tools require explicit approval. Interactive CLI commands show the tool
+name and validated arguments; non-interactive commands deny by default. Vox
+exposes approval events and authenticated approve/deny endpoints.
+
 `ethos start` runs the Vox REST server in the foreground. `--bg` runs the same
 server as a tracked background process; `ethos stop` is a no-op when no
 background process is running.

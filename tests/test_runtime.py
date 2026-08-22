@@ -70,10 +70,13 @@ async def collect(
     runtime: AgentRuntime, session: Session, prompt: str = "hello"
 ) -> list[PromptStreamEvent]:
     return [
-        event
-        async for event in runtime.run(
-            prompt, session.workspace_name, str(session.id)
-        )
+        cast(PromptStreamEvent, event)
+        for event in [
+            event
+            async for event in runtime.run(
+                prompt, session.workspace_name, str(session.id)
+            )
+        ]
     ]
 
 
@@ -222,7 +225,7 @@ def test_runtime_keeps_partial_output_but_not_failed_history(
 
     async def consume() -> None:
         async for event in runtime.run("hello", "my-project", str(session.id)):
-            events.append(event)
+            events.append(cast(PromptStreamEvent, event))
 
     with pytest.raises(RuntimeError, match="stream failed"):
         asyncio.run(consume())
@@ -249,7 +252,7 @@ def test_runtime_does_not_persist_cancelled_turn(tmp_path: Path) -> None:
             async for event in runtime.run(
                 "hello", "my-project", str(session.id)
             ):
-                if event.text:
+                if cast(PromptStreamEvent, event).text:
                     received.set()
 
         task = asyncio.create_task(consume())
@@ -305,7 +308,8 @@ def test_runtime_persists_before_completion_event(
 
     async def consume() -> None:
         async for event in runtime.run("hello", "my-project", str(session.id)):
-            observed.append("done" if event.done else "text")
+            prompt_event = cast(PromptStreamEvent, event)
+            observed.append("done" if prompt_event.done else "text")
 
     asyncio.run(consume())
 
@@ -331,7 +335,7 @@ def test_runtime_does_not_complete_when_persistence_fails(
 
     async def consume() -> None:
         async for event in runtime.run("hello", "my-project", str(session.id)):
-            events.append(event)
+            events.append(cast(PromptStreamEvent, event))
 
     with pytest.raises(OSError, match="persistence failed"):
         asyncio.run(consume())
@@ -352,7 +356,7 @@ def test_runtime_rejects_malformed_stream_without_completing(
 
     async def consume() -> None:
         async for event in runtime.run("hello", "my-project", str(session.id)):
-            events.append(event)
+            events.append(cast(PromptStreamEvent, event))
 
     with pytest.raises(ModelProtocolError, match="before completion"):
         asyncio.run(consume())
@@ -379,7 +383,7 @@ def test_runtime_rejects_reasoning_completion_mismatch(
 
     async def consume() -> None:
         async for event in runtime.run("hello", "my-project", str(session.id)):
-            events.append(event)
+            events.append(cast(PromptStreamEvent, event))
 
     with pytest.raises(ModelProtocolError, match="did not match stream"):
         asyncio.run(consume())
@@ -407,7 +411,7 @@ def test_runtime_remains_text_only_without_tool_registry(
 
     async def consume() -> None:
         async for event in runtime.run("hello", "my-project", str(session.id)):
-            events.append(event)
+            events.append(cast(PromptStreamEvent, event))
 
     with pytest.raises(ModelProtocolError, match="unsupported parts"):
         asyncio.run(consume())

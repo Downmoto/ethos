@@ -2,8 +2,9 @@
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -13,9 +14,14 @@ from ethos.events.models import EventPayload
 from ethos.events.types import EventType
 from ethos.home import DB_PATH
 from ethos.models import ReasoningPart, Role, TextPart
-from ethos.runtime import AgentRuntime
+from ethos.runtime import (
+    AgentRuntime,
+    ApprovalStreamEvent,
+    RuntimeStreamEvent,
+)
 from ethos.sessions import SESSIONS_DIR, Session, SessionManager
 from ethos.storage import Storage
+from ethos.tools import ToolEffect
 from ethos.workspaces import WORKSPACES_DIR, Workspace, WorkspaceManager
 
 
@@ -85,12 +91,34 @@ class Usage(BaseModel):
 class ChatChunk(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    kind: Literal["chunk"] = "chunk"
     text: str = ""
     text_kind: Literal["answer", "reasoning"] = "answer"
     workspace: str
     session_id: str
     usage: Usage | None = None
     done: bool = False
+
+
+class ApprovalChunk(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["approval"] = "approval"
+    approval_id: str
+    call_id: str
+    tool_name: str
+    arguments: dict[str, object]
+    effect: ToolEffect
+    reason: str
+    created_at: datetime
+    workspace: str
+    session_id: str
+
+
+type ChatEvent = Annotated[
+    ChatChunk | ApprovalChunk,
+    Field(discriminator="kind"),
+]
 
 
 class _WorkspaceEventItem(BaseModel):
@@ -224,11 +252,61 @@ class Ethos:
         session_id: str,
         prompt: str,
         context: RequestContext,
-    ) -> AsyncIterator[ChatChunk]:
+    ) -> AsyncIterator[ChatEvent]:
         if not prompt:
             raise ValueError("prompt must not be empty")
+        async for event in self._chat_events(
+            self._runtime().run(prompt, workspace, session_id),
+            workspace,
+            session_id,
+            context,
+        ):
+            yield event
+
+    async def resolve_approval(
+        self,
+        workspace: str,
+        session_id: str,
+        approval_id: str,
+        approved: bool,
+        context: RequestContext,
+    ) -> AsyncIterator[ChatEvent]:
+        async for event in self._chat_events(
+            self._runtime().resolve_approval(
+                workspace,
+                session_id,
+                approval_id,
+                approved=approved,
+            ),
+            workspace,
+            session_id,
+            context,
+        ):
+            yield event
+
+    async def _chat_events(
+        self,
+        events: AsyncIterator[RuntimeStreamEvent],
+        workspace: str,
+        session_id: str,
+        context: RequestContext,
+    ) -> AsyncIterator[ChatEvent]:
         emitted = False
-        async for event in self._runtime().run(prompt, workspace, session_id):
+        async for event in events:
+            if isinstance(event, ApprovalStreamEvent):
+                approval = event.approval
+                yield ApprovalChunk(
+                    approval_id=approval.id,
+                    call_id=approval.call.call_id,
+                    tool_name=approval.tool_name,
+                    arguments=approval.arguments,
+                    effect=approval.effect,
+                    reason=approval.reason,
+                    created_at=approval.created_at,
+                    workspace=workspace,
+                    session_id=session_id,
+                )
+                continue
             usage = (
                 Usage(
                     input_tokens=event.usage.input_tokens,

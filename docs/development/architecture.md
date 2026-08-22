@@ -48,6 +48,21 @@ HTTP error mapping, resource response models, and server-sent event framing.
 It preserves the workspace and session endpoints while remaining ignorant of
 filesystem and model implementation details.
 
+Chat streams are a backwards-incompatible discriminated protocol. Every SSE
+payload has `kind: "chunk"` for answer/reasoning text, usage, and completion,
+or `kind: "approval"` with `approval_id`, `call_id`, `tool_name`, validated
+`arguments`, `effect`, `reason`, `created_at`, `workspace`, and `session_id`.
+
+Pending requests are resolved through authenticated endpoints:
+
+```text
+POST /workspaces/{workspace}/sessions/{session}/approvals/{approval}/approve
+POST /workspaces/{workspace}/sessions/{session}/approvals/{approval}/deny
+```
+
+Both return the resumed chat as SSE. An approval from another session is 404;
+a stale, executing, completed, denied, or indeterminate request is 409.
+
 A bearer token is mandatory when Vox binds beyond loopback. The protocol does
 not own or implement the external consumer also named Vox.
 
@@ -56,6 +71,11 @@ not own or implement the external consumer also named Vox.
 The Click CLI is a local interface. It opens an Ethos service lifetime and
 calls it directly rather than sending HTTP requests. Formatting, terminal
 progress, and output-file handling remain CLI concerns.
+
+For a write-tool approval it prints the exact tool name and validated JSON
+arguments, then asks once with denial as the default. If stdin is not a
+terminal, it denies without prompting and resumes the model with an error tool
+result.
 
 ### Server lifecycle
 

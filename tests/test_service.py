@@ -7,10 +7,24 @@ import pytest
 
 from ethos.events.types import EventType
 from ethos.home import initialise_home
-from ethos.models import Message, ReasoningPart, Role, TextPart
-from ethos.runtime import AgentRuntime, PromptStreamEvent
-from ethos.service import Ethos, HistoryMessage, RequestContext
+from ethos.models import (
+    Message,
+    ReasoningPart,
+    Role,
+    TextPart,
+    ToolCallPart,
+    Usage,
+)
+from ethos.runtime import AgentRuntime, ApprovalStreamEvent, PromptStreamEvent
+from ethos.service import (
+    ApprovalChunk,
+    ChatChunk,
+    Ethos,
+    HistoryMessage,
+    RequestContext,
+)
 from ethos.sessions import Session
+from ethos.tools import ToolApproval, ToolEffect
 
 
 def context() -> RequestContext:
@@ -124,7 +138,9 @@ def test_service_emits_chat_event_for_incomplete_stream(
                 )
             ]
 
-            assert [chunk.text for chunk in chunks] == ["reply"]
+            assert [
+                chunk.text for chunk in chunks if isinstance(chunk, ChatChunk)
+            ] == ["reply"]
             assert chunks[0].workspace == "default"
             assert chunks[0].session_id == session.id
             assert emitted == [EventType.SESSION_CHAT]
@@ -176,7 +192,83 @@ def test_service_emits_chat_event_after_persistence(
                 )
             ]
 
+            assert isinstance(chunks[-1], ChatChunk)
             assert chunks[-1].done
             assert observed_message_counts == [1]
+
+    asyncio.run(exercise())
+
+
+def test_service_projects_and_resolves_approval_events(tmp_path: Path) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+
+    async def exercise() -> None:
+        with Ethos(home) as ethos:
+            session = await ethos.create_session("default", context())
+            approval = ToolApproval(
+                id="approval-1",
+                call=ToolCallPart(
+                    call_id="call-1",
+                    name="write_file",
+                    arguments_json='{"path":"README.md"}',
+                ),
+                tool_name="write_file",
+                arguments={"path": "README.md"},
+                effect=ToolEffect.WRITE,
+                reason="write tool requires approval",
+                round_number=1,
+                usage=Usage(input_tokens=2, output_tokens=1),
+            )
+
+            class FakeRuntime:
+                async def run(
+                    self, prompt: str, workspace: str, session_id: str
+                ) -> AsyncIterator[ApprovalStreamEvent]:
+                    del prompt, workspace, session_id
+                    yield ApprovalStreamEvent(approval)
+
+                async def resolve_approval(
+                    self,
+                    workspace: str,
+                    session_id: str,
+                    approval_id: str,
+                    *,
+                    approved: bool,
+                ) -> AsyncIterator[PromptStreamEvent]:
+                    assert (workspace, session_id, approval_id, approved) == (
+                        "default",
+                        session.id,
+                        "approval-1",
+                        True,
+                    )
+                    yield PromptStreamEvent(usage=Usage(), done=True)
+
+            ethos._agent = cast(AgentRuntime, FakeRuntime())
+
+            requested = [
+                event
+                async for event in ethos.chat(
+                    "default", session.id, "hello", context()
+                )
+            ]
+            resumed = [
+                event
+                async for event in ethos.resolve_approval(
+                    "default",
+                    session.id,
+                    "approval-1",
+                    True,
+                    context(),
+                )
+            ]
+
+            assert len(requested) == 1
+            event = requested[0]
+            assert isinstance(event, ApprovalChunk)
+            assert event.approval_id == "approval-1"
+            assert event.tool_name == "write_file"
+            assert event.arguments == {"path": "README.md"}
+            assert isinstance(resumed[-1], ChatChunk)
+            assert resumed[-1].done
 
     asyncio.run(exercise())

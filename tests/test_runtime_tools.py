@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import AsyncIterator, Iterable
 from pathlib import Path
+from typing import cast
 
 import pytest
 from pydantic import BaseModel
@@ -26,10 +27,16 @@ from ethos.runtime import (
     MAX_TOOL_CALLS_PER_RESPONSE,
     AgentLimitError,
     AgentRuntime,
+    ApprovalStreamEvent,
     PromptStreamEvent,
 )
-from ethos.sessions import Session, SessionManager
-from ethos.tools import ToolEffect, ToolRegistry
+from ethos.sessions import (
+    ApprovalNotFoundError,
+    ApprovalStateError,
+    Session,
+    SessionManager,
+)
+from ethos.tools import ApprovalState, ToolEffect, ToolRegistry
 from ethos.workspaces import WorkspaceManager
 from fakes import FakeModel
 
@@ -125,10 +132,13 @@ async def collect(
     session: Session,
 ) -> list[PromptStreamEvent]:
     return [
-        event
-        async for event in runtime.run(
-            "hello", session.workspace_name, str(session.id)
-        )
+        cast(PromptStreamEvent, event)
+        for event in [
+            event
+            async for event in runtime.run(
+                "hello", session.workspace_name, str(session.id)
+            )
+        ]
     ]
 
 
@@ -223,6 +233,265 @@ def test_runtime_completes_several_tool_rounds(tmp_path: Path) -> None:
     assert [len(request.messages) for request in model.requests] == [1, 3, 5]
 
 
+def test_write_tool_waits_for_durable_approval(tmp_path: Path) -> None:
+    model = FakeModel(
+        (call_response(tool_call()), text_response()),
+        stream_chunks=((), ("done",)),
+        features=ModelFeatures(tools=True),
+    )
+    sessions, session, runtime, tool = setup_runtime(
+        tmp_path,
+        model,
+        RuntimeTool(effect=ToolEffect.WRITE),
+    )
+
+    pending = asyncio.run(
+        _collect_runtime(runtime.run("hello", "my-project", str(session.id)))
+    )
+
+    assert len(pending) == 1
+    event = pending[0]
+    assert isinstance(event, ApprovalStreamEvent)
+    approval = event.approval
+    assert approval.state is ApprovalState.PENDING
+    assert approval.call == tool_call()
+    assert approval.tool_name == "echo"
+    assert approval.arguments == {"value": "one"}
+    assert approval.effect is ToolEffect.WRITE
+    assert approval.reason == "write tool requires approval"
+    assert approval.round_number == 1
+    assert approval.usage == Usage(input_tokens=2, output_tokens=1)
+    assert tool.values == []
+    stored = sessions.get("my-project", str(session.id))
+    assert stored.approvals == (approval,)
+    assert [message.role for message in stored.messages] == [
+        Role.USER,
+        Role.ASSISTANT,
+    ]
+
+    completed = asyncio.run(
+        _collect_runtime(
+            runtime.resolve_approval(
+                "my-project",
+                str(session.id),
+                approval.id,
+                approved=True,
+            )
+        )
+    )
+
+    assert tool.values == ["one"]
+    assert completed[-1] == PromptStreamEvent(
+        usage=Usage(input_tokens=5, output_tokens=3), done=True
+    )
+    stored = sessions.get("my-project", str(session.id))
+    assert stored.approvals[0].state is ApprovalState.COMPLETED
+    assert stored.approvals[0].result == ToolResultPart(
+        call_id="call-1",
+        name="echo",
+        content="echo: one",
+    )
+
+    with pytest.raises(ApprovalStateError, match="completed"):
+        asyncio.run(
+            _collect_runtime(
+                runtime.resolve_approval(
+                    "my-project",
+                    str(session.id),
+                    approval.id,
+                    approved=True,
+                )
+            )
+        )
+    assert tool.values == ["one"]
+
+
+def test_denied_write_tool_resumes_with_error_result(tmp_path: Path) -> None:
+    model = FakeModel(
+        (call_response(tool_call()), text_response("denied safely")),
+        stream_chunks=((), ("denied safely",)),
+        features=ModelFeatures(tools=True),
+    )
+    sessions, session, runtime, tool = setup_runtime(
+        tmp_path,
+        model,
+        RuntimeTool(effect=ToolEffect.WRITE),
+    )
+    pending = asyncio.run(
+        _collect_runtime(runtime.run("hello", "my-project", str(session.id)))
+    )
+    event = pending[0]
+    assert isinstance(event, ApprovalStreamEvent)
+
+    events = asyncio.run(
+        _collect_runtime(
+            runtime.resolve_approval(
+                "my-project",
+                str(session.id),
+                event.approval.id,
+                approved=False,
+            )
+        )
+    )
+
+    assert tool.values == []
+    assert isinstance(events[-1], PromptStreamEvent)
+    assert events[-1].done
+    result = model.requests[1].messages[-1].parts[0]
+    assert isinstance(result, ToolResultPart)
+    assert result.content == "tool execution denied"
+    assert result.is_error
+    stored = sessions.get("my-project", str(session.id))
+    assert stored.approvals[0].state is ApprovalState.DENIED
+    assert stored.approvals[0].result == result
+
+
+def test_pending_approval_survives_runtime_restart(tmp_path: Path) -> None:
+    first_model = FakeModel(
+        (call_response(tool_call()),),
+        features=ModelFeatures(tools=True),
+    )
+    sessions, session, runtime, tool = setup_runtime(
+        tmp_path,
+        first_model,
+        RuntimeTool(effect=ToolEffect.WRITE),
+    )
+    pending = asyncio.run(
+        _collect_runtime(runtime.run("hello", "my-project", str(session.id)))
+    )
+    event = pending[0]
+    assert isinstance(event, ApprovalStreamEvent)
+    restarted_model = FakeModel(
+        (text_response(),),
+        stream_chunks=(("done",),),
+        features=ModelFeatures(tools=True),
+    )
+    restarted = AgentRuntime(
+        sessions,
+        lambda: restarted_model,
+        ToolRegistry((tool,)),
+    )
+
+    events = asyncio.run(
+        _collect_runtime(
+            restarted.resolve_approval(
+                "my-project",
+                str(session.id),
+                event.approval.id,
+                approved=True,
+            )
+        )
+    )
+
+    assert tool.values == ["one"]
+    assert isinstance(events[-1], PromptStreamEvent)
+    assert events[-1].done
+
+
+def test_approval_is_bound_to_session_and_payload(tmp_path: Path) -> None:
+    model = FakeModel(
+        (call_response(tool_call()),),
+        features=ModelFeatures(tools=True),
+    )
+    sessions, session, runtime, tool = setup_runtime(
+        tmp_path,
+        model,
+        RuntimeTool(effect=ToolEffect.WRITE),
+    )
+    pending = asyncio.run(
+        _collect_runtime(runtime.run("hello", "my-project", str(session.id)))
+    )
+    event = pending[0]
+    assert isinstance(event, ApprovalStreamEvent)
+    other = sessions.create("my-project")
+
+    with pytest.raises(ApprovalNotFoundError):
+        asyncio.run(
+            _collect_runtime(
+                runtime.resolve_approval(
+                    "my-project",
+                    str(other.id),
+                    event.approval.id,
+                    approved=True,
+                )
+            )
+        )
+
+    stored = sessions.get("my-project", str(session.id))
+    changed = Message(
+        role=Role.ASSISTANT,
+        parts=(tool_call(arguments_json='{"value":"changed"}'),),
+    )
+    sessions.replace_messages(
+        "my-project",
+        str(session.id),
+        (stored.messages[0], changed),
+    )
+    with pytest.raises(ApprovalStateError, match="payload changed"):
+        asyncio.run(
+            _collect_runtime(
+                runtime.resolve_approval(
+                    "my-project",
+                    str(session.id),
+                    event.approval.id,
+                    approved=True,
+                )
+            )
+        )
+    assert tool.values == []
+
+
+def test_interrupted_execution_becomes_indeterminate(tmp_path: Path) -> None:
+    model = FakeModel(
+        (call_response(tool_call()),),
+        features=ModelFeatures(tools=True),
+    )
+    sessions, session, runtime, tool = setup_runtime(
+        tmp_path,
+        model,
+        RuntimeTool(effect=ToolEffect.WRITE),
+    )
+    pending = asyncio.run(
+        _collect_runtime(runtime.run("hello", "my-project", str(session.id)))
+    )
+    event = pending[0]
+    assert isinstance(event, ApprovalStreamEvent)
+    sessions.transition_approval(
+        "my-project",
+        str(session.id),
+        event.approval.id,
+        expected=ApprovalState.PENDING,
+        state=ApprovalState.EXECUTING,
+    )
+    restarted = AgentRuntime(
+        sessions,
+        lambda: FakeModel(()),
+        ToolRegistry((tool,)),
+    )
+
+    with pytest.raises(ApprovalStateError, match="indeterminate"):
+        asyncio.run(
+            _collect_runtime(
+                restarted.resolve_approval(
+                    "my-project",
+                    str(session.id),
+                    event.approval.id,
+                    approved=True,
+                )
+            )
+        )
+
+    stored = sessions.get("my-project", str(session.id))
+    assert stored.approvals[0].state is ApprovalState.INDETERMINATE
+    assert tool.values == []
+
+
+async def _collect_runtime(
+    events: AsyncIterator[PromptStreamEvent | ApprovalStreamEvent],
+) -> list[PromptStreamEvent | ApprovalStreamEvent]:
+    return [event async for event in events]
+
+
 def test_runtime_executes_several_calls_sequentially(tmp_path: Path) -> None:
     first = tool_call("call-1")
     second = tool_call("call-2", arguments_json='{"value":"two"}')
@@ -262,14 +531,6 @@ def test_runtime_executes_several_calls_sequentially(tmp_path: Path) -> None:
             ToolEffect.READ,
             None,
             "invalid tool arguments",
-            False,
-        ),
-        (
-            "denial",
-            tool_call(),
-            ToolEffect.WRITE,
-            None,
-            "write tools are not allowed",
             False,
         ),
         (
@@ -716,3 +977,242 @@ def test_runtime_rejects_non_positive_limits(
             max_model_rounds=max_model_rounds,
             max_tool_calls_per_response=max_tool_calls,
         )
+
+
+def test_execution_starts_only_after_durable_state_transition(
+    tmp_path: Path,
+) -> None:
+    class InspectingTool(RuntimeTool):
+        sessions: SessionManager
+        session: Session
+        approval_id: str
+
+        async def execute(self, arguments: BaseModel) -> str:
+            approval = self.sessions.get_approval(
+                "my-project", str(self.session.id), self.approval_id
+            )
+            assert approval.state is ApprovalState.EXECUTING
+            return await super().execute(arguments)
+
+    tool = InspectingTool(effect=ToolEffect.WRITE)
+    model = FakeModel(
+        (call_response(tool_call()), text_response()),
+        stream_chunks=((), ("done",)),
+        features=ModelFeatures(tools=True),
+    )
+    sessions, session, runtime, _tool = setup_runtime(tmp_path, model, tool)
+    pending = asyncio.run(
+        _collect_runtime(runtime.run("hello", "my-project", str(session.id)))
+    )
+    event = pending[0]
+    assert isinstance(event, ApprovalStreamEvent)
+    tool.sessions = sessions
+    tool.session = session
+    tool.approval_id = event.approval.id
+
+    asyncio.run(
+        _collect_runtime(
+            runtime.resolve_approval(
+                "my-project",
+                str(session.id),
+                event.approval.id,
+                approved=True,
+            )
+        )
+    )
+
+    assert tool.values == ["one"]
+
+
+def test_multiple_write_calls_require_separate_single_use_approvals(
+    tmp_path: Path,
+) -> None:
+    model = FakeModel(
+        (
+            call_response(
+                tool_call("call-1"),
+                tool_call("call-2", arguments_json='{"value":"two"}'),
+            ),
+            text_response(),
+        ),
+        stream_chunks=((), ("done",)),
+        features=ModelFeatures(tools=True),
+    )
+    sessions, session, runtime, tool = setup_runtime(
+        tmp_path,
+        model,
+        RuntimeTool(effect=ToolEffect.WRITE),
+    )
+    first_events = asyncio.run(
+        _collect_runtime(runtime.run("hello", "my-project", str(session.id)))
+    )
+    first = first_events[0]
+    assert isinstance(first, ApprovalStreamEvent)
+
+    second_events = asyncio.run(
+        _collect_runtime(
+            runtime.resolve_approval(
+                "my-project",
+                str(session.id),
+                first.approval.id,
+                approved=True,
+            )
+        )
+    )
+    second = second_events[0]
+    assert isinstance(second, ApprovalStreamEvent)
+    assert first.approval.id != second.approval.id
+    assert tool.values == ["one"]
+
+    final = asyncio.run(
+        _collect_runtime(
+            runtime.resolve_approval(
+                "my-project",
+                str(session.id),
+                second.approval.id,
+                approved=True,
+            )
+        )
+    )
+
+    assert tool.values == ["one", "two"]
+    assert isinstance(final[-1], PromptStreamEvent)
+    assert final[-1].done
+    assert [
+        approval.state
+        for approval in sessions.get("my-project", str(session.id)).approvals
+    ] == [ApprovalState.COMPLETED, ApprovalState.COMPLETED]
+
+
+def test_failed_completion_checkpoint_leaves_execution_indeterminate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = FakeModel(
+        (call_response(tool_call()),),
+        features=ModelFeatures(tools=True),
+    )
+    sessions, session, runtime, tool = setup_runtime(
+        tmp_path,
+        model,
+        RuntimeTool(effect=ToolEffect.WRITE),
+    )
+    pending = asyncio.run(
+        _collect_runtime(runtime.run("hello", "my-project", str(session.id)))
+    )
+    event = pending[0]
+    assert isinstance(event, ApprovalStreamEvent)
+    transition = sessions.transition_approval
+
+    def fail_completion(
+        workspace_name: str,
+        session_id: str,
+        approval_id: str,
+        *,
+        expected: ApprovalState,
+        state: ApprovalState,
+        result: ToolResultPart | None = None,
+        messages: Iterable[Message] | None = None,
+    ) -> Session:
+        if state is ApprovalState.COMPLETED:
+            raise OSError("persistence failed")
+        return transition(
+            workspace_name,
+            session_id,
+            approval_id,
+            expected=expected,
+            state=state,
+            result=result,
+            messages=messages,
+        )
+
+    monkeypatch.setattr(sessions, "transition_approval", fail_completion)
+
+    with pytest.raises(OSError, match="persistence failed"):
+        asyncio.run(
+            _collect_runtime(
+                runtime.resolve_approval(
+                    "my-project",
+                    str(session.id),
+                    event.approval.id,
+                    approved=True,
+                )
+            )
+        )
+
+    assert tool.values == ["one"]
+    assert (
+        sessions.get_approval(
+            "my-project", str(session.id), event.approval.id
+        ).state
+        is ApprovalState.EXECUTING
+    )
+    monkeypatch.setattr(sessions, "transition_approval", transition)
+    sessions.recover_executing_approvals("my-project", str(session.id))
+    assert (
+        sessions.get_approval(
+            "my-project", str(session.id), event.approval.id
+        ).state
+        is ApprovalState.INDETERMINATE
+    )
+
+
+def test_concurrent_approval_cannot_execute_twice(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        started = asyncio.Event()
+
+        class BlockingWriteTool(RuntimeTool):
+            async def execute(self, arguments: BaseModel) -> str:
+                assert isinstance(arguments, Arguments)
+                self.values.append(arguments.value)
+                started.set()
+                await asyncio.Event().wait()
+                return "unreachable"
+
+        model = FakeModel(
+            (call_response(tool_call()),),
+            features=ModelFeatures(tools=True),
+        )
+        sessions, session, first_runtime, tool = setup_runtime(
+            tmp_path,
+            model,
+            BlockingWriteTool(effect=ToolEffect.WRITE),
+        )
+        pending = await _collect_runtime(
+            first_runtime.run("hello", "my-project", str(session.id))
+        )
+        event = pending[0]
+        assert isinstance(event, ApprovalStreamEvent)
+        second_runtime = AgentRuntime(
+            sessions,
+            lambda: FakeModel(()),
+            ToolRegistry((tool,)),
+        )
+        executing = asyncio.create_task(
+            _collect_runtime(
+                first_runtime.resolve_approval(
+                    "my-project",
+                    str(session.id),
+                    event.approval.id,
+                    approved=True,
+                )
+            )
+        )
+        await started.wait()
+
+        with pytest.raises(ApprovalStateError, match="runtime is busy"):
+            await _collect_runtime(
+                second_runtime.resolve_approval(
+                    "my-project",
+                    str(session.id),
+                    event.approval.id,
+                    approved=True,
+                )
+            )
+
+        executing.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await executing
+        assert tool.values == ["one"]
+
+    asyncio.run(exercise())

@@ -2,6 +2,7 @@
 
 import asyncio
 import getpass
+import json
 import logging
 import math
 import shutil
@@ -28,7 +29,13 @@ from ethos.gateway import (
 )
 from ethos.home import initialise_home
 from ethos.onboarding import run_onboarding
-from ethos.service import ChatChunk, Ethos, RequestContext
+from ethos.service import (
+    ApprovalChunk,
+    ChatChunk,
+    ChatEvent,
+    Ethos,
+    RequestContext,
+)
 from ethos.workspaces import DEFAULT_WORKSPACE
 
 
@@ -99,14 +106,17 @@ class _TokenTracker:
 
 
 async def _stream_response(
-    chunks: AsyncIterator[ChatChunk],
-) -> AsyncIterator[ChatChunk]:
+    chunks: AsyncIterator[ChatEvent],
+) -> AsyncIterator[ChatEvent]:
     status = _ThinkingStatus()
     status.render()
     status_task: asyncio.Task[None] | None = asyncio.create_task(status.show())
     try:
         async for chunk in chunks:
-            if status_task is not None and (chunk.text or chunk.done):
+            visible = (
+                isinstance(chunk, ApprovalChunk) or chunk.text or chunk.done
+            )
+            if status_task is not None and visible:
                 status_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await status_task
@@ -121,11 +131,13 @@ async def _stream_response(
             status.clear()
 
 
-async def _print_response(chunks: AsyncIterator[ChatChunk]) -> None:
+async def _print_response(chunks: AsyncIterator[ChatEvent]) -> None:
     wrote_output = False
     wrote_reasoning = False
     try:
         async for chunk in _stream_response(chunks):
+            if isinstance(chunk, ApprovalChunk):
+                continue
             if chunk.text and chunk.text_kind == "reasoning":
                 if not wrote_reasoning:
                     click.echo("Reasoning", err=True)
@@ -144,13 +156,15 @@ async def _print_response(chunks: AsyncIterator[ChatChunk]) -> None:
 
 
 async def _write_response(
-    chunks: AsyncIterator[ChatChunk], output_path: Path
+    chunks: AsyncIterator[ChatEvent], output_path: Path
 ) -> None:
     output = output_path.open("x", encoding="utf-8")
     tracker = _TokenTracker(output_path)
     try:
         with output:
             async for chunk in _stream_response(chunks):
+                if isinstance(chunk, ApprovalChunk):
+                    continue
                 if chunk.text and chunk.text_kind == "answer":
                     output.write(chunk.text)
                     output.flush()
@@ -186,22 +200,66 @@ def _run[Result](
 
 async def _chat_requests(
     workspace: str, session_id: str, prompt: str
-) -> AsyncIterator[ChatChunk]:
+) -> AsyncIterator[ChatEvent]:
     with Ethos(HOME_PATH) as ethos:
-        async for chunk in ethos.chat(
-            workspace, session_id, prompt, _cli_context()
+        context = _cli_context()
+        async for chunk in _resolve_cli_approvals(
+            ethos,
+            ethos.chat(workspace, session_id, prompt, context),
+            context,
         ):
             yield chunk
 
 
-async def _ask_requests(prompt: str) -> AsyncIterator[ChatChunk]:
+async def _ask_requests(prompt: str) -> AsyncIterator[ChatEvent]:
     with Ethos(HOME_PATH) as ethos:
         context = _cli_context()
         created = await ethos.create_session(DEFAULT_WORKSPACE, context)
-        async for chunk in ethos.chat(
-            DEFAULT_WORKSPACE, created.id, prompt, context
+        async for chunk in _resolve_cli_approvals(
+            ethos,
+            ethos.chat(DEFAULT_WORKSPACE, created.id, prompt, context),
+            context,
         ):
             yield chunk
+
+
+async def _resolve_cli_approvals(
+    ethos: Ethos,
+    events: AsyncIterator[ChatEvent],
+    context: RequestContext,
+) -> AsyncIterator[ChatEvent]:
+    while True:
+        approval: ApprovalChunk | None = None
+        async for event in events:
+            yield event
+            if isinstance(event, ApprovalChunk):
+                approval = event
+        if approval is None:
+            return
+        events = ethos.resolve_approval(
+            approval.workspace,
+            approval.session_id,
+            approval.approval_id,
+            _approval_decision(approval),
+            context,
+        )
+
+
+def _approval_decision(approval: ApprovalChunk) -> bool:
+    click.echo(f"Tool approval required: {approval.tool_name}", err=True)
+    click.echo(
+        f"Arguments: {json.dumps(approval.arguments, sort_keys=True)}",
+        err=True,
+    )
+    click.echo(f"Reason: {approval.reason}", err=True)
+    if not _is_interactive():
+        click.echo("Denied: input is not interactive", err=True)
+        return False
+    return click.confirm("Approve this tool call?", default=False, err=True)
+
+
+def _is_interactive() -> bool:
+    return sys.stdin.isatty()
 
 
 async def _serve(*, tracked: bool) -> None:

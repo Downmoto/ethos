@@ -1,16 +1,21 @@
+import asyncio
 import logging
 import subprocess
 import sys
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
+import click
 import pytest
 import yaml  # type: ignore[import-untyped]
 from click.testing import CliRunner
 
 from ethos import app
 from ethos.home import initialise_home
-from ethos.service import ChatChunk
+from ethos.service import ApprovalChunk, ChatChunk, Ethos, RequestContext
+from ethos.tools import ToolEffect
 
 
 def test_otel_detach_context_error_is_suppressed(
@@ -240,3 +245,100 @@ def test_ask_file_excludes_reasoning(
 
     assert result.exit_code == 0
     assert output.read_text() == "answer"
+
+
+def approval_chunk() -> ApprovalChunk:
+    return ApprovalChunk(
+        approval_id="approval-1",
+        call_id="call-1",
+        tool_name="write_file",
+        arguments={"path": "README.md", "content": "hello"},
+        effect=ToolEffect.WRITE,
+        reason="write tool requires approval",
+        created_at=datetime(2026, 8, 21, tzinfo=UTC),
+        workspace="default",
+        session_id="session-1",
+    )
+
+
+def test_cli_asks_once_with_exact_tool_and_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    prompts: list[str] = []
+    monkeypatch.setattr(app, "_is_interactive", lambda: True)
+
+    def confirm(prompt: str, **_kwargs: object) -> bool:
+        prompts.append(prompt)
+        return True
+
+    monkeypatch.setattr(click, "confirm", confirm)
+
+    assert app._approval_decision(approval_chunk())
+
+    assert prompts == ["Approve this tool call?"]
+    error = capsys.readouterr().err
+    assert "Tool approval required: write_file" in error
+    assert 'Arguments: {"content": "hello", "path": "README.md"}' in error
+
+
+def test_noninteractive_cli_denies_without_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(app, "_is_interactive", lambda: False)
+    monkeypatch.setattr(
+        click,
+        "confirm",
+        lambda *_args, **_kwargs: pytest.fail("must not prompt"),
+    )
+
+    assert not app._approval_decision(approval_chunk())
+
+    assert "Denied: input is not interactive" in capsys.readouterr().err
+
+
+def test_cli_resumes_stream_with_denial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decisions: list[bool] = []
+
+    class FakeEthos:
+        async def resolve_approval(
+            self,
+            workspace: str,
+            session_id: str,
+            approval_id: str,
+            approved: bool,
+            context: RequestContext,
+        ) -> AsyncIterator[ChatChunk]:
+            del workspace, session_id, approval_id, context
+            decisions.append(approved)
+            yield ChatChunk(
+                text="denied safely",
+                workspace="default",
+                session_id="session-1",
+                done=True,
+            )
+
+    async def initial() -> AsyncIterator[ApprovalChunk]:
+        yield approval_chunk()
+
+    monkeypatch.setattr(app, "_approval_decision", lambda _approval: False)
+
+    async def collect() -> list[object]:
+        return [
+            event
+            async for event in app._resolve_cli_approvals(
+                cast(Ethos, FakeEthos()),
+                initial(),
+                RequestContext("test", "owner", {}),
+            )
+        ]
+
+    events = asyncio.run(collect())
+
+    assert decisions == [False]
+    assert isinstance(events[0], ApprovalChunk)
+    assert isinstance(events[1], ChatChunk)
+    assert events[1].text == "denied safely"

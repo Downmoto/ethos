@@ -115,7 +115,8 @@ state, not deletion.
 ## One runtime turn
 
 `AgentRuntime` owns a model factory and a map of `asyncio.Lock` values keyed by
-`(workspace_name, session_id)`.
+`(workspace_name, session_id)`. It also holds a non-blocking OS file lock for
+the session while a turn or approval resolution is active.
 
 For each turn it:
 
@@ -128,10 +129,12 @@ For each turn it:
 7. advertises registered tools when the model supports them;
 8. streams and validates responses up to the configured round limit;
 9. checkpoints an assistant tool-call response;
-10. executes its calls sequentially through the mandatory tool policy and
+10. executes allowed calls sequentially through the mandatory tool policy and
     checkpoints each result;
-11. atomically persists the final assistant response;
-12. yields aggregate usage in one final event with `done=True`.
+11. persists a write call as `pending` before emitting its approval event;
+12. resumes an approved or denied request without accepting a new user turn;
+13. atomically persists the final assistant response;
+14. yields aggregate usage in one final event with `done=True`.
 
 `AgentRuntime` accepts per-instance model-round and per-response tool-call
 limits. They default to eight rounds and sixteen calls respectively, and both
@@ -143,13 +146,14 @@ the same runtime object handles several conversations.
 
 ### Concurrency guarantee
 
-Turns for the same workspace and session are serialised. The second turn
-reloads history only after the first turn has persisted it. Different sessions
-may run concurrently.
+Turns for the same workspace and session are serialised across runtime
+instances and processes. A competing runtime fails closed with `session runtime
+is busy`; it never waits while holding the event loop. Different sessions may
+run concurrently.
 
-The locks belong to one `AgentRuntime` instance and one process. They do not
-coordinate a CLI process with a running Vox process, or two separately
-constructed runtimes.
+The in-process lock provides orderly waiting within one runtime. The
+per-session file lock prevents a CLI process, Vox process, or separately
+constructed runtime from claiming the same approval concurrently.
 
 ### Completion and failure
 
@@ -158,6 +162,15 @@ finishes normally. A response with tool calls is checkpointed before tool
 execution, and every result is a separate checkpoint. If execution fails or
 is cancelled, the latest successful checkpoint remains durable. A later user
 turn rejects an assistant tool call without exactly one stored result.
+
+Write calls persist the original call, tool name, validated arguments, effect,
+reason, creation time, round, and usage. Approval atomically changes `pending`
+to `executing` before the tool runs. Completion atomically stores `completed`
+and its result; denial stores `denied` and an error result. If the process dies
+while `executing`, the OS releases its lock and the next runtime load persists
+`indeterminate`. That state can never execute automatically. Pending requests
+survive restart, and every approval is single-use and bound to its exact call
+payload.
 
 Text may already have reached a caller before completion or a later
 persistence failure. Streamed output therefore does not by itself prove that
@@ -175,7 +188,7 @@ and documenting them:
 
 - A session never changes its owning workspace.
 - Archived session history is readable but not mutable.
-- One process never overlaps two turns for the same session.
+- No process overlaps another runtime turn for the same session.
 - Different sessions are allowed to run concurrently.
 - Invalid or redirected filesystem state fails closed.
 - A final runtime completion event follows successful history persistence.

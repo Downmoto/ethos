@@ -4,12 +4,20 @@ import asyncio
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Final, Protocol, cast
+from typing import Final, Protocol, Self, cast
+from uuid import NAMESPACE_URL, uuid5
 
-from pydantic import BaseModel, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    model_validator,
+)
 
-from ethos.models import ToolCallPart, ToolDefinition, ToolResultPart
+from ethos.models import ToolCallPart, ToolDefinition, ToolResultPart, Usage
 
 TOOL_TIMEOUT_SECONDS: Final = 30.0
 MAX_DENIAL_REASON_LENGTH: Final = 500
@@ -44,15 +52,75 @@ class Deny:
             )
 
 
+@dataclass(frozen=True)
+class RequireApproval:
+    reason: str
+
+    def __post_init__(self) -> None:
+        if not self.reason or len(self.reason) > MAX_DENIAL_REASON_LENGTH:
+            raise ValueError(
+                "approval reason must be between 1 and 500 characters"
+            )
+
+
 class ToolPolicy(Protocol):
-    async def decide(self, call: ToolCallPart, tool: Tool) -> Allow | Deny: ...
+    async def decide(
+        self, call: ToolCallPart, tool: Tool
+    ) -> Allow | Deny | RequireApproval: ...
 
 
 class DefaultToolPolicy:
-    async def decide(self, call: ToolCallPart, tool: Tool) -> Allow | Deny:
+    async def decide(
+        self, call: ToolCallPart, tool: Tool
+    ) -> Allow | Deny | RequireApproval:
         if tool.effect is ToolEffect.READ:
             return Allow()
-        return Deny(reason="write tools are not allowed")
+        return RequireApproval(reason="write tool requires approval")
+
+
+class ApprovalState(StrEnum):
+    PENDING = "pending"
+    EXECUTING = "executing"
+    COMPLETED = "completed"
+    DENIED = "denied"
+    INDETERMINATE = "indeterminate"
+
+
+class ToolApproval(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: str = Field(min_length=1)
+    call: ToolCallPart
+    tool_name: str = Field(min_length=1)
+    arguments: dict[str, object]
+    effect: ToolEffect
+    reason: str = Field(min_length=1, max_length=MAX_DENIAL_REASON_LENGTH)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    state: ApprovalState = ApprovalState.PENDING
+    round_number: int = Field(ge=1)
+    usage: Usage = Field(default_factory=Usage)
+    result: ToolResultPart | None = None
+
+    @model_validator(mode="after")
+    def validate_state(self) -> Self:
+        if self.call.name != self.tool_name:
+            raise ValueError("approval tool name does not match call")
+        finished = self.state in (ApprovalState.COMPLETED, ApprovalState.DENIED)
+        if finished != (self.result is not None):
+            raise ValueError("approval state and result do not match")
+        return self
+
+
+@dataclass(frozen=True)
+class PreparedToolCall:
+    call: ToolCallPart
+    tool: Tool
+    arguments: BaseModel
+    decision: Allow | RequireApproval
+
+
+def approval_request_id(session_id: str, call_id: str) -> str:
+    return str(uuid5(NAMESPACE_URL, f"ethos:{session_id}:{call_id}"))
 
 
 class ToolRegistry:
@@ -84,7 +152,9 @@ class ToolExecutor:
         self._registry = registry
         self._policy = policy if policy is not None else DefaultToolPolicy()
 
-    async def execute(self, call: ToolCallPart) -> ToolResultPart:
+    async def prepare(
+        self, call: ToolCallPart
+    ) -> PreparedToolCall | ToolResultPart:
         tool = self._registry.get(call.name)
         if tool is None:
             return _error(call, "unknown tool")
@@ -103,23 +173,36 @@ class ToolExecutor:
         decision = cast(object, await self._policy.decide(call, tool))
         if isinstance(decision, Deny):
             return _error(call, decision.reason)
-        if not isinstance(decision, Allow):
+        if not isinstance(decision, (Allow, RequireApproval)):
             raise TypeError("tool policy returned an invalid decision")
+        return PreparedToolCall(call, tool, arguments, decision)
 
+    async def run(self, prepared: PreparedToolCall) -> ToolResultPart:
         try:
             async with asyncio.timeout(TOOL_TIMEOUT_SECONDS):
-                content = cast(object, await tool.execute(arguments))
+                content = cast(
+                    object,
+                    await prepared.tool.execute(prepared.arguments),
+                )
         except TimeoutError:
-            return _error(call, "tool execution timed out")
+            return _error(prepared.call, "tool execution timed out")
         except Exception:
-            return _error(call, "tool execution failed")
+            return _error(prepared.call, "tool execution failed")
         if not isinstance(content, str):
             raise TypeError("tool returned a non-string result")
         return ToolResultPart(
-            call_id=call.call_id,
-            name=call.name,
+            call_id=prepared.call.call_id,
+            name=prepared.call.name,
             content=content,
         )
+
+    async def execute(self, call: ToolCallPart) -> ToolResultPart:
+        prepared = await self.prepare(call)
+        if isinstance(prepared, ToolResultPart):
+            return prepared
+        if isinstance(prepared.decision, RequireApproval):
+            return _error(call, prepared.decision.reason)
+        return await self.run(prepared)
 
 
 def _error(call: ToolCallPart, content: str) -> ToolResultPart:
