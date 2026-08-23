@@ -144,7 +144,12 @@ class LiteLLMModel:
             raise _provider_error("request", error) from error
         if not isinstance(result, LiteLLMResponse):
             raise ModelProtocolError("provider returned an invalid response")
-        return _response(result)
+        return _response(
+            result,
+            reported_reasoning_estimated=(
+                self.provider.name is ProviderName.OLLAMA
+            ),
+        )
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelEvent]:
         kwargs = self._kwargs(request, stream=True)
@@ -157,7 +162,7 @@ class LiteLLMModel:
 
         order: list[_TextAssembly | _ReasoningAssembly | _ToolCallAssembly] = []
         tool_calls: dict[int, _ToolCallAssembly] = {}
-        usage = Usage()
+        usage_value: object | None = None
         finish_reason: FinishReason | None = None
         response_id: str | None = None
         finished = False
@@ -167,9 +172,10 @@ class LiteLLMModel:
                     raise ModelProtocolError(
                         "provider returned an invalid chunk"
                     )
-                chunk_usage = _usage(getattr(value, "usage", None))
+                raw_usage = getattr(value, "usage", None)
+                chunk_usage = _usage(raw_usage)
                 if chunk_usage is not None:
-                    usage = chunk_usage
+                    usage_value = raw_usage
                 if not value.choices:
                     if chunk_usage is None:
                         raise ModelProtocolError(
@@ -237,6 +243,19 @@ class LiteLLMModel:
         if not finished or finish_reason is None:
             raise ModelProtocolError("provider stream ended before completion")
         parts = _finalise_stream_parts(order)
+        reasoning = "".join(
+            part.text for part in parts if isinstance(part, ReasoningPart)
+        )
+        usage = (
+            _usage(
+                usage_value,
+                reasoning,
+                reported_reasoning_estimated=(
+                    self.provider.name is ProviderName.OLLAMA
+                ),
+            )
+            or Usage()
+        )
         if finish_reason is FinishReason.STOP and any(
             isinstance(part, ToolCallPart) for part in parts
         ):
@@ -337,7 +356,11 @@ def _tool(tool: ToolDefinition) -> dict[str, object]:
     }
 
 
-def _response(value: LiteLLMResponse) -> ModelResponse:
+def _response(
+    value: LiteLLMResponse,
+    *,
+    reported_reasoning_estimated: bool = False,
+) -> ModelResponse:
     if len(value.choices) != 1:
         raise ModelProtocolError("provider returned multiple choices")
     choice = value.choices[0]
@@ -369,7 +392,14 @@ def _response(value: LiteLLMResponse) -> ModelResponse:
         )
         if isinstance(native_finish_reason, str):
             finish_reason = native_finish_reason
-    usage = _usage(getattr(value, "usage", None)) or Usage()
+    usage = (
+        _usage(
+            getattr(value, "usage", None),
+            reasoning or "",
+            reported_reasoning_estimated=reported_reasoning_estimated,
+        )
+        or Usage()
+    )
     return ModelResponse(
         parts=tuple(parts),
         usage=usage,
@@ -533,18 +563,55 @@ def _validate_delta(value: object) -> None:
     _reasoning_content(value)
 
 
-def _usage(value: object) -> Usage | None:
+def _usage(
+    value: object,
+    reasoning: str = "",
+    *,
+    reported_reasoning_estimated: bool = False,
+) -> Usage | None:
     if value is None:
         return None
     if not isinstance(value, _LiteLLMUsage):
         raise ModelProtocolError("provider returned invalid usage")
     try:
+        reasoning_tokens, estimated = _reasoning_usage(
+            value,
+            reasoning,
+            value.completion_tokens,
+            reported_reasoning_estimated,
+        )
         return Usage(
             input_tokens=value.prompt_tokens,
             output_tokens=value.completion_tokens,
+            reasoning_tokens=reasoning_tokens,
+            reasoning_tokens_estimated=estimated,
         )
     except ValueError as error:
         raise ModelProtocolError("provider returned invalid usage") from error
+
+
+def _reasoning_usage(
+    value: object,
+    reasoning: str,
+    output_tokens: int,
+    reported_reasoning_estimated: bool,
+) -> tuple[int, bool]:
+    details = getattr(value, "completion_tokens_details", None)
+    reported = getattr(details, "reasoning_tokens", None)
+    if reported is not None:
+        if (
+            isinstance(reported, bool)
+            or not isinstance(reported, int)
+            or reported < 0
+            or reported > output_tokens
+        ):
+            raise ValueError("invalid reasoning token usage")
+        return reported, reported_reasoning_estimated
+    if not reasoning:
+        return 0, False
+    # Four UTF-8 bytes per token is a provider-neutral display estimate.
+    estimated = min(output_tokens, (len(reasoning.encode("utf-8")) + 3) // 4)
+    return estimated, True
 
 
 def _finish_reason(value: str) -> FinishReason:

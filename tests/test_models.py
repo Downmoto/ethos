@@ -98,6 +98,11 @@ def test_model_response_json_round_trip_covers_response_parts() -> None:
     )
 
 
+def test_usage_rejects_reasoning_tokens_outside_output_total() -> None:
+    with pytest.raises(ValidationError, match="cannot exceed output tokens"):
+        Usage(output_tokens=1, reasoning_tokens=2)
+
+
 @pytest.mark.parametrize(
     "event",
     [

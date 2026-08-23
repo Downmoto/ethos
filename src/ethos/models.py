@@ -115,6 +115,18 @@ class ReasoningEffort(StrEnum):
 class Usage(_ModelValue):
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
+    reasoning_tokens: int = Field(default=0, ge=0)
+    reasoning_tokens_estimated: bool = False
+
+    @model_validator(mode="after")
+    def reasoning_must_be_part_of_output(self) -> Self:
+        if self.reasoning_tokens > self.output_tokens:
+            raise ValueError("reasoning tokens cannot exceed output tokens")
+        return self
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
 
 
 class FinishReason(StrEnum):

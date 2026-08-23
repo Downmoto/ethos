@@ -257,7 +257,16 @@ def test_litellm_model_sends_configured_reasoning_effort() -> None:
 
 def test_litellm_model_converts_complete_reasoning() -> None:
     async def completion(**_kwargs: object) -> object:
-        return response("answer", reasoning_content="thinking")
+        return response(
+            "answer",
+            reasoning_content="thinking",
+            usage={
+                "prompt_tokens": 3,
+                "completion_tokens": 4,
+                "total_tokens": 7,
+                "completion_tokens_details": {"reasoning_tokens": 2},
+            },
+        )
 
     result = asyncio.run(
         LiteLLMModel(
@@ -270,6 +279,11 @@ def test_litellm_model_converts_complete_reasoning() -> None:
     assert result.parts == (
         ReasoningPart(text="thinking"),
         TextPart(text="answer"),
+    )
+    assert result.usage == Usage(
+        input_tokens=3,
+        output_tokens=4,
+        reasoning_tokens=2,
     )
 
 
@@ -307,6 +321,14 @@ def test_litellm_model_streams_reasoning_separately() -> None:
         chunk(reasoning_content="ing"),
         chunk("answer"),
         chunk(finish_reason="stop"),
+        chunk(
+            usage={
+                "prompt_tokens": 3,
+                "completion_tokens": 4,
+                "total_tokens": 7,
+                "completion_tokens_details": {"reasoning_tokens": 2},
+            }
+        ),
     )
 
     async def completion(**_kwargs: object) -> object:
@@ -336,6 +358,12 @@ def test_litellm_model_streams_reasoning_separately() -> None:
     assert completed.response.parts == (
         ReasoningPart(text="thinking"),
         TextPart(text="answer"),
+    )
+    assert completed.response.usage == Usage(
+        input_tokens=3,
+        output_tokens=4,
+        reasoning_tokens=2,
+        reasoning_tokens_estimated=True,
     )
 
 

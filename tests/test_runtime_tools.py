@@ -93,6 +93,7 @@ def call_response(
     *calls: ToolCallPart,
     text: str | None = None,
     finish_reason: FinishReason = FinishReason.TOOL_CALL,
+    usage: Usage | None = None,
 ) -> ModelResponse:
     parts: tuple[TextPart | ToolCallPart, ...] = (
         *((TextPart(text=text),) if text is not None else ()),
@@ -100,15 +101,17 @@ def call_response(
     )
     return ModelResponse(
         parts=parts,
-        usage=Usage(input_tokens=2, output_tokens=1),
+        usage=usage or Usage(input_tokens=2, output_tokens=1),
         finish_reason=finish_reason,
     )
 
 
-def text_response(text: str = "done") -> ModelResponse:
+def text_response(
+    text: str = "done", usage: Usage | None = None
+) -> ModelResponse:
     return ModelResponse(
         parts=(TextPart(text=text),),
-        usage=Usage(input_tokens=3, output_tokens=2),
+        usage=usage or Usage(input_tokens=3, output_tokens=2),
         finish_reason=FinishReason.STOP,
     )
 
@@ -174,8 +177,21 @@ def test_runtime_completes_one_tool_round(tmp_path: Path) -> None:
                 tool_call(),
                 text="Let me check. ",
                 finish_reason=FinishReason.OTHER,
+                usage=Usage(
+                    input_tokens=2,
+                    output_tokens=1,
+                    reasoning_tokens=1,
+                ),
             ),
-            text_response("It is one."),
+            text_response(
+                "It is one.",
+                Usage(
+                    input_tokens=3,
+                    output_tokens=2,
+                    reasoning_tokens=1,
+                    reasoning_tokens_estimated=True,
+                ),
+            ),
         ),
         stream_chunks=(("Let me check. ",), ("It is ", "one.")),
         features=ModelFeatures(tools=True),
@@ -191,7 +207,13 @@ def test_runtime_completes_one_tool_round(tmp_path: Path) -> None:
         "",
     ]
     assert events[-1] == PromptStreamEvent(
-        usage=Usage(input_tokens=5, output_tokens=3), done=True
+        usage=Usage(
+            input_tokens=5,
+            output_tokens=3,
+            reasoning_tokens=2,
+            reasoning_tokens_estimated=True,
+        ),
+        done=True,
     )
     assert tool.values == ["one"]
     assert len(model.requests) == 2

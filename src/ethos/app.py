@@ -45,13 +45,18 @@ logging.getLogger("opentelemetry.context").addFilter(
 )
 
 
-async def _print_response(chunks: AsyncIterator[ChatEvent]) -> None:
+async def _print_response(
+    chunks: AsyncIterator[ChatEvent], *, print_usage: bool = False
+) -> None:
     wrote_output = False
     wrote_reasoning = False
+    usage = None
     try:
         async for chunk in chunks:
             if isinstance(chunk, ApprovalChunk):
                 continue
+            if chunk.usage is not None:
+                usage = chunk.usage
             if chunk.text and chunk.text_kind == "reasoning":
                 if not wrote_reasoning:
                     click.echo("Reasoning", err=True)
@@ -67,6 +72,18 @@ async def _print_response(chunks: AsyncIterator[ChatEvent]) -> None:
             click.echo()
         elif wrote_reasoning:
             click.echo(err=True)
+    if print_usage and usage is not None:
+        reasoning_tokens = (
+            f"~{usage.reasoning_tokens}"
+            if usage.reasoning_tokens_estimated
+            else str(usage.reasoning_tokens)
+        )
+        click.echo(
+            f"Usage: {usage.input_tokens} input tokens, "
+            f"{usage.output_tokens} output tokens, "
+            f"{reasoning_tokens} reasoning tokens, "
+            f"{usage.total_tokens} total tokens"
+        )
 
 
 def _cli_context() -> RequestContext:
@@ -429,7 +446,7 @@ def session_chat(workspace_name: str, session_id: str, prompt: str) -> None:
 def ask(prompt: str) -> None:
     """Send one prompt in a fresh default-workspace session."""
     try:
-        asyncio.run(_print_response(_ask_requests(prompt)))
+        asyncio.run(_print_response(_ask_requests(prompt), print_usage=True))
     except ValidationError as error:
         message = (
             "ethos is not configured. Run [ethos onboard] first."

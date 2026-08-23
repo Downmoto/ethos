@@ -13,7 +13,7 @@ from ethos.events.emitters import EnvelopeEventEmitter
 from ethos.events.models import EventPayload
 from ethos.events.types import EventType
 from ethos.home import DB_PATH
-from ethos.models import ReasoningPart, Role, TextPart
+from ethos.models import ReasoningPart, Role, TextPart, Usage
 from ethos.runtime import (
     AgentRuntime,
     ApprovalStreamEvent,
@@ -75,17 +75,6 @@ class HistoryMessage(BaseModel):
     role: Literal["user", "assistant"]
     text: str
     reasoning: str = ""
-
-
-class Usage(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    input_tokens: int = Field(default=0, ge=0)
-    output_tokens: int = Field(default=0, ge=0)
-
-    @property
-    def total_tokens(self) -> int:
-        return self.input_tokens + self.output_tokens
 
 
 class ChatChunk(BaseModel):
@@ -313,14 +302,6 @@ class Ethos:
                     session_id=session_id,
                 )
                 continue
-            usage = (
-                Usage(
-                    input_tokens=event.usage.input_tokens,
-                    output_tokens=event.usage.output_tokens,
-                )
-                if event.usage is not None
-                else None
-            )
             if event.done:
                 session = self.sessions.get(workspace, session_id)
                 await self._emit_sessions(
@@ -332,7 +313,7 @@ class Ethos:
                 text_kind=event.text_kind,
                 workspace=workspace,
                 session_id=session_id,
-                usage=usage,
+                usage=event.usage,
                 done=event.done,
             )
         if not emitted:

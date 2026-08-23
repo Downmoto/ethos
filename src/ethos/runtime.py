@@ -974,6 +974,11 @@ def _add_usage(first: Usage, second: Usage) -> Usage:
     return Usage(
         input_tokens=first.input_tokens + second.input_tokens,
         output_tokens=first.output_tokens + second.output_tokens,
+        reasoning_tokens=first.reasoning_tokens + second.reasoning_tokens,
+        reasoning_tokens_estimated=(
+            first.reasoning_tokens_estimated
+            or second.reasoning_tokens_estimated
+        ),
     )
 
 

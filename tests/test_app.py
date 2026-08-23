@@ -14,6 +14,7 @@ from click.testing import CliRunner
 
 from ethos import app
 from ethos.home import initialise_home
+from ethos.models import Usage
 from ethos.service import ApprovalChunk, ChatChunk, Ethos, RequestContext
 from ethos.tools import ToolEffect
 
@@ -175,6 +176,12 @@ def test_ask_streams_response(
             text="hello",
             workspace="default",
             session_id="session",
+            usage=Usage(
+                input_tokens=2,
+                output_tokens=1,
+                reasoning_tokens=1,
+                reasoning_tokens_estimated=True,
+            ),
             done=True,
         )
 
@@ -183,7 +190,10 @@ def test_ask_streams_response(
     result = CliRunner().invoke(app.main, ["ask", "hi"])
 
     assert result.exit_code == 0
-    assert "hello" in result.output
+    assert result.output == (
+        "hello\nUsage: 2 input tokens, 1 output tokens, "
+        "~1 reasoning tokens, 3 total tokens\n"
+    )
 
 
 def test_ask_renders_reasoning_separately(
