@@ -143,8 +143,12 @@ limits. They default to eight rounds and sixteen calls respectively, and both
 must be positive.
 
 Models do not hold conversation history. The complete history is supplied in
-an Ethos `ModelRequest` for every run, which keeps sessions isolated even when
-the same runtime object handles several conversations.
+an Ethos `ModelRequest` for every run. `ContextBuilder` constructs that request
+from its base Ethos system instruction, local date/time information, run-only
+system instructions, stored messages, and available tool definitions.
+Constructed instructions are never added to canonical session history. This
+keeps sessions isolated even when the same runtime object handles several
+conversations.
 
 ### Concurrency guarantee
 

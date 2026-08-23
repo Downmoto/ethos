@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 from pydantic import ConfigDict, Field, ValidationError, field_validator
 
 from ethos.config import get_settings
+from ethos.context import ContextBuilder
 from ethos.events import event_factory
 from ethos.events.emitters import EnvelopeEventEmitter
 from ethos.events.models import EventPayload, NonEmptyString
@@ -22,7 +23,6 @@ from ethos.models import (
     FinishReason,
     Message,
     Model,
-    ModelRequest,
     ModelResponse,
     ReasoningDelta,
     ReasoningPart,
@@ -188,6 +188,7 @@ class AgentRuntime:
             raise ValueError("max_tool_calls_per_response must be positive")
         self._sessions = sessions
         self._events = events
+        self._context_builder = ContextBuilder()
         self._model_factory = (
             model_factory if model_factory is not None else _model_from_settings
         )
@@ -595,7 +596,10 @@ class AgentRuntime:
                 round_number += 1
                 continue
 
-            request = ModelRequest(messages=messages, tools=tools)
+            request = self._context_builder.build(
+                messages,
+                tool_definitions=tools,
+            )
             streamed_text = ""
             streamed_reasoning = ""
             completed: ModelResponse | None = None

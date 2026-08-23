@@ -863,3 +863,21 @@ The automated suite must also prove that provider failure, cancellation,
 malformed output, permission denial, persistence failure, limit exhaustion,
 and an indeterminate tool call fail without silently losing history or
 duplicating a write side effect.
+
+## Deferred event-log follow-ups
+
+These are not M7.5 acceptance blockers and should be addressed together in a
+later event-storage cleanup:
+
+- Add an explicit durable ordering mechanism. Wall-clock `created_at` values
+  and unordered SQL reads do not guarantee exact reconstruction when clocks
+  move or timestamps collide. Until then, diagnostic queries must specify an
+  order rather than relying on `SELECT *` insertion order.
+- Stop copying `event_type` into `source_detail`. Leave the detail absent or
+  reserve it for genuinely source-specific context.
+- Re-evaluate duplicating runtime correlation fields in both JSON tags and
+  typed payloads, including whether the current JSON tag storage provides the
+  filtering value that justifies the duplication.
+- Standardise tag conventions across event families. Runtime events use
+  prefixed tags such as `workspace:` and `session:`, while existing workspace
+  and session operation events use unprefixed values.

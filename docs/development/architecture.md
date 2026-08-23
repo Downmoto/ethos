@@ -92,6 +92,12 @@ lives in the Ethos home. For each turn, `AgentRuntime` resolves the global
 settings, streams model output, and atomically replaces history before emitting
 its completion chunk.
 
+`ContextBuilder` is the boundary between that canonical stored history and a
+model request. It owns the base Ethos system instruction, appends run-only
+date, time, and timezone context, appends run-only system instructions, and
+attaches available tool definitions without mutating or persisting the
+constructed context.
+
 Lifecycle events are always emitted and stored before in-process listeners
 run. Domain mutations and event writes are not one transaction, so an event
 failure can follow a successful filesystem mutation.
