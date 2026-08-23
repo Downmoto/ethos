@@ -193,6 +193,7 @@ def test_ask_streams_response(
     assert result.output == (
         "hello\nUsage: 2 input tokens, 1 output tokens, "
         "~1 reasoning tokens, 3 total tokens\n"
+        "Session ID: session\n"
     )
 
 

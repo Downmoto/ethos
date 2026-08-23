@@ -51,12 +51,15 @@ async def _print_response(
     wrote_output = False
     wrote_reasoning = False
     usage = None
+    session_id = None
     try:
         async for chunk in chunks:
             if isinstance(chunk, ApprovalChunk):
                 continue
             if chunk.usage is not None:
                 usage = chunk.usage
+            if session_id is None:
+                session_id = chunk.session_id
             if chunk.text and chunk.text_kind == "reasoning":
                 if not wrote_reasoning:
                     click.echo("Reasoning", err=True)
@@ -82,7 +85,8 @@ async def _print_response(
             f"Usage: {usage.input_tokens} input tokens, "
             f"{usage.output_tokens} output tokens, "
             f"{reasoning_tokens} reasoning tokens, "
-            f"{usage.total_tokens} total tokens"
+            f"{usage.total_tokens} total tokens\n"
+            f"Session ID: {session_id}"
         )
 
 
