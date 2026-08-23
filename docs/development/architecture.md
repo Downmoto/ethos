@@ -98,6 +98,22 @@ date, time, and timezone context, appends run-only system instructions, and
 attaches available tool definitions without mutating or persisting the
 constructed context.
 
+Capabilities contribute only run-scoped instructions and tools. The runtime
+resolves them in registration order for each session turn, rejects duplicate
+tool names before contacting the model, and gives the resulting values to the
+context builder and mandatory tool executor. The runtime depends on the
+capability protocol rather than naming concrete capabilities.
+
+The first production capability exposes `list_files` and `read_file`.
+`list_files` returns at most 1,000 sorted, workspace-relative entries from one
+directory; `read_file` reads at most 100 KiB of UTF-8 text from one file.
+Absolute paths, incompatible path types, traversal outside the workspace, and
+symlinks resolving outside the workspace fail without exposing file contents.
+
+Every request also receives a run-only system instruction containing the
+active workspace name and path plus the session ID. This lets the model reason
+about its location without adding operational context to persisted history.
+
 Lifecycle events are always emitted and stored before in-process listeners
 run. Domain mutations and event writes are not one transaction, so an event
 failure can follow a successful filesystem mutation.
@@ -119,9 +135,9 @@ incomplete trace instead of inventing a completion during cleanup.
 
 ## Deferred AI design
 
-Personas, persona memory, cross-persona conversation, and expanded skill/tool
-execution are intentionally outside this base refactor. No placeholder persona
-abstractions exist until those behaviours are designed.
+Personas, persona memory, cross-persona conversation, skills, and additional
+capabilities are intentionally outside this base refactor. No placeholder
+persona abstractions exist until those behaviours are designed.
 
 ## Current limits
 

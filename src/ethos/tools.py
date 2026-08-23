@@ -82,6 +82,10 @@ class ToolPolicyError(RuntimeError):
     """A tool policy failed without exposing its internal exception."""
 
 
+class ToolExecutionError(RuntimeError):
+    """A safe, actionable tool error that may be shown to the model."""
+
+
 class ApprovalState(StrEnum):
     PENDING = "pending"
     EXECUTING = "executing"
@@ -158,6 +162,10 @@ class ToolRegistry:
     def definitions(self) -> tuple[ToolDefinition, ...]:
         return tuple(tool.definition for tool in self._tools.values())
 
+    @property
+    def tools(self) -> tuple[Tool, ...]:
+        return tuple(self._tools.values())
+
     def register(self, tool: Tool) -> None:
         name = tool.definition.name
         if name in self._tools:
@@ -176,6 +184,9 @@ class ToolExecutor:
     ) -> None:
         self._registry = registry
         self._policy = policy if policy is not None else DefaultToolPolicy()
+
+    def for_registry(self, registry: ToolRegistry) -> "ToolExecutor":
+        return ToolExecutor(registry, self._policy)
 
     async def prepare(
         self, call: ToolCallPart
@@ -226,6 +237,8 @@ class ToolExecutor:
                 )
         except TimeoutError:
             return _error(prepared.call, "tool execution timed out")
+        except ToolExecutionError as error:
+            return _error(prepared.call, str(error))
         except Exception:
             return _error(prepared.call, "tool execution failed")
         if not isinstance(content, str):

@@ -784,7 +784,7 @@ Exit criteria:
 
 Commit: `feat: add runtime capabilities`
 
-Implementation in `src/ethos/capabilities.py`:
+Implementation in `src/ethos/capabilities/`:
 
 ```python
 class Capability(Protocol):
@@ -798,8 +798,9 @@ class Capability(Protocol):
 - Reject duplicate contributed tool names before the first model request.
 - Feed instructions to `ContextBuilder` and tools to a per-turn registry.
 - Implement exactly one first capability: a read-only filesystem capability
-  with one bounded tool required by an accepted use case. If no such use case
-  exists, stop after composition and do not invent a demonstration tool.
+  with bounded `list_files` and `read_file` tools. `list_files` lists one
+  directory without recursion; `read_file` reads one UTF-8 text file. Both
+  reject paths outside the active workspace.
 
 Tests:
 

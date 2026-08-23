@@ -8,6 +8,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ethos.capabilities.filesystem import ReadOnlyFilesystemCapability
 from ethos.events import create_event_emitter, event_factory
 from ethos.events.emitters import EnvelopeEventEmitter
 from ethos.events.models import EventPayload
@@ -166,7 +167,11 @@ class Ethos:
 
     def _runtime(self) -> AgentRuntime:
         if self._agent is None:
-            self._agent = AgentRuntime(self.sessions, events=self.events)
+            self._agent = AgentRuntime(
+                self.sessions,
+                capabilities=(ReadOnlyFilesystemCapability(),),
+                events=self.events,
+            )
         return self._agent
 
     async def create_workspace(

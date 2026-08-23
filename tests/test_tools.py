@@ -15,6 +15,7 @@ from ethos.tools import (
     RequireApproval,
     Tool,
     ToolEffect,
+    ToolExecutionError,
     ToolExecutor,
     ToolPolicyError,
     ToolPreparationOutcome,
@@ -268,6 +269,21 @@ def test_tool_exception_does_not_expose_exception_text() -> None:
 
     assert result.content == "tool execution failed"
     assert "Toronto" not in result.content
+    assert result.is_error
+
+
+def test_safe_tool_error_is_returned_to_model() -> None:
+    def fail(_arguments: BaseModel) -> str:
+        raise ToolExecutionError("path must be inside the workspace")
+
+    result = asyncio.run(
+        run_allowed(
+            ToolExecutor(ToolRegistry((FakeTool("files", execute=fail),))),
+            call(name="files"),
+        )
+    )
+
+    assert result.content == "path must be inside the workspace"
     assert result.is_error
 
 

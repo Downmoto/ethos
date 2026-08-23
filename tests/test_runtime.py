@@ -182,7 +182,7 @@ def test_runtime_default_factory_resolves_settings_once_per_turn(
     asyncio.run(run_turns())
 
     assert calls == 2
-    assert [len(request.messages) for request in model.requests] == [3, 5]
+    assert [len(request.messages) for request in model.requests] == [4, 6]
 
 
 def test_runtime_yields_and_stores_non_overlapping_provider_chunks(
@@ -454,7 +454,7 @@ def test_runtime_keeps_conversation_history_isolated(tmp_path: Path) -> None:
 
     asyncio.run(run_turns())
 
-    assert [len(request.messages) for request in model.requests] == [3, 5, 3]
+    assert [len(request.messages) for request in model.requests] == [4, 6, 4]
     prompts = [
         part.text
         for message in model.requests[1].messages

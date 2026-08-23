@@ -126,17 +126,19 @@ For each turn it:
 2. reloads the session from disk;
 3. rejects an archived session;
 4. rejects stored tool calls without exactly one later result;
-5. loads the application settings and constructs the selected model;
-6. appends one user text message to the stored history in memory;
-7. advertises registered tools when the model supports them;
-8. streams and validates responses up to the configured round limit;
-9. checkpoints an assistant tool-call response;
-10. executes allowed calls sequentially through the mandatory tool policy and
+5. resolves capability instructions and tools for the active workspace and
+   session;
+6. loads the application settings and constructs the selected model;
+7. appends one user text message to the stored history in memory;
+8. advertises the composed tools when the model supports them;
+9. streams and validates responses up to the configured round limit;
+10. checkpoints an assistant tool-call response;
+11. executes allowed calls sequentially through the mandatory tool policy and
     checkpoints each result;
-11. persists a write call as `pending` before emitting its approval event;
-12. resumes an approved or denied request without accepting a new user turn;
-13. atomically persists the final assistant response;
-14. yields aggregate usage in one final event with `done=True`.
+12. persists a write call as `pending` before emitting its approval event;
+13. resumes an approved or denied request without accepting a new user turn;
+14. atomically persists the final assistant response;
+15. yields aggregate usage in one final event with `done=True`.
 
 `AgentRuntime` accepts per-instance model-round and per-response tool-call
 limits. They default to eight rounds and sixteen calls respectively, and both
@@ -145,10 +147,25 @@ must be positive.
 Models do not hold conversation history. The complete history is supplied in
 an Ethos `ModelRequest` for every run. `ContextBuilder` constructs that request
 from its base Ethos system instruction, local date/time information, run-only
-system instructions, stored messages, and available tool definitions.
+workspace and session context, capability instructions, stored messages, and
+available tool definitions.
 Constructed instructions are never added to canonical session history. This
 keeps sessions isolated even when the same runtime object handles several
 conversations.
+
+Capabilities resolve once per turn in registration order. Each receives only
+the active workspace name and path plus the session ID, and contributes
+run-only instructions and tools. Their tools form a fresh registry for that
+turn, so duplicate names fail before model or tool execution and one session's
+tool instances cannot leak into another.
+
+The default read-only filesystem capability contributes `list_files` and
+`read_file`. Both resolve relative paths beneath the active workspace.
+`list_files` returns a sorted JSON array for one directory and rejects more
+than 1,000 entries; `read_file` reads at most 100 KiB of UTF-8 text. Absolute
+paths, incompatible path types, traversal, and symlinks resolving outside the
+workspace are rejected. All calls still pass through the standard tool
+executor and policy.
 
 ### Concurrency guarantee
 

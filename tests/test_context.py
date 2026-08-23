@@ -1,5 +1,7 @@
 import re
+from pathlib import Path
 
+from ethos.capabilities import RunContext
 from ethos.context import SYSTEM_INSTRUCTION, ContextBuilder
 from ethos.models import (
     Message,
@@ -70,6 +72,30 @@ def test_context_builder_prepends_instructions_and_preserves_tool_order() -> (
     )
     assert request.messages[-1] is history[0]
     assert request.tools == tools
+    assert history == (
+        Message(role=Role.USER, parts=(TextPart(text="question"),)),
+    )
+
+
+def test_context_builder_includes_run_context_without_persisting_it() -> None:
+    history = (Message(role=Role.USER, parts=(TextPart(text="question"),)),)
+    context = RunContext("project", Path("/workspaces/project"), "session-1")
+
+    request = ContextBuilder().build(history, run_context=context)
+
+    assert request.messages[2] == Message(
+        role=Role.SYSTEM,
+        parts=(
+            TextPart(
+                text=(
+                    'Run context: {"session_id": "session-1", '
+                    '"workspace_name": "project", '
+                    '"workspace_path": "/workspaces/project"}'
+                )
+            ),
+        ),
+    )
+    assert request.messages[3:] == history
     assert history == (
         Message(role=Role.USER, parts=(TextPart(text="question"),)),
     )

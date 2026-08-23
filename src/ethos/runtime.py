@@ -5,7 +5,7 @@ and runtime concurrency compose.
 """
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Annotated, Literal, cast
@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 
 from pydantic import ConfigDict, Field, ValidationError, field_validator
 
+from ethos.capabilities import Capability, RunContext
 from ethos.config import get_settings
 from ethos.context import ContextBuilder
 from ethos.events import event_factory
@@ -177,6 +178,7 @@ class AgentRuntime:
         model_factory: ModelFactory | None = None,
         tool_registry: ToolRegistry | None = None,
         tool_executor: ToolExecutor | None = None,
+        capabilities: Iterable[Capability] = (),
         *,
         events: EnvelopeEventEmitter,
         max_model_rounds: int = MAX_MODEL_ROUNDS,
@@ -200,6 +202,7 @@ class AgentRuntime:
             if tool_executor is not None
             else ToolExecutor(self._tool_registry)
         )
+        self._capabilities = tuple(capabilities)
         self._max_model_rounds = max_model_rounds
         self._max_tool_calls_per_response = max_tool_calls_per_response
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
@@ -248,21 +251,31 @@ class AgentRuntime:
                     role=Role.USER,
                     parts=(TextPart(text=prompt),),
                 )
-                messages = (*session.messages, user_message)
+                messages: tuple[Message, ...] = session.messages + (
+                    user_message,
+                )
                 progress = _RunProgress(round_number=1)
                 try:
-                    model = self._model_factory()
-                    tools = (
-                        self._tool_registry.definitions
-                        if model.features.tools
-                        else ()
+                    (
+                        run_context,
+                        instructions,
+                        registry,
+                        executor,
+                    ) = await self._resolve_capabilities(
+                        workspace_name,
+                        session_id,
                     )
+                    model = self._model_factory()
+                    tools = registry.definitions if model.features.tools else ()
                     async for event in self._continue(
                         workspace_name,
                         session_id,
                         messages,
                         model,
                         tools,
+                        run_context,
+                        instructions,
+                        executor,
                         Usage(),
                         run_id=run_id,
                         event_location=event_location,
@@ -345,10 +358,14 @@ class AgentRuntime:
         )
 
         try:
+            (
+                run_context,
+                instructions,
+                registry,
+                executor,
+            ) = await self._resolve_capabilities(workspace_name, session_id)
             if approved:
-                prepared = _restore_prepared_call(
-                    self._tool_registry, approval, call
-                )
+                prepared = _restore_prepared_call(registry, approval, call)
                 self._sessions.transition_approval(
                     workspace_name,
                     session_id,
@@ -368,7 +385,7 @@ class AgentRuntime:
                     ),
                     event_location,
                 )
-                result = await self._tool_executor.run(prepared)
+                result = await executor.run(prepared)
                 state = ApprovalState.COMPLETED
             else:
                 result = ToolResultPart(
@@ -379,7 +396,7 @@ class AgentRuntime:
                 )
                 state = ApprovalState.DENIED
 
-            messages = (*messages, Message(role=Role.TOOL, parts=(result,)))
+            messages = messages + (Message(role=Role.TOOL, parts=(result,)),)
             self._sessions.transition_approval(
                 workspace_name,
                 session_id,
@@ -412,9 +429,7 @@ class AgentRuntime:
                 )
 
             model = self._model_factory()
-            tools = (
-                self._tool_registry.definitions if model.features.tools else ()
-            )
+            tools = registry.definitions if model.features.tools else ()
             pending_calls = _unresolved_tool_calls(messages)
             async for event in self._continue(
                 workspace_name,
@@ -422,6 +437,9 @@ class AgentRuntime:
                 messages,
                 model,
                 tools,
+                run_context,
+                instructions,
+                executor,
                 approval.usage,
                 run_id=approval.run_id,
                 event_location=event_location,
@@ -454,6 +472,9 @@ class AgentRuntime:
         messages: tuple[Message, ...],
         model: Model,
         tools: tuple[ToolDefinition, ...],
+        run_context: RunContext,
+        instructions: tuple[str, ...],
+        executor: ToolExecutor,
         usage: Usage,
         *,
         run_id: UUID,
@@ -466,7 +487,7 @@ class AgentRuntime:
             progress.round_number = round_number
             if pending_calls:
                 for call in pending_calls:
-                    prepared = await self._tool_executor.prepare(call)
+                    prepared = await executor.prepare(call)
                     if isinstance(prepared, RejectedToolCall):
                         await self._emit(
                             EventType.TOOL_CALL_PREPARED,
@@ -564,9 +585,8 @@ class AgentRuntime:
                             ),
                             event_location,
                         )
-                        result = await self._tool_executor.run(prepared)
-                    messages = (
-                        *messages,
+                        result = await executor.run(prepared)
+                    messages = messages + (
                         Message(role=Role.TOOL, parts=(result,)),
                     )
                     self._sessions.replace_messages(
@@ -598,7 +618,9 @@ class AgentRuntime:
 
             request = self._context_builder.build(
                 messages,
+                instructions,
                 tool_definitions=tools,
+                run_context=run_context,
             )
             streamed_text = ""
             streamed_reasoning = ""
@@ -691,7 +713,7 @@ class AgentRuntime:
             )
 
             if not calls:
-                messages = (*messages, assistant_message)
+                messages = messages + (assistant_message,)
                 self._sessions.replace_messages(
                     workspace_name,
                     session_id,
@@ -710,7 +732,7 @@ class AgentRuntime:
                 yield PromptStreamEvent(usage=usage, done=True)
                 return
 
-            messages = (*messages, assistant_message)
+            messages = messages + (assistant_message,)
             self._sessions.replace_messages(
                 workspace_name,
                 session_id,
@@ -736,7 +758,7 @@ class AgentRuntime:
                 limit_error = "model round limit exceeded"
             if limit_error is not None:
                 for call in calls:
-                    messages = (*messages, _tool_error(call, limit_error))
+                    messages = messages + (_tool_error(call, limit_error),)
                     self._sessions.replace_messages(
                         workspace_name,
                         session_id,
@@ -747,6 +769,29 @@ class AgentRuntime:
             pending_calls = calls
 
         raise AssertionError("unreachable model round")
+
+    async def _resolve_capabilities(
+        self,
+        workspace_name: str,
+        session_id: str,
+    ) -> tuple[RunContext, tuple[str, ...], ToolRegistry, ToolExecutor]:
+        context = RunContext(
+            workspace_name=workspace_name,
+            workspace_path=self._sessions.workspaces.get(workspace_name).path,
+            session_id=session_id,
+        )
+        instructions: list[str] = []
+        tools = list(self._tool_registry.tools)
+        for capability in self._capabilities:
+            instructions.extend(await capability.instructions(context))
+            tools.extend(await capability.tools(context))
+        registry = ToolRegistry(tools)
+        return (
+            context,
+            tuple(instructions),
+            registry,
+            self._tool_executor.for_registry(registry),
+        )
 
     async def _recover_executing_approvals(
         self,

@@ -37,7 +37,12 @@ from ethos.sessions import (
     Session,
     SessionManager,
 )
-from ethos.tools import ApprovalState, ToolEffect, ToolRegistry
+from ethos.tools import (
+    ApprovalState,
+    ToolEffect,
+    ToolExecutionError,
+    ToolRegistry,
+)
 from ethos.workspaces import WorkspaceManager
 from fakes import FakeModel
 
@@ -223,6 +228,7 @@ def test_runtime_completes_one_tool_round(tmp_path: Path) -> None:
     assert [message.role for message in model.requests[1].messages] == [
         Role.SYSTEM,
         Role.SYSTEM,
+        Role.SYSTEM,
         Role.USER,
         Role.ASSISTANT,
         Role.TOOL,
@@ -234,7 +240,7 @@ def test_runtime_completes_one_tool_round(tmp_path: Path) -> None:
         content="echo: one",
     )
     assert sessions.get("my-project", str(session.id)).messages == (
-        *model.requests[1].messages[2:],
+        *model.requests[1].messages[3:],
         Message(
             role=Role.ASSISTANT,
             parts=(TextPart(text="It is one."),),
@@ -260,7 +266,7 @@ def test_runtime_completes_several_tool_rounds(tmp_path: Path) -> None:
 
     assert tool.values == ["one", "two"]
     assert len(model.requests) == 3
-    assert [len(request.messages) for request in model.requests] == [3, 5, 7]
+    assert [len(request.messages) for request in model.requests] == [4, 6, 8]
 
 
 def test_write_tool_waits_for_durable_approval(tmp_path: Path) -> None:
@@ -581,7 +587,7 @@ def test_runtime_executes_several_calls_sequentially(tmp_path: Path) -> None:
     assert tool.values == ["one", "two"]
     history = model.requests[1].messages
     call_ids: list[str] = []
-    for message in history[4:]:
+    for message in history[5:]:
         result = message.parts[0]
         assert isinstance(result, ToolResultPart)
         call_ids.append(result.call_id)
@@ -613,6 +619,14 @@ def test_runtime_executes_several_calls_sequentially(tmp_path: Path) -> None:
             ToolEffect.READ,
             RuntimeError("secret failure"),
             "tool execution failed",
+            True,
+        ),
+        (
+            "safe exception",
+            tool_call(),
+            ToolEffect.READ,
+            ToolExecutionError("path must be inside the workspace"),
+            "path must be inside the workspace",
             True,
         ),
     ),
