@@ -25,6 +25,12 @@ from ethos.gateway import (
     stop_background,
 )
 from ethos.home import initialise_home
+from ethos.models import (
+    Message,
+    ReasoningPart,
+    TextPart,
+    ToolCallPart,
+)
 from ethos.onboarding import run_onboarding
 from ethos.service import (
     ApprovalChunk,
@@ -412,9 +418,27 @@ def session_history(workspace_name: str, session_id: str) -> None:
             workspace_name, session_id, context
         )
     )
-    click.echo(
-        "\n\n".join(f"{message.role}: {message.text}" for message in messages)
-    )
+    click.echo("\n\n".join(_format_history_message(item) for item in messages))
+
+
+def _format_history_message(message: Message) -> str:
+    parts: list[str] = []
+    for part in message.parts:
+        if isinstance(part, TextPart):
+            parts.append(part.text)
+        elif isinstance(part, ReasoningPart):
+            parts.append(f"reasoning: {part.text}")
+        elif isinstance(part, ToolCallPart):
+            parts.append(
+                f"tool call {part.name} ({part.call_id}): {part.arguments_json}"
+            )
+        else:
+            outcome = " error" if part.is_error else ""
+            parts.append(
+                f"tool result{outcome} {part.name} ({part.call_id}): "
+                f"{part.content}"
+            )
+    return f"{message.role.value}: " + "\n".join(parts)
 
 
 @session.command("archive")

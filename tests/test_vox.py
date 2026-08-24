@@ -11,12 +11,12 @@ from pydantic import SecretStr
 
 from ethos.config import VoxConfig
 from ethos.gateway.vox import VoxServer, _event_stream
+from ethos.models import Message, Role, ToolCallPart, ToolResultPart
 from ethos.service import (
     ApprovalChunk,
     ChatChunk,
     ChatEvent,
     Ethos,
-    HistoryMessage,
     RequestContext,
     SessionView,
     WorkspaceView,
@@ -32,6 +32,28 @@ SESSION = SessionView(
     archived_at=None,
     archived=False,
     message_count=0,
+)
+HISTORY = (
+    Message(
+        role=Role.ASSISTANT,
+        parts=(
+            ToolCallPart(
+                call_id="call-1",
+                name="weather",
+                arguments_json='{"location":"Toronto"}',
+            ),
+        ),
+    ),
+    Message(
+        role=Role.TOOL,
+        parts=(
+            ToolResultPart(
+                call_id="call-1",
+                name="weather",
+                content="23 degrees",
+            ),
+        ),
+    ),
 )
 
 
@@ -80,9 +102,9 @@ class FakeEthos:
 
     async def session_history(
         self, workspace: str, session_id: str, context: RequestContext
-    ) -> tuple[HistoryMessage, ...]:
+    ) -> tuple[Message, ...]:
         self.record("session_history", workspace, session_id, context)
-        return ()
+        return HISTORY
 
     async def archive_session(
         self, workspace: str, session_id: str, context: RequestContext
@@ -199,7 +221,7 @@ class FakeEthos:
             None,
             "session_history",
             200,
-            [],
+            [message.model_dump(mode="json") for message in HISTORY],
         ),
         (
             "POST",

@@ -16,7 +16,7 @@ from ethos.events.emitters import EnvelopeEventEmitter
 from ethos.events.models import EventPayload
 from ethos.events.types import EventType
 from ethos.home import DB_PATH, SKILLS_PATH
-from ethos.models import ReasoningPart, Role, TextPart, Usage
+from ethos.models import Message, Usage
 from ethos.runtime import (
     AgentRuntime,
     ApprovalStreamEvent,
@@ -70,14 +70,6 @@ class SessionView(BaseModel):
             archived=session.archived,
             message_count=len(session.messages),
         )
-
-
-class HistoryMessage(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    role: Literal["user", "assistant"]
-    text: str
-    reasoning: str = ""
 
 
 class ChatChunk(BaseModel):
@@ -238,12 +230,12 @@ class Ethos:
 
     async def session_history(
         self, workspace: str, session_id: str, context: RequestContext
-    ) -> tuple[HistoryMessage, ...]:
+    ) -> tuple[Message, ...]:
         session = self.sessions.get(workspace, session_id)
         await self._emit_sessions(
             context, EventType.SESSION_HISTORY, (session,)
         )
-        return _history(session)
+        return session.messages
 
     async def archive_session(
         self, workspace: str, session_id: str, context: RequestContext
@@ -410,30 +402,3 @@ async def _emit(
             tags=tags,
         )
     )
-
-
-def _history(session: Session) -> tuple[HistoryMessage, ...]:
-    messages: list[HistoryMessage] = []
-    for message in session.messages:
-        if message.role not in (Role.USER, Role.ASSISTANT):
-            continue
-        role: Literal["user", "assistant"] = (
-            "user" if message.role is Role.USER else "assistant"
-        )
-        parts = [
-            part.text for part in message.parts if isinstance(part, TextPart)
-        ]
-        reasoning = [
-            part.text
-            for part in message.parts
-            if isinstance(part, ReasoningPart)
-        ]
-        if parts or reasoning:
-            messages.append(
-                HistoryMessage(
-                    role=role,
-                    text="\n".join(parts),
-                    reasoning="\n".join(reasoning),
-                )
-            )
-    return tuple(messages)

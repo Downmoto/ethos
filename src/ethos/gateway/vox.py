@@ -16,10 +16,10 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 
 from ethos.config import VoxConfig
+from ethos.models import Message
 from ethos.service import (
     ChatEvent,
     Ethos,
-    HistoryMessage,
     RequestContext,
     SessionView,
     WorkspaceView,
@@ -184,7 +184,7 @@ class VoxServer:
         @app.get("/workspaces/{workspace}/sessions/{session_id}/history")
         async def session_history(
             workspace: str, session_id: str, request: Request
-        ) -> tuple[HistoryMessage, ...]:
+        ) -> tuple[Message, ...]:
             return await ethos.session_history(
                 workspace, session_id, context(request)
             )

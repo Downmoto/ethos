@@ -14,6 +14,7 @@ from ethos.models import (
     Role,
     TextPart,
     ToolCallPart,
+    ToolResultPart,
     Usage,
 )
 from ethos.runtime import AgentRuntime, ApprovalStreamEvent, PromptStreamEvent
@@ -21,7 +22,6 @@ from ethos.service import (
     ApprovalChunk,
     ChatChunk,
     Ethos,
-    HistoryMessage,
     RequestContext,
 )
 from ethos.sessions import Session
@@ -64,39 +64,53 @@ def test_service_projects_ethos_messages_into_history(tmp_path: Path) -> None:
     async def exercise() -> None:
         with Ethos(home) as ethos:
             session = await ethos.create_session("default", context())
-            ethos.sessions.replace_messages(
-                "default",
-                session.id,
-                (
-                    Message(
-                        role=Role.USER,
-                        parts=(
-                            TextPart(text="first"),
-                            TextPart(text="second"),
-                        ),
+            messages = (
+                Message(
+                    role=Role.USER,
+                    parts=(
+                        TextPart(text="first"),
+                        TextPart(text="second"),
                     ),
-                    Message(
-                        role=Role.ASSISTANT,
-                        parts=(
-                            ReasoningPart(text="thinking"),
-                            TextPart(text="answer"),
+                ),
+                Message(
+                    role=Role.ASSISTANT,
+                    parts=(
+                        ReasoningPart(text="thinking"),
+                        TextPart(text="answer"),
+                    ),
+                ),
+                Message(
+                    role=Role.ASSISTANT,
+                    parts=(
+                        ToolCallPart(
+                            call_id="call-1",
+                            name="weather",
+                            arguments_json='{"location":"Toronto"}',
                         ),
                     ),
                 ),
+                Message(
+                    role=Role.TOOL,
+                    parts=(
+                        ToolResultPart(
+                            call_id="call-1",
+                            name="weather",
+                            content="23 degrees",
+                        ),
+                    ),
+                ),
+            )
+            ethos.sessions.replace_messages(
+                "default",
+                session.id,
+                messages,
             )
 
             history = await ethos.session_history(
                 "default", session.id, context()
             )
 
-            assert history == (
-                HistoryMessage(role="user", text="first\nsecond"),
-                HistoryMessage(
-                    role="assistant",
-                    text="answer",
-                    reasoning="thinking",
-                ),
-            )
+            assert history == messages
 
     asyncio.run(exercise())
 

@@ -14,7 +14,14 @@ from click.testing import CliRunner
 
 from ethos import app
 from ethos.home import initialise_home
-from ethos.models import Usage
+from ethos.models import (
+    Message,
+    ReasoningPart,
+    Role,
+    ToolCallPart,
+    ToolResultPart,
+    Usage,
+)
 from ethos.service import ApprovalChunk, ChatChunk, Ethos, RequestContext
 from ethos.tools import ToolEffect
 
@@ -41,6 +48,38 @@ def test_init_command_initialises_default_home(
     assert result.exit_code == 0
     assert (tmp_path / ".ethos/config.yaml").exists()
     assert (tmp_path / ".ethos/data/ethos.db").exists()
+
+
+def test_history_format_includes_tool_calls_and_results() -> None:
+    call = Message(
+        role=Role.ASSISTANT,
+        parts=(
+            ReasoningPart(text="checking"),
+            ToolCallPart(
+                call_id="call-1",
+                name="list_files",
+                arguments_json='{"path":"."}',
+            ),
+        ),
+    )
+    result = Message(
+        role=Role.TOOL,
+        parts=(
+            ToolResultPart(
+                call_id="call-1",
+                name="list_files",
+                content="[]",
+            ),
+        ),
+    )
+
+    assert app._format_history_message(call) == (
+        "assistant: reasoning: checking\n"
+        'tool call list_files (call-1): {"path":"."}'
+    )
+    assert app._format_history_message(result) == (
+        "tool: tool result list_files (call-1): []"
+    )
 
 
 def test_init_reports_existing_home(
