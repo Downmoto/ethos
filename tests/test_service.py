@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 
+from ethos.config import EthosSettings
 from ethos.events.types import EventType
 from ethos.home import initialise_home
 from ethos.models import (
@@ -56,6 +57,25 @@ def test_service_shares_workspace_and_session_behaviour(tmp_path: Path) -> None:
             assert archived.archived
 
     asyncio.run(exercise())
+
+
+def test_service_omits_disabled_capabilities(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    settings = EthosSettings.model_validate(
+        {
+            "provider": {"name": "ollama", "model_name": "qwen3"},
+            "capabilities": {
+                "skills": {"enabled": False},
+                "read_only_file_system": {"enabled": False},
+            },
+        }
+    )
+    monkeypatch.setattr("ethos.service.get_settings", lambda: settings)
+
+    with Ethos(home) as ethos:
+        assert ethos._runtime()._capabilities == ()
 
 
 def test_service_projects_ethos_messages_into_history(tmp_path: Path) -> None:

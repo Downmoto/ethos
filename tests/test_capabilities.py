@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel
 
-import ethos.capabilities.filesystem as filesystem_module
 from ethos.capabilities import RunContext
 from ethos.capabilities.filesystem import ReadOnlyFilesystemCapability
 from ethos.events.emitters import EnvelopeEventEmitter
@@ -264,9 +263,11 @@ def test_read_file_is_bounded_to_utf8_workspace_files(tmp_path: Path) -> None:
 def test_read_file_rejects_oversized_content(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    (workspace / "large.txt").write_bytes(b"x" * (100 * 1024 + 1))
+    (workspace / "large.txt").write_bytes(b"xxxx")
     context = RunContext("project", workspace, "session")
-    tool = asyncio.run(ReadOnlyFilesystemCapability().tools(context))[0]
+    tool = asyncio.run(
+        ReadOnlyFilesystemCapability(max_read_file_bytes=3).tools(context)
+    )[0]
     executor = ToolExecutor(ToolRegistry((tool,)))
 
     async def read() -> str:
@@ -336,15 +337,15 @@ def test_list_files_returns_bounded_workspace_relative_paths(
 
 def test_list_files_rejects_oversized_directories(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     for name in ("one", "two", "three"):
         (workspace / name).touch()
-    monkeypatch.setattr(filesystem_module, "MAX_LIST_FILES_ENTRIES", 2)
     context = RunContext("project", workspace, "session")
-    tools = asyncio.run(ReadOnlyFilesystemCapability().tools(context))
+    tools = asyncio.run(
+        ReadOnlyFilesystemCapability(max_list_file_entries=2).tools(context)
+    )
     tool = next(tool for tool in tools if tool.definition.name == "list_files")
     executor = ToolExecutor(ToolRegistry((tool,)))
 

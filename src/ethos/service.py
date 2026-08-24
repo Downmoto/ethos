@@ -8,6 +8,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ethos.capabilities import Capability
 from ethos.capabilities.filesystem import ReadOnlyFilesystemCapability
 from ethos.capabilities.skills import SkillsCapability
 from ethos.config import get_settings
@@ -163,10 +164,21 @@ class Ethos:
         if self._agent is None:
             settings = get_settings()
             skills_config = settings.capabilities.skills
-            self._agent = AgentRuntime(
-                self.sessions,
-                capabilities=(
-                    ReadOnlyFilesystemCapability(),
+            filesystem_config = settings.capabilities.read_only_file_system
+            capabilities: list[Capability] = []
+            if filesystem_config.enabled:
+                capabilities.append(
+                    ReadOnlyFilesystemCapability(
+                        max_read_file_bytes=(
+                            filesystem_config.max_read_file_bytes
+                        ),
+                        max_list_file_entries=(
+                            filesystem_config.max_list_file_entries
+                        ),
+                    )
+                )
+            if skills_config.enabled:
+                capabilities.append(
                     SkillsCapability(
                         self.home / SKILLS_PATH,
                         self.home.parent / ".agents" / "skills",
@@ -175,8 +187,11 @@ class Ethos:
                             skills_config.max_resource_file_bytes
                         ),
                         max_resources=skills_config.max_resources,
-                    ),
-                ),
+                    )
+                )
+            self._agent = AgentRuntime(
+                self.sessions,
+                capabilities=capabilities,
                 events=self.events,
                 answer_now_after_seconds=(
                     settings.runtime.answer_now_after_seconds

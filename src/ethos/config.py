@@ -51,17 +51,31 @@ class VoxConfig(BaseModel):
     bearer_token: SecretStr | None = None
 
 
-class SkillsConfig(BaseModel):
+class SkillsCapabilityConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    enabled: bool = True
     max_resource_file_bytes: int = Field(default=100 * 1024, ge=1)
     max_resources: int = Field(default=200, ge=1)
+
+
+class ReadOnlyFilesystemCapabilityConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    max_read_file_bytes: int = Field(default=100 * 1024, ge=1)
+    max_list_file_entries: int = Field(default=1_000, ge=1)
 
 
 class CapabilitiesConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    skills: SkillsConfig = Field(default_factory=SkillsConfig)
+    skills: SkillsCapabilityConfig = Field(
+        default_factory=SkillsCapabilityConfig
+    )
+    read_only_file_system: ReadOnlyFilesystemCapabilityConfig = Field(
+        default_factory=ReadOnlyFilesystemCapabilityConfig
+    )
 
 
 class RuntimeConfig(BaseModel):

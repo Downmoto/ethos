@@ -162,7 +162,9 @@ tool instances cannot leak into another.
 The default read-only filesystem capability contributes `list_files` and
 `read_file`. Both resolve relative paths beneath the active workspace.
 `list_files` returns a sorted JSON array for one directory and rejects more
-than 1,000 entries; `read_file` reads at most 100 KiB of UTF-8 text. Absolute
+than its configured entry limit; `read_file` reads UTF-8 text up to its
+configured byte limit. Set `capabilities.read_only_file_system.enabled` to
+`false` to omit both tools. Absolute
 paths, incompatible path types, traversal, and symlinks resolving outside the
 workspace are rejected. All calls still pass through the standard tool
 executor and policy.
@@ -190,7 +192,8 @@ reading them. The second reads one referenced UTF-8 file up to the configured
 byte limit while rejecting absolute paths and escapes from the skill
 directory. The limits are `capabilities.skills.max_resources` and
 `capabilities.skills.max_resource_file_bytes` in `config.yaml`. No catalogue
-or skill tools are added when discovery finds nothing.
+or skill tools are added when discovery finds nothing or
+`capabilities.skills.enabled` is `false`.
 
 ### Concurrency guarantee
 

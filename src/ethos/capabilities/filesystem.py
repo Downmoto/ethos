@@ -39,6 +39,7 @@ class _ListFilesArguments(BaseModel):
 @dataclass
 class _ReadFileTool:
     workspace_path: Path
+    max_file_bytes: int
     definition: ToolDefinition = ToolDefinition(
         name="read_file",
         description=(
@@ -62,8 +63,8 @@ class _ReadFileTool:
         if not path.is_file():
             raise ToolExecutionError("read_file path must be a workspace file")
         with path.open("rb") as file:
-            content = file.read(MAX_READ_FILE_BYTES + 1)
-        if len(content) > MAX_READ_FILE_BYTES:
+            content = file.read(self.max_file_bytes + 1)
+        if len(content) > self.max_file_bytes:
             raise ToolExecutionError("read_file exceeds size limit")
         try:
             return content.decode("utf-8")
@@ -76,6 +77,7 @@ class _ReadFileTool:
 @dataclass
 class _ListFilesTool:
     workspace_path: Path
+    max_entries: int
     definition: ToolDefinition = ToolDefinition(
         name="list_files",
         description=(
@@ -100,8 +102,8 @@ class _ListFilesTool:
             raise ToolExecutionError(
                 "list_files path must be a workspace directory"
             )
-        entries = list(islice(path.iterdir(), MAX_LIST_FILES_ENTRIES + 1))
-        if len(entries) > MAX_LIST_FILES_ENTRIES:
+        entries = list(islice(path.iterdir(), self.max_entries + 1))
+        if len(entries) > self.max_entries:
             raise ToolExecutionError("list_files exceeds entry limit")
         paths = [
             f"{entry.relative_to(root).as_posix()}"
@@ -130,6 +132,17 @@ def _resolve_workspace_path(
 
 
 class ReadOnlyFilesystemCapability:
+    def __init__(
+        self,
+        *,
+        max_read_file_bytes: int = MAX_READ_FILE_BYTES,
+        max_list_file_entries: int = MAX_LIST_FILES_ENTRIES,
+    ) -> None:
+        if max_read_file_bytes < 1 or max_list_file_entries < 1:
+            raise ValueError("filesystem limits must be positive")
+        self._max_read_file_bytes = max_read_file_bytes
+        self._max_list_file_entries = max_list_file_entries
+
     async def instructions(self, context: RunContext) -> tuple[str, ...]:
         return (
             "Paths passed to filesystem tools are relative to the "
@@ -138,6 +151,12 @@ class ReadOnlyFilesystemCapability:
 
     async def tools(self, context: RunContext) -> tuple[Tool, ...]:
         return (
-            _ReadFileTool(context.workspace_path),
-            _ListFilesTool(context.workspace_path),
+            _ReadFileTool(
+                context.workspace_path,
+                self._max_read_file_bytes,
+            ),
+            _ListFilesTool(
+                context.workspace_path,
+                self._max_list_file_entries,
+            ),
         )
