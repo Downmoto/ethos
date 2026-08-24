@@ -124,7 +124,6 @@ def _resolve_workspace_path(
 
 class ReadOnlyFilesystemCapability:
     async def instructions(self, context: RunContext) -> tuple[str, ...]:
-        print(_ListFilesArguments.model_json_schema())
         return (
             "Paths passed to filesystem tools are relative to the "
             "workspace root.",
