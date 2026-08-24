@@ -116,6 +116,7 @@ class ToolApproval(BaseModel):
     state: ApprovalState = ApprovalState.PENDING
     round_number: int = Field(ge=1)
     usage: Usage = Field(default_factory=Usage)
+    answer_now: bool = False
     result: ToolResultPart | None = None
 
     @model_validator(mode="after")

@@ -14,6 +14,7 @@ from ethos.models import (
     ModelFeatures,
     ModelRequest,
     ModelResponse,
+    ReasoningDelta,
     ResponseCompleted,
     Role,
     TextPart,
@@ -24,6 +25,7 @@ from ethos.models import (
 )
 from ethos.provider import ModelProtocolError
 from ethos.runtime import (
+    ANSWER_NOW_INSTRUCTION,
     MAX_MODEL_ROUNDS,
     MAX_TOOL_CALLS_PER_RESPONSE,
     AgentLimitError,
@@ -423,6 +425,90 @@ def test_pending_approval_survives_runtime_restart(tmp_path: Path) -> None:
     assert tool.values == ["one"]
     assert isinstance(events[-1], PromptStreamEvent)
     assert events[-1].done
+
+
+@pytest.mark.parametrize("approved", (True, False))
+def test_answer_now_state_survives_approval_restart(
+    tmp_path: Path,
+    approved: bool,
+) -> None:
+    class ReasoningModel:
+        features = ModelFeatures(tools=True, reasoning=True)
+
+        def __init__(self) -> None:
+            self.requests: list[ModelRequest] = []
+
+        async def request(self, request: ModelRequest) -> ModelResponse:
+            raise AssertionError("reasoning model does not support request()")
+
+        async def stream(
+            self, request: ModelRequest
+        ) -> AsyncIterator[ModelEvent]:
+            self.requests.append(request)
+            yield ReasoningDelta(text="still reasoning")
+            await asyncio.Event().wait()
+
+    normal_model = ReasoningModel()
+    answer_model = FakeModel(
+        (call_response(tool_call()), text_response()),
+        stream_chunks=((), ("done",)),
+        features=ModelFeatures(tools=True),
+    )
+    workspaces = WorkspaceManager(tmp_path / "workspaces")
+    workspaces.create("my-project")
+    sessions_root = tmp_path / "sessions"
+    sessions = SessionManager(workspaces, sessions_root)
+    session = sessions.create("my-project")
+    tool = RuntimeTool(effect=ToolEffect.WRITE)
+    registry = ToolRegistry((tool,))
+    runtime = AgentRuntime(
+        sessions,
+        lambda: normal_model,
+        registry,
+        events=EnvelopeEventEmitter(),
+        answer_model_factory=lambda: answer_model,
+        answer_now_after_seconds=0.01,
+    )
+
+    pending = asyncio.run(
+        _collect_runtime(runtime.run("hello", "my-project", str(session.id)))
+    )
+    event = pending[-1]
+    assert isinstance(event, ApprovalStreamEvent)
+    assert event.approval.answer_now
+
+    restarted = AgentRuntime(
+        SessionManager(workspaces, sessions_root),
+        lambda: normal_model,
+        registry,
+        events=EnvelopeEventEmitter(),
+        answer_model_factory=lambda: answer_model,
+        answer_now_after_seconds=0.01,
+    )
+    resumed = asyncio.run(
+        _collect_runtime(
+            restarted.resolve_approval(
+                "my-project",
+                str(session.id),
+                event.approval.id,
+                approved=approved,
+            )
+        )
+    )
+
+    assert len(normal_model.requests) == 1
+    assert len(answer_model.requests) == 2
+    assert all(
+        any(
+            message.role is Role.SYSTEM
+            and message.parts == (TextPart(text=ANSWER_NOW_INSTRUCTION),)
+            for message in request.messages
+        )
+        for request in answer_model.requests
+    )
+    assert tool.values == (["one"] if approved else [])
+    assert isinstance(resumed[-1], PromptStreamEvent)
+    assert resumed[-1].done
 
 
 def test_approval_is_bound_to_session_and_payload(tmp_path: Path) -> None:

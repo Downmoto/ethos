@@ -448,7 +448,11 @@ class AgentRuntime:
                     event_location,
                 )
 
-            model = self._model_factory()
+            model = (
+                self._answer_model_factory()
+                if approval.answer_now
+                else self._model_factory()
+            )
             tools = registry.definitions if model.features.tools else ()
             pending_calls = _unresolved_tool_calls(messages)
             async for event in self._continue(
@@ -470,6 +474,7 @@ class AgentRuntime:
                 ),
                 progress=progress,
                 pending_calls=pending_calls,
+                answer_now=approval.answer_now,
             ):
                 yield event
         except (asyncio.CancelledError, RuntimeEventError):
@@ -502,8 +507,8 @@ class AgentRuntime:
         round_number: int,
         progress: _RunProgress,
         pending_calls: tuple[ToolCallPart, ...] = (),
+        answer_now: bool = False,
     ) -> AsyncIterator[RuntimeStreamEvent]:
-        answer_now = False
         while round_number <= self._max_model_rounds:
             progress.round_number = round_number
             if pending_calls:
@@ -539,6 +544,7 @@ class AgentRuntime:
                             reason=prepared.decision.reason,
                             round_number=round_number,
                             usage=usage,
+                            answer_now=answer_now,
                         )
                         self._sessions.add_approval(
                             workspace_name, session_id, approval

@@ -233,7 +233,9 @@ reasoning delta and is removed when answer text begins. On expiry, the runtime
 cancels that request and retries once with reasoning disabled and a temporary
 system instruction to finish promptly. Abandoned reasoning is visible to the
 current stream but is not persisted or replayed. The retry retains available
-tools and counts as a model round.
+tools and counts as a model round. If the retry pauses for tool approval, its
+answer-now phase is persisted with the approval and restored on either approval
+or denial, including after a process restart.
 
 Under the normal `session.chat` path, the lifecycle event is emitted after
 that final runtime event. A completed `session.chat` event therefore describes
