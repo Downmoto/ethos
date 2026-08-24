@@ -19,6 +19,9 @@ from litellm import ModelResponseStream as LiteLLMStreamChunk  # noqa: E402
 from litellm import (
     acompletion,  # pyright: ignore[reportUnknownVariableType]  # noqa: E402
 )
+from litellm.exceptions import (  # noqa: E402
+    APIConnectionError as LiteLLMAPIConnectionError,
+)
 
 litellm.suppress_debug_info = True
 
@@ -141,7 +144,9 @@ class LiteLLMModel:
         try:
             result = await self.completion(**kwargs)
         except Exception as error:
-            raise _provider_error("request", error) from error
+            raise _provider_error(
+                "request", error, self.provider.name
+            ) from error
         if not isinstance(result, LiteLLMResponse):
             raise ModelProtocolError("provider returned an invalid response")
         return _response(
@@ -156,7 +161,9 @@ class LiteLLMModel:
         try:
             result = await self.completion(**kwargs)
         except Exception as error:
-            raise _provider_error("request", error) from error
+            raise _provider_error(
+                "request", error, self.provider.name
+            ) from error
         if not isinstance(result, AsyncIterable):
             raise ModelProtocolError("provider returned an invalid stream")
 
@@ -238,7 +245,9 @@ class LiteLLMModel:
         except ModelProtocolError:
             raise
         except Exception as error:
-            raise _provider_error("stream", error) from error
+            raise _provider_error(
+                "stream", error, self.provider.name
+            ) from error
 
         if not finished or finish_reason is None:
             raise ModelProtocolError("provider stream ended before completion")
@@ -626,7 +635,23 @@ def _finish_reason(value: str) -> FinishReason:
     }.get(value, FinishReason.OTHER)
 
 
-def _provider_error(action: str, error: Exception) -> ModelProviderError:
+def _provider_error(
+    action: str,
+    error: Exception,
+    provider: ProviderName,
+) -> ModelProviderError:
+    if isinstance(error, LiteLLMAPIConnectionError):
+        name = {
+            ProviderName.OPENAI: "OpenAI",
+            ProviderName.GOOGLE: "Google",
+            ProviderName.OLLAMA: "Ollama",
+        }[provider]
+        connection_reason = f"could not connect to {name}"
+        if provider is ProviderName.OLLAMA:
+            connection_reason += "; make sure Ollama is running"
+        return ModelProviderError(
+            f"model provider {action} failed: {connection_reason}"
+        )
     reason = _safe_capability_error(error)
     detail = f": {reason}" if reason is not None else ""
     return ModelProviderError(f"model provider {action} failed{detail}")

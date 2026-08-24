@@ -9,6 +9,7 @@ os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 import pytest  # noqa: E402
 from litellm import ModelResponse as LiteLLMResponse  # noqa: E402
 from litellm import ModelResponseStream as LiteLLMStreamChunk  # noqa: E402
+from litellm.exceptions import APIConnectionError  # noqa: E402
 from pydantic import SecretStr  # noqa: E402
 
 from ethos.models import (  # noqa: E402
@@ -751,6 +752,35 @@ def test_litellm_model_exposes_safe_unsupported_thinking_error() -> None:
         "does not support thinking",
     ):
         asyncio.run(model.request(ModelRequest(messages=())))
+
+
+def test_litellm_model_exposes_safe_ollama_connection_error() -> None:
+    error = APIConnectionError(
+        message="connection failed with secret URL",
+        llm_provider="ollama_chat",
+        model="qwen3:8b",
+    )
+
+    async def completion(**_kwargs: object) -> object:
+        raise error
+
+    model = LiteLLMModel(
+        AIProvider(ProviderName.OLLAMA, None),
+        "qwen3:8b",
+        completion,
+    )
+
+    with pytest.raises(
+        ModelProviderError,
+        match=(
+            "model provider request failed: could not connect to Ollama; "
+            "make sure Ollama is running"
+        ),
+    ) as caught:
+        asyncio.run(model.request(ModelRequest(messages=())))
+
+    assert "secret URL" not in str(caught.value)
+    assert caught.value.__cause__ is error
 
 
 def test_litellm_model_streams_text_and_completes_once() -> None:
