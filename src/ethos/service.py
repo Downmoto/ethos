@@ -352,7 +352,6 @@ class Ethos:
                     for item in workspaces
                 ),
             ),
-            tuple(item.name for item in workspaces),
         )
 
     async def _emit_sessions(
@@ -378,11 +377,6 @@ class Ethos:
                     for item in sessions
                 ),
             ),
-            tuple(
-                tag
-                for item in sessions
-                for tag in (item.workspace_name, str(item.id))
-            ),
         )
 
 
@@ -391,14 +385,11 @@ async def _emit(
     event_type: EventType,
     context: RequestContext,
     payload: EventPayload,
-    tags: tuple[str, ...],
 ) -> None:
     await emitter.emit(
         event_factory(
             event_type,
             location=context.source,
-            details=event_type.value,
             payload=payload,
-            tags=tags,
         )
     )

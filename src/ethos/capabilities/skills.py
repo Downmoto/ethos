@@ -425,17 +425,7 @@ class SkillsCapability:
                 event_factory(
                     EventType.SKILL_DIAGNOSTIC,
                     location="skills",
-                    details=diagnostic.code.value,
                     payload=diagnostic,
-                    tags=(
-                        f"workspace:{context.workspace_name}",
-                        f"session:{context.session_id}",
-                        *(
-                            (f"skill:{diagnostic.skill_name}",)
-                            if diagnostic.skill_name
-                            else ()
-                        ),
-                    ),
                 )
             )
         self._resolved[context] = skills

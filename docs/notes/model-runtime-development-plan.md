@@ -731,7 +731,8 @@ Tests:
 - Indeterminate recovery emits once and retains the original run ID.
 - Provider failure, protocol failure, model/tool limits, policy failure, tool
   error result, persistence failure, and event-emission failure.
-- Event-database round trip, schema version, request source, and prefixed tags.
+- Event-database round trip, schema version, request source, and durable
+  database ordering.
 - Payload inspection proving forbidden content and credentials are absent.
 - Event-emission failure releases session locks and cannot execute or replay a
   write tool.
@@ -869,20 +870,35 @@ malformed output, permission denial, persistence failure, limit exhaustion,
 and an indeterminate tool call fail without silently losing history or
 duplicating a write side effect.
 
-## Deferred event-log follow-ups
+## Milestone 11 — Simplify durable event storage
 
-These are not M7.5 acceptance blockers and should be addressed together in a
-later event-storage cleanup:
+Commit: `refactor: simplify event storage`
 
-- Add an explicit durable ordering mechanism. Wall-clock `created_at` values
-  and unordered SQL reads do not guarantee exact reconstruction when clocks
-  move or timestamps collide. Until then, diagnostic queries must specify an
-  order rather than relying on `SELECT *` insertion order.
-- Stop copying `event_type` into `source_detail`. Leave the detail absent or
-  reserve it for genuinely source-specific context.
-- Re-evaluate duplicating runtime correlation fields in both JSON tags and
-  typed payloads, including whether the current JSON tag storage provides the
-  filtering value that justifies the duplication.
-- Standardise tag conventions across event families. Runtime events use
-  prefixed tags such as `workspace:` and `session:`, while existing workspace
-  and session operation events use unprefixed values.
+Implementation:
+
+- Add a database-generated, monotonic `sequence` primary key. Retain the event
+  UUID as a unique identity and retain `created_at` as observation time, not
+  ordering authority.
+- Remove `EventSource.detail` and the `source_detail` column because every
+  producer duplicates information already present in the event type or typed
+  payload.
+- Remove envelope tags and their JSON column. Typed payloads are the sole
+  source of workspace, session, run, call, tool, approval, and skill
+  correlation values.
+- Treat the storage schema change as an alpha-breaking reset. Do not add a
+  migration or compatibility branch; reinitialise the Ethos home before the
+  next manual run.
+
+Tests:
+
+- Database-generated ordering remains deterministic when timestamps are
+  equal.
+- Stored rows retain UUID, timestamp, event type, source name, schema version,
+  and typed correlation fields.
+- Event producers and listener delivery require no detail or tag metadata.
+
+Exit criteria:
+
+- Every diagnostic query can reconstruct exact storage order with
+  `ORDER BY sequence`.
+- No event correlation value is duplicated outside its typed payload.

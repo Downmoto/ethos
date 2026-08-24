@@ -827,9 +827,7 @@ class AgentRuntime:
                 event_factory(
                     event_type,
                     location=event_location,
-                    details=event_type.value,
                     payload=payload,
-                    tags=_runtime_tags(payload),
                 )
             )
         except Exception as error:
@@ -970,19 +968,6 @@ def _tool_execution_payload(
         tool_name=approval.tool_name,
         effect=approval.effect,
     )
-
-
-def _runtime_tags(payload: RuntimeEventPayload) -> tuple[str, ...]:
-    tags = [
-        f"workspace:{payload.workspace_name}",
-        f"session:{payload.session_id}",
-        f"run:{payload.run_id}",
-    ]
-    if isinstance(payload, ToolEventPayload):
-        tags.extend((f"call:{payload.call_id}", f"tool:{payload.tool_name}"))
-    if isinstance(payload, ApprovalEventPayload):
-        tags.append(f"approval:{payload.approval_id}")
-    return tuple(tags)
 
 
 def _assistant_message(

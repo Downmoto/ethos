@@ -158,7 +158,10 @@ def test_text_run_emits_ordered_correlated_trace(tmp_path: Path) -> None:
     ]
     assert len({payload.run_id for payload in runtime_payloads(events)}) == 1
     assert {event.source.name for event in events} == {"test-adapter"}
-    assert all(event.source.detail == event.type.value for event in events)
+    assert all(
+        event.source.model_dump() == {"name": "test-adapter"}
+        for event in events
+    )
     assert "private prompt" not in "".join(
         event.model_dump_json() for event in events
     )
@@ -304,19 +307,19 @@ def test_durable_start_event_precedes_tool_side_effect(tmp_path: Path) -> None:
     assert tool.values == ["safe"]
     db = turso.connect(str(db_path))
     rows = db.execute(
-        "SELECT source_name, tags, payload FROM event_envelopes "
-        "ORDER BY created_at"
+        "SELECT sequence, source_name, payload FROM event_envelopes "
+        "ORDER BY sequence"
     ).fetchall()
     db.close()
     assert len(rows) == 10
-    assert {row[0] for row in rows} == {"runtime"}
+    assert [row[0] for row in rows] == list(range(1, 11))
+    assert {row[1] for row in rows} == {"runtime"}
     payload = json.loads(rows[0][2])
     assert payload["schema_name"] == "runtime.trace"
     assert payload["schema_version"] == 1
-    tags = json.loads(rows[0][1])
-    assert "workspace:my-project" in tags
-    assert f"session:{session.id}" in tags
-    assert any(tag.startswith("run:") for tag in tags)
+    assert payload["workspace_name"] == "my-project"
+    assert payload["session_id"] == str(session.id)
+    assert payload["run_id"]
     storage.close()
 
 

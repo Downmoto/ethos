@@ -165,11 +165,10 @@ def test_capability_emits_discovery_diagnostics_as_ethos_events(
 
     assert [event.type for event in emitted] == [EventType.SKILL_DIAGNOSTIC]
     assert emitted[0].source.name == "skills"
-    assert emitted[0].source.detail == "name_directory_mismatch"
-    assert emitted[0].tags == (
-        "workspace:default",
-        "session:session",
-        "skill:review",
+    assert emitted[0].payload == SkillDiagnosticEventPayload(
+        code=SkillDiagnosticCode.NAME_DIRECTORY_MISMATCH,
+        path=str(root / "wrong-directory" / "SKILL.md"),
+        skill_name="review",
     )
 
 

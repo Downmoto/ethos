@@ -126,6 +126,13 @@ Lifecycle events are always emitted and stored before in-process listeners
 run. Domain mutations and event writes are not one transaction, so an event
 failure can follow a successful filesystem mutation.
 
+The event database assigns every stored envelope a monotonic integer sequence.
+That sequence is the durable ordering authority; UUIDs identify events and
+timestamps record observation time. Sources contain only the emitting adapter
+or subsystem name. Correlation values live solely in typed payloads rather
+than duplicated source details or unindexed JSON tags. This alpha schema is
+intentionally incompatible with databases created before the ordering change.
+
 The runtime records finer-grained events in the same envelope store. A single
 `run_id` correlates model requests, tool preparation and execution, approval
 pauses and resumptions, and the terminal run outcome. These traces contain

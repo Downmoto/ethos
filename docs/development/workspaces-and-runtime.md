@@ -252,6 +252,12 @@ headers, and exception messages. Failures use stable categories instead.
 These events are internal tracing records and do not appear in CLI or Vox
 streams.
 
+Each stored envelope receives a database-generated sequence number. Diagnostic
+queries reconstruct the trace with `ORDER BY sequence`; timestamps are not an
+ordering guarantee. Event UUIDs remain unique identities, while workspace,
+session, run, call, tool, and approval correlation fields live only in the
+typed payload. The envelope has no duplicate source-detail or tag fields.
+
 Emission is synchronous and durable-first. A tool cannot run unless its
 execution-start event was stored successfully, and an execution-completed
 event follows the durable result. If event delivery fails after a side effect,

@@ -26,7 +26,6 @@ class EventSource(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: NonEmptyString
-    detail: NonEmptyString | None = None
 
 
 class EventPayload(BaseModel):
@@ -54,10 +53,6 @@ class EventEnvelope(BaseModel):
 
     type: EventType
     source: EventSource
-    tags: tuple[NonEmptyString, ...] = Field(
-        default=(),
-        description="Optional labels for later hook filtering and debugging.",
-    )
     payload: SerializeAsAny[EventPayload] = Field(default_factory=EventPayload)
 
     @field_validator("created_at")
