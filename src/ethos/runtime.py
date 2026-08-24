@@ -8,7 +8,7 @@ import asyncio
 from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Annotated, Literal, cast
+from typing import Annotated, Final, Literal, cast
 from uuid import UUID, uuid4
 
 from pydantic import ConfigDict, Field, ValidationError, field_validator
@@ -26,6 +26,7 @@ from ethos.models import (
     Model,
     ModelResponse,
     ReasoningDelta,
+    ReasoningEffort,
     ReasoningPart,
     Role,
     TextDelta,
@@ -56,6 +57,11 @@ type ModelFactory = Callable[[], Model]
 
 MAX_MODEL_ROUNDS = 8
 MAX_TOOL_CALLS_PER_RESPONSE = 16
+ANSWER_NOW_INSTRUCTION: Final = (
+    "Your reasoning deadline was reached. Do not produce more reasoning. "
+    "Continue the task and provide the final answer as soon as possible; "
+    "use a tool only if required."
+)
 
 
 class AgentLimitError(RuntimeError):
@@ -183,16 +189,29 @@ class AgentRuntime:
         events: EnvelopeEventEmitter,
         max_model_rounds: int = MAX_MODEL_ROUNDS,
         max_tool_calls_per_response: int = MAX_TOOL_CALLS_PER_RESPONSE,
+        answer_model_factory: ModelFactory | None = None,
+        answer_now_after_seconds: float = 60.0,
     ) -> None:
         if max_model_rounds < 1:
             raise ValueError("max_model_rounds must be positive")
         if max_tool_calls_per_response < 1:
             raise ValueError("max_tool_calls_per_response must be positive")
+        if answer_now_after_seconds <= 0:
+            raise ValueError("answer_now_after_seconds must be positive")
         self._sessions = sessions
         self._events = events
         self._context_builder = ContextBuilder()
         self._model_factory = (
             model_factory if model_factory is not None else _model_from_settings
+        )
+        self._answer_model_factory = (
+            answer_model_factory
+            if answer_model_factory is not None
+            else (
+                model_factory
+                if model_factory is not None
+                else _answer_model_from_settings
+            )
         )
         self._tool_registry = (
             tool_registry if tool_registry is not None else ToolRegistry()
@@ -205,6 +224,7 @@ class AgentRuntime:
         self._capabilities = tuple(capabilities)
         self._max_model_rounds = max_model_rounds
         self._max_tool_calls_per_response = max_tool_calls_per_response
+        self._answer_now_after_seconds = answer_now_after_seconds
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
 
     async def run(
@@ -483,6 +503,7 @@ class AgentRuntime:
         progress: _RunProgress,
         pending_calls: tuple[ToolCallPart, ...] = (),
     ) -> AsyncIterator[RuntimeStreamEvent]:
+        answer_now = False
         while round_number <= self._max_model_rounds:
             progress.round_number = round_number
             if pending_calls:
@@ -618,13 +639,18 @@ class AgentRuntime:
 
             request = self._context_builder.build(
                 messages,
-                instructions,
+                (
+                    (*instructions, ANSWER_NOW_INSTRUCTION)
+                    if answer_now
+                    else instructions
+                ),
                 tool_definitions=tools,
                 run_context=run_context,
             )
             streamed_text = ""
             streamed_reasoning = ""
             completed: ModelResponse | None = None
+            reasoning_deadline: asyncio.Timeout | None = None
 
             await self._emit(
                 EventType.MODEL_REQUEST_STARTED,
@@ -637,24 +663,34 @@ class AgentRuntime:
                 event_location,
             )
             try:
-                async for event in model.stream(request):
-                    if completed is not None:
-                        raise ModelProtocolError(
-                            "model streamed after completion"
-                        )
-                    if isinstance(event, TextDelta):
-                        streamed_text += event.text
-                        if event.text:
-                            yield PromptStreamEvent(text=event.text)
-                    elif isinstance(event, ReasoningDelta):
-                        streamed_reasoning += event.text
-                        if event.text:
-                            yield PromptStreamEvent(
-                                text=event.text,
-                                text_kind="reasoning",
+                async with asyncio.timeout(None) as reasoning_deadline:
+                    async for event in model.stream(request):
+                        if completed is not None:
+                            raise ModelProtocolError(
+                                "model streamed after completion"
                             )
-                    else:
-                        completed = event.response
+                        if isinstance(event, TextDelta):
+                            streamed_text += event.text
+                            if event.text:
+                                reasoning_deadline.reschedule(None)
+                                yield PromptStreamEvent(text=event.text)
+                        elif isinstance(event, ReasoningDelta):
+                            streamed_reasoning += event.text
+                            if event.text:
+                                if (
+                                    not streamed_text
+                                    and reasoning_deadline.when() is None
+                                ):
+                                    reasoning_deadline.reschedule(
+                                        asyncio.get_running_loop().time()
+                                        + self._answer_now_after_seconds
+                                    )
+                                yield PromptStreamEvent(
+                                    text=event.text,
+                                    text_kind="reasoning",
+                                )
+                        else:
+                            completed = event.response
 
                 if completed is None:
                     raise ModelProtocolError(
@@ -684,6 +720,16 @@ class AgentRuntime:
             except (asyncio.CancelledError, RuntimeEventError):
                 raise
             except Exception as error:
+                reasoning_timed_out = (
+                    isinstance(error, TimeoutError)
+                    and reasoning_deadline is not None
+                    and reasoning_deadline.expired()
+                )
+                failure = (
+                    AgentLimitError("model reasoning deadline exceeded")
+                    if reasoning_timed_out
+                    else error
+                )
                 await self._emit(
                     EventType.MODEL_REQUEST_FAILED,
                     ModelFailedEventPayload(
@@ -691,11 +737,20 @@ class AgentRuntime:
                         workspace_name=workspace_name,
                         session_id=UUID(session_id),
                         round_number=round_number,
-                        failure=_failure_kind(error),
+                        failure=_failure_kind(failure),
                     ),
                     event_location,
                 )
-                raise
+                if not reasoning_timed_out:
+                    raise
+                if answer_now or round_number == self._max_model_rounds:
+                    raise AgentLimitError(
+                        "model did not produce a final answer"
+                    ) from error
+                model = self._answer_model_factory()
+                answer_now = True
+                round_number += 1
+                continue
 
             usage = _add_usage(usage, completed.usage)
             await self._emit(
@@ -711,6 +766,16 @@ class AgentRuntime:
                 ),
                 event_location,
             )
+
+            if not calls and not streamed_text:
+                if answer_now or round_number == self._max_model_rounds:
+                    raise AgentLimitError(
+                        "model did not produce a final answer"
+                    )
+                model = self._answer_model_factory()
+                answer_now = True
+                round_number += 1
+                continue
 
             if not calls:
                 messages = messages + (assistant_message,)
@@ -861,6 +926,15 @@ def _model_from_settings() -> Model:
     return provider.model(
         settings.provider.model_name,
         settings.provider.reasoning_effort,
+    )
+
+
+def _answer_model_from_settings() -> Model:
+    settings = get_settings()
+    provider = AIProvider.from_settings(settings)
+    return provider.model(
+        settings.provider.model_name,
+        ReasoningEffort.NONE,
     )
 
 

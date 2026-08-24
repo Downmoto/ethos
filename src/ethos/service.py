@@ -161,7 +161,8 @@ class Ethos:
 
     def _runtime(self) -> AgentRuntime:
         if self._agent is None:
-            skills_config = get_settings().capabilities.skills
+            settings = get_settings()
+            skills_config = settings.capabilities.skills
             self._agent = AgentRuntime(
                 self.sessions,
                 capabilities=(
@@ -177,6 +178,9 @@ class Ethos:
                     ),
                 ),
                 events=self.events,
+                answer_now_after_seconds=(
+                    settings.runtime.answer_now_after_seconds
+                ),
             )
         return self._agent
 

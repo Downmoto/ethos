@@ -225,6 +225,13 @@ persistence failure. Streamed output therefore does not by itself prove that
 the turn was committed. The final `done=True` event is emitted only after the
 history replacement succeeds.
 
+Reasoning has a configurable answer-now deadline. It starts on the first
+reasoning delta and is removed when answer text begins. On expiry, the runtime
+cancels that request and retries once with reasoning disabled and a temporary
+system instruction to finish promptly. Abandoned reasoning is visible to the
+current stream but is not persisted or replayed. The retry retains available
+tools and counts as a model round.
+
 Under the normal `session.chat` path, the lifecycle event is emitted after
 that final runtime event. A completed `session.chat` event therefore describes
 the newly persisted session state.
@@ -276,4 +283,5 @@ and documenting them:
 - Different sessions are allowed to run concurrently.
 - Invalid or redirected filesystem state fails closed.
 - A final runtime completion event follows successful history persistence.
+- Answer-now fallback is attempted at most once per run.
 - Atomic file replacement is not represented as a cross-process transaction.

@@ -64,11 +64,18 @@ class CapabilitiesConfig(BaseModel):
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
 
 
+class RuntimeConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    answer_now_after_seconds: float = Field(default=60.0, gt=0)
+
+
 class EthosSettings(BaseSettings):
     gateway: VoxConfig = Field(default_factory=VoxConfig)
     provider: ProviderConfig
     keys: KeysConfig = Field(default_factory=KeysConfig)
     capabilities: CapabilitiesConfig = Field(default_factory=CapabilitiesConfig)
+    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
 
     model_config = SettingsConfigDict(
         env_prefix="ETHOS_",

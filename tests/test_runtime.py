@@ -10,6 +10,7 @@ from ethos.events.emitters import EnvelopeEventEmitter
 from ethos.models import (
     FinishReason,
     Message,
+    Model,
     ModelEvent,
     ModelFeatures,
     ModelRequest,
@@ -25,7 +26,12 @@ from ethos.models import (
     Usage,
 )
 from ethos.provider import AIProvider, ModelProtocolError
-from ethos.runtime import AgentRuntime, PromptStreamEvent
+from ethos.runtime import (
+    ANSWER_NOW_INSTRUCTION,
+    AgentLimitError,
+    AgentRuntime,
+    PromptStreamEvent,
+)
 from ethos.sessions import Session, SessionManager
 from ethos.workspaces import WorkspaceManager
 from fakes import FakeModel
@@ -142,6 +148,114 @@ def test_runtime_streams_and_persists_reasoning_separately(
     )
 
 
+def test_runtime_retries_prolonged_reasoning_with_answer_now(
+    tmp_path: Path,
+) -> None:
+    async def reasoning_loop(
+        _request: ModelRequest,
+    ) -> AsyncIterator[ModelEvent]:
+        yield ReasoningDelta(text="partial reasoning")
+        await asyncio.Event().wait()
+
+    reasoning_model = StreamModel(reasoning_loop)
+    answer_model = FakeModel(
+        [response("final answer")],
+        stream_chunks=[("final answer",)],
+    )
+    sessions, session, _runtime = setup_runtime(tmp_path, reasoning_model)
+    runtime = AgentRuntime(
+        sessions,
+        lambda: reasoning_model,
+        events=EnvelopeEventEmitter(),
+        answer_model_factory=lambda: answer_model,
+        answer_now_after_seconds=0.01,
+    )
+
+    events = asyncio.run(collect(runtime, session))
+
+    assert events == [
+        PromptStreamEvent(
+            text="partial reasoning",
+            text_kind="reasoning",
+        ),
+        PromptStreamEvent(text="final answer"),
+        PromptStreamEvent(
+            usage=Usage(input_tokens=2, output_tokens=1),
+            done=True,
+        ),
+    ]
+    assert any(
+        message.role is Role.SYSTEM
+        and message.parts == (TextPart(text=ANSWER_NOW_INSTRUCTION),)
+        for message in answer_model.requests[0].messages
+    )
+    assert sessions.get("my-project", str(session.id)).messages == (
+        Message(role=Role.USER, parts=(TextPart(text="hello"),)),
+        Message(
+            role=Role.ASSISTANT,
+            parts=(TextPart(text="final answer"),),
+        ),
+    )
+
+
+def test_runtime_attempts_answer_now_only_once(tmp_path: Path) -> None:
+    async def reasoning_loop(
+        _request: ModelRequest,
+    ) -> AsyncIterator[ModelEvent]:
+        yield ReasoningDelta(text="still reasoning")
+        await asyncio.Event().wait()
+
+    reasoning_model = StreamModel(reasoning_loop)
+    answer_model = StreamModel(reasoning_loop)
+    sessions, session, _runtime = setup_runtime(tmp_path, reasoning_model)
+    runtime = AgentRuntime(
+        sessions,
+        lambda: reasoning_model,
+        events=EnvelopeEventEmitter(),
+        answer_model_factory=lambda: answer_model,
+        answer_now_after_seconds=0.01,
+    )
+
+    with pytest.raises(
+        AgentLimitError,
+        match="model did not produce a final answer",
+    ):
+        asyncio.run(collect(runtime, session))
+
+    assert len(reasoning_model.requests) == 1
+    assert len(answer_model.requests) == 1
+    assert sessions.get("my-project", str(session.id)).messages == ()
+
+
+def test_runtime_does_not_treat_provider_timeout_as_reasoning_deadline(
+    tmp_path: Path,
+) -> None:
+    async def provider_timeout(
+        _request: ModelRequest,
+    ) -> AsyncIterator[ModelEvent]:
+        raise TimeoutError("provider timed out")
+        yield
+
+    model = StreamModel(provider_timeout)
+    answer_model = FakeModel(
+        [response("unexpected")],
+        stream_chunks=[("unexpected",)],
+    )
+    sessions, session, _runtime = setup_runtime(tmp_path, model)
+    runtime = AgentRuntime(
+        sessions,
+        lambda: model,
+        events=EnvelopeEventEmitter(),
+        answer_model_factory=lambda: answer_model,
+        answer_now_after_seconds=0.01,
+    )
+
+    with pytest.raises(TimeoutError, match="provider timed out"):
+        asyncio.run(collect(runtime, session))
+
+    assert answer_model.requests == []
+
+
 def test_runtime_default_factory_resolves_settings_once_per_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -183,6 +297,65 @@ def test_runtime_default_factory_resolves_settings_once_per_turn(
 
     assert calls == 2
     assert [len(request.messages) for request in model.requests] == [4, 6]
+
+
+def test_runtime_default_answer_now_model_disables_reasoning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def reasoning_loop(
+        _request: ModelRequest,
+    ) -> AsyncIterator[ModelEvent]:
+        yield ReasoningDelta(text="still reasoning")
+        await asyncio.Event().wait()
+
+    reasoning_model = StreamModel(reasoning_loop)
+    answer_model = FakeModel(
+        [response("final answer")],
+        stream_chunks=[("final answer",)],
+    )
+    efforts: list[ReasoningEffort] = []
+
+    def load_settings() -> EthosSettings:
+        return EthosSettings.model_validate(
+            {
+                "provider": {
+                    "name": "openai",
+                    "model_name": "model",
+                    "reasoning_effort": "medium",
+                },
+                "keys": {"openai_api_key": "key"},
+            }
+        )
+
+    def create_model(
+        _provider: AIProvider,
+        _model_name: str,
+        reasoning_effort: ReasoningEffort,
+    ) -> Model:
+        efforts.append(reasoning_effort)
+        if reasoning_effort is ReasoningEffort.NONE:
+            return answer_model
+        return reasoning_model
+
+    monkeypatch.setattr("ethos.runtime.get_settings", load_settings)
+    monkeypatch.setattr(AIProvider, "model", create_model)
+    sessions, session, _runtime = setup_runtime(tmp_path, reasoning_model)
+    runtime = AgentRuntime(
+        sessions,
+        events=EnvelopeEventEmitter(),
+        answer_now_after_seconds=0.01,
+    )
+
+    events = asyncio.run(collect(runtime, session))
+
+    assert efforts == [ReasoningEffort.MEDIUM, ReasoningEffort.NONE]
+    assert events[-2:] == [
+        PromptStreamEvent(text="final answer"),
+        PromptStreamEvent(
+            usage=Usage(input_tokens=2, output_tokens=1),
+            done=True,
+        ),
+    ]
 
 
 def test_runtime_yields_and_stores_non_overlapping_provider_chunks(

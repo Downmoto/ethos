@@ -120,6 +120,20 @@ def test_settings_allow_ollama_without_api_key() -> None:
 
     assert settings.keys.ollama_api_key is None
     assert settings.provider.ollama_base_url == "http://localhost:11434"
+    assert settings.runtime.answer_now_after_seconds == 60.0
+
+
+def test_settings_validate_answer_now_deadline() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="answer_now_after_seconds",
+    ):
+        EthosSettings.model_validate(
+            {
+                "provider": {"name": "ollama", "model_name": "llama3.2"},
+                "runtime": {"answer_now_after_seconds": 0},
+            }
+        )
 
 
 def test_settings_validate_gateway_bind() -> None:

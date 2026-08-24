@@ -13,6 +13,10 @@ capabilities:
     # Maximum bundled resource paths listed when a skill is activated.
     max_resources: 200
 
+runtime:
+  # Cancel prolonged reasoning and retry once with reasoning disabled.
+  answer_now_after_seconds: 60
+
 provider:
   # Supported providers: openai, google, ollama.
   name: null

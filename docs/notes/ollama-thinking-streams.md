@@ -25,3 +25,26 @@ of how the model produced its answer. Ethos does not replay it as conversation
 context. Provider-native thinking blocks, signatures, encrypted reasoning, and
 other opaque formats remain unsupported until a provider requires them for
 continuation.
+
+## Answer-now fallback
+
+Configure the reasoning deadline separately from the requested effort:
+
+```yaml
+runtime:
+  answer_now_after_seconds: 60
+```
+
+The deadline begins with the first non-empty reasoning delta, not while the
+provider is connecting or silently selecting a tool. The first answer-text
+delta cancels it. If reasoning reaches the deadline, Ethos cancels that model
+request and retries the turn exactly once with reasoning disabled and a
+run-only instruction to answer promptly. Tools remain available during the
+retry, and the retry consumes another model round.
+
+Reasoning already streamed to the caller is not persisted because the
+abandoned model response never completed. Its token usage is also unavailable
+unless the provider completed a usage report. The timed-out request is traced
+as a model-request limit failure. If the retry also fails to produce answer
+text or a tool call, the run ends with a clear agent-limit error; the fallback
+cannot guarantee that a model will comply.

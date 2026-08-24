@@ -902,3 +902,36 @@ Exit criteria:
 - Every diagnostic query can reconstruct exact storage order with
   `ORDER BY sequence`.
 - No event correlation value is duplicated outside its typed payload.
+
+## Milestone 12 — Add answer-now fallback
+
+Commit: `feat: add answer now fallback`
+
+Implementation:
+
+- Add a positive `runtime.answer_now_after_seconds` setting, defaulting to 60
+  seconds.
+- Start the deadline at the first non-empty reasoning delta and cancel it when
+  the first answer-text delta arrives.
+- On expiry, cancel the incomplete request and retry exactly once with
+  reasoning disabled and a run-only answer-now system instruction. Preserve
+  tool availability and count the retry as another model round.
+- Do not persist abandoned reasoning or invent usage for an incomplete
+  provider response.
+- Fail with an agent-limit error when the retry still produces neither answer
+  text nor a tool call.
+
+Tests:
+
+- Prolonged reasoning streams once, then yields the fallback answer without
+  persisting the abandoned reasoning.
+- The production fallback requests `ReasoningEffort.NONE` even when normal
+  reasoning is enabled.
+- A second prolonged or empty response fails without a third attempt.
+
+Exit criteria:
+
+- A reasoning loop cannot consume the run indefinitely.
+- Provider connection time and silent tool selection do not consume the
+  reasoning deadline.
+- Every timed-out request is traced as a model-request limit failure.
