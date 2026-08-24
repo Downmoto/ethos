@@ -6,6 +6,13 @@ gateway:
   port: 8000
   bearer_token: null
 
+capabilities:
+  skills:
+    # Maximum bytes read from one referenced UTF-8 skill resource.
+    max_resource_file_bytes: 102400
+    # Maximum bundled resource paths listed when a skill is activated.
+    max_resources: 200
+
 provider:
   # Supported providers: openai, google, ollama.
   name: null

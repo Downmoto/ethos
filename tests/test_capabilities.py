@@ -47,7 +47,7 @@ class _Tool:
         self.definition = ToolDefinition(
             name=self.name,
             description=f"Run {self.name}",
-            parameters=_Arguments.model_json_schema(),
+            parameters_schema=_Arguments.model_json_schema(),
         )
 
     async def execute(self, arguments: BaseModel) -> str:

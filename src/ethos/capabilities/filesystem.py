@@ -30,14 +30,14 @@ class _ListFilesArguments(BaseModel):
 
 
 @dataclass
-class _ReadFile:
+class _ReadFileTool:
     workspace_path: Path
     definition: ToolDefinition = ToolDefinition(
         name="read_file",
         description=(
             "Read one UTF-8 text file relative to the workspace root."
         ),
-        parameters=_ReadFileArguments.model_json_schema(),
+        parameters_schema=_ReadFileArguments.model_json_schema(),
     )
     effect: ToolEffect = ToolEffect.READ
     arguments_type: type[BaseModel] = _ReadFileArguments
@@ -67,14 +67,14 @@ class _ReadFile:
 
 
 @dataclass
-class _ListFiles:
+class _ListFilesTool:
     workspace_path: Path
     definition: ToolDefinition = ToolDefinition(
         name="list_files",
         description=(
             "List one workspace directory as a JSON array of relative paths."
         ),
-        parameters=_ListFilesArguments.model_json_schema(),
+        parameters_schema=_ListFilesArguments.model_json_schema(),
     )
     effect: ToolEffect = ToolEffect.READ
     arguments_type: type[BaseModel] = _ListFilesArguments
@@ -124,7 +124,7 @@ def _resolve_workspace_path(
 
 class ReadOnlyFilesystemCapability:
     async def instructions(self, context: RunContext) -> tuple[str, ...]:
-        del context
+        print(_ListFilesArguments.model_json_schema())
         return (
             "Paths passed to filesystem tools are relative to the "
             "workspace root.",
@@ -132,6 +132,6 @@ class ReadOnlyFilesystemCapability:
 
     async def tools(self, context: RunContext) -> tuple[Tool, ...]:
         return (
-            _ReadFile(context.workspace_path),
-            _ListFiles(context.workspace_path),
+            _ReadFileTool(context.workspace_path),
+            _ListFilesTool(context.workspace_path),
         )

@@ -47,7 +47,7 @@ class RecordingTool:
         self.definition = ToolDefinition(
             name="echo",
             description="Echo a value",
-            parameters={
+            parameters_schema={
                 "type": "object",
                 "properties": {"value": {"type": "string"}},
                 "required": ["value"],

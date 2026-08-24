@@ -51,10 +51,24 @@ class VoxConfig(BaseModel):
     bearer_token: SecretStr | None = None
 
 
+class SkillsConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    max_resource_file_bytes: int = Field(default=100 * 1024, ge=1)
+    max_resources: int = Field(default=200, ge=1)
+
+
+class CapabilitiesConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    skills: SkillsConfig = Field(default_factory=SkillsConfig)
+
+
 class EthosSettings(BaseSettings):
     gateway: VoxConfig = Field(default_factory=VoxConfig)
     provider: ProviderConfig
     keys: KeysConfig = Field(default_factory=KeysConfig)
+    capabilities: CapabilitiesConfig = Field(default_factory=CapabilitiesConfig)
 
     model_config = SettingsConfigDict(
         env_prefix="ETHOS_",

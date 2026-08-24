@@ -17,7 +17,7 @@ def tool_definition(name: str) -> ToolDefinition:
     return ToolDefinition(
         name=name,
         description=f"Run {name}",
-        parameters={"type": "object", "properties": {}},
+        parameters_schema={"type": "object", "properties": {}},
     )
 
 

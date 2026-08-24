@@ -22,6 +22,9 @@ class EventType(StrEnum):
     SESSION_ARCHIVE = "session.archive"
     SESSION_CHAT = "session.chat"
 
+    # skill events
+    SKILL_DIAGNOSTIC = "skill.diagnostic"
+
     # runtime trace events
     RUN_STARTED = "run.started"
     RUN_PAUSED = "run.paused"

@@ -110,6 +110,14 @@ directory; `read_file` reads at most 100 KiB of UTF-8 text from one file.
 Absolute paths, incompatible path types, traversal outside the workspace, and
 symlinks resolving outside the workspace fail without exposing file contents.
 
+The skills capability implements Agent Skills through progressive disclosure.
+It adds only discovered names and descriptions to run-scoped context. The
+model can then load one complete `SKILL.md` body with `activate_skill` and read
+referenced bundled files individually with `read_skill_resource_file`. Skill
+metadata is parsed without executing embedded content, and both skill tools
+are bounded read operations routed through the normal tool policy. Discovery
+problems are recorded as typed `skill.diagnostic` lifecycle events.
+
 Every request also receives a run-only system instruction containing the
 active workspace name and path plus the session ID. This lets the model reason
 about its location without adding operational context to persisted history.
@@ -135,7 +143,7 @@ incomplete trace instead of inventing a completion during cleanup.
 
 ## Deferred AI design
 
-Personas, persona memory, cross-persona conversation, skills, and additional
+Personas, persona memory, cross-persona conversation, and additional
 capabilities are intentionally outside this base refactor. No placeholder
 persona abstractions exist until those behaviours are designed.
 

@@ -83,11 +83,11 @@ class Message(_ModelValue):
 class ToolDefinition(_ModelValue):
     name: ToolName
     description: NonEmptyString
-    parameters: dict[str, object]
+    parameters_schema: dict[str, object]
 
-    @field_validator("parameters")
+    @field_validator("parameters_schema")
     @classmethod
-    def parameters_must_describe_an_object(
+    def parameters_schema_must_describe_an_object(
         cls, value: dict[str, object]
     ) -> dict[str, object]:
         if value.get("type") != "object":

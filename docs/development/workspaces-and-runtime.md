@@ -167,6 +167,31 @@ paths, incompatible path types, traversal, and symlinks resolving outside the
 workspace are rejected. All calls still pass through the standard tool
 executor and policy.
 
+The skills capability follows the Agent Skills progressive-disclosure model.
+It scans direct children of the native and cross-client locations at both user
+and project scope:
+
+1. `~/.agents/skills/`
+2. `~/.ethos/skills/`
+3. `<workspace>/.agents/skills/`
+4. `<workspace>/.ethos/skills/`
+
+Later locations take precedence, so project skills override user skills;
+collisions and cosmetic specification violations emit `skill.diagnostic`
+events. Files with unparseable YAML or missing names or descriptions are
+skipped without blocking other valid skills. Discovery retains only each
+skill's name, description, and absolute `SKILL.md` location.
+
+When skills exist, `ContextBuilder` receives a name-and-description catalogue.
+The capability also contributes the read-only `activate_skill` and
+`read_skill_resource_file` tools. The first loads one complete instruction
+body and lists a configured maximum number of bundled resources without
+reading them. The second reads one referenced UTF-8 file up to the configured
+byte limit while rejecting absolute paths and escapes from the skill
+directory. The limits are `capabilities.skills.max_resources` and
+`capabilities.skills.max_resource_file_bytes` in `config.yaml`. No catalogue
+or skill tools are added when discovery finds nothing.
+
 ### Concurrency guarantee
 
 Turns for the same workspace and session are serialised across runtime

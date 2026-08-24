@@ -63,7 +63,7 @@ class RuntimeTool:
         self.definition = ToolDefinition(
             name="echo",
             description="Echo one value",
-            parameters={
+            parameters_schema={
                 "type": "object",
                 "properties": {"value": {"type": "string"}},
                 "required": ["value"],

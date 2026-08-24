@@ -66,7 +66,7 @@ def test_model_request_json_round_trip_covers_every_message_part() -> None:
             ToolDefinition(
                 name="read_file",
                 description="Read one file",
-                parameters={"type": "object", "properties": {}},
+                parameters_schema={"type": "object", "properties": {}},
             ),
         ),
     )
@@ -214,17 +214,25 @@ def test_message_rejects_invalid_role_or_part_combinations(
 @pytest.mark.parametrize(
     "value",
     [
-        {"name": "", "description": "Read", "parameters": {"type": "object"}},
+        {
+            "name": "",
+            "description": "Read",
+            "parameters_schema": {"type": "object"},
+        },
         {
             "name": "read_file",
             "description": "",
-            "parameters": {"type": "object"},
+            "parameters_schema": {"type": "object"},
         },
-        {"name": "read_file", "description": "Read", "parameters": {}},
         {
             "name": "read_file",
             "description": "Read",
-            "parameters": {"type": "array"},
+            "parameters_schema": {},
+        },
+        {
+            "name": "read_file",
+            "description": "Read",
+            "parameters_schema": {"type": "array"},
         },
     ],
 )

@@ -34,6 +34,31 @@ def test_settings_accept_reasoning_effort() -> None:
     assert settings.provider.reasoning_effort is ReasoningEffort.HIGH
 
 
+def test_settings_configure_skill_resource_limits() -> None:
+    settings = EthosSettings.model_validate(
+        {
+            "provider": {"name": "ollama", "model_name": "qwen3"},
+            "capabilities": {
+                "skills": {
+                    "max_resource_file_bytes": 4096,
+                    "max_resources": 12,
+                }
+            },
+        }
+    )
+
+    assert settings.capabilities.skills.max_resource_file_bytes == 4096
+    assert settings.capabilities.skills.max_resources == 12
+
+    with pytest.raises(ValidationError):
+        EthosSettings.model_validate(
+            {
+                "provider": {"name": "ollama", "model_name": "qwen3"},
+                "capabilities": {"skills": {"max_resources": 0}},
+            }
+        )
+
+
 def test_settings_load_provider_from_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

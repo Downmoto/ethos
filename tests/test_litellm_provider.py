@@ -205,7 +205,7 @@ def test_litellm_model_sends_tool_definitions(tool_count: int) -> None:
         ToolDefinition(
             name=f"tool_{index}",
             description=f"Tool {index}",
-            parameters={
+            parameters_schema={
                 "type": "object",
                 "properties": {"value": {"type": "integer"}},
             },
@@ -699,7 +699,7 @@ def test_litellm_model_rejects_tools_when_feature_is_disabled() -> None:
             ToolDefinition(
                 name="read_file",
                 description="Read a file",
-                parameters={"type": "object"},
+                parameters_schema={"type": "object"},
             ),
         ),
     )

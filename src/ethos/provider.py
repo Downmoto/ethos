@@ -351,7 +351,7 @@ def _tool(tool: ToolDefinition) -> dict[str, object]:
         "function": {
             "name": tool.name,
             "description": tool.description,
-            "parameters": tool.parameters,
+            "parameters": tool.parameters_schema,
         },
     }
 

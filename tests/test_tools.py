@@ -41,7 +41,7 @@ class FakeTool:
         self.definition = ToolDefinition(
             name=name,
             description=f"Run {name}",
-            parameters={
+            parameters_schema={
                 "type": "object",
                 "properties": {"location": {"type": "string"}},
                 "required": ["location"],

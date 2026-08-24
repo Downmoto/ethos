@@ -153,7 +153,7 @@ class Message(BaseModel):
 class ToolDefinition(BaseModel):
     name: str
     description: str
-    parameters: dict[str, object]
+    parameters_schema: dict[str, object]
 
 
 class ModelRequest(BaseModel):
@@ -211,7 +211,7 @@ validation rules:
 - `ModelResponse.parts` is non-empty.
 - `TextPart.text`, tool names, tool descriptions, and call IDs are non-empty.
 - Tool names match `^[A-Za-z][A-Za-z0-9_-]{0,63}$`.
-- `ToolDefinition.parameters` is a JSON Schema object with
+- `ToolDefinition.parameters_schema` is a JSON Schema object with
   `type == "object"`. Reject other top-level schema types.
 - Assistant messages contain only text and tool-call parts.
 - Tool messages contain exactly one tool-result part.
@@ -814,31 +814,35 @@ Exit criteria:
 - The runtime contains no branch naming a concrete capability.
 - The capability protocol has only the two methods above.
 
-## Milestone 10 — Add skills through context construction
+## Milestone 10 — Add Agent Skills through progressive disclosure
 
 Commit: `feat: add skills capability`
 
 Implementation:
 
-- Define a skill as metadata plus instruction text loaded from one `SKILL.md`.
-- Implement `SkillsCapability` using the capability instruction method; a
-  skill never owns model calls, persistence, permissions, or tool execution.
-- Discover only beneath the configured Ethos skills root, reject symlinks and
-  path escapes, and preserve deterministic name order.
-- Parse metadata without executing embedded content. Treat skill instructions
-  as untrusted context relative to system and user policy.
-- Select skills by an explicit caller-supplied name list in this milestone.
-  Automatic model-driven selection is deferred.
+- Discover project and user skills from native Ethos and cross-client
+  `.agents/skills/` locations, with deterministic project-over-user
+  precedence.
+- Parse metadata leniently without executing embedded content. Skip unusable
+  skills without blocking valid neighbours and emit diagnostics for collisions
+  or cosmetic specification violations.
+- Disclose only skill names and descriptions through `ContextBuilder`.
+- Add a read-only, enum-constrained activation tool that loads one complete
+  skill body on model selection, plus bounded on-demand access to bundled
+  resources.
+- Omit both the catalogue and skill tools when no valid skills are available.
 
 Tests:
 
-- Discovery, selection, ordering, malformed metadata, duplicate names,
-  symlinks, path escape, and instruction precedence.
-- Skills do not alter persisted conversation history.
+- Discovery scopes, precedence, lenient validation, malformed metadata, and
+  collisions.
+- Catalogue-only initial disclosure, model-driven activation, lazy bundled
+  resource reads, and path escape rejection.
 
 Exit criteria:
 
-- Selected skills affect a request only through `ContextBuilder`.
+- Skill bodies are absent from initial context and arrive only after
+  activation.
 - No skill code imports the provider adapter or runtime loop.
 
 ## Final acceptance scenario

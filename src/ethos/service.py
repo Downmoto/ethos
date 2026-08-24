@@ -9,11 +9,13 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from ethos.capabilities.filesystem import ReadOnlyFilesystemCapability
+from ethos.capabilities.skills import SkillsCapability
+from ethos.config import get_settings
 from ethos.events import create_event_emitter, event_factory
 from ethos.events.emitters import EnvelopeEventEmitter
 from ethos.events.models import EventPayload
 from ethos.events.types import EventType
-from ethos.home import DB_PATH
+from ethos.home import DB_PATH, SKILLS_PATH
 from ethos.models import ReasoningPart, Role, TextPart, Usage
 from ethos.runtime import (
     AgentRuntime,
@@ -167,9 +169,21 @@ class Ethos:
 
     def _runtime(self) -> AgentRuntime:
         if self._agent is None:
+            skills_config = get_settings().capabilities.skills
             self._agent = AgentRuntime(
                 self.sessions,
-                capabilities=(ReadOnlyFilesystemCapability(),),
+                capabilities=(
+                    ReadOnlyFilesystemCapability(),
+                    SkillsCapability(
+                        self.home / SKILLS_PATH,
+                        self.home.parent / ".agents" / "skills",
+                        events=self.events,
+                        max_resource_file_bytes=(
+                            skills_config.max_resource_file_bytes
+                        ),
+                        max_resources=skills_config.max_resources,
+                    ),
+                ),
                 events=self.events,
             )
         return self._agent
