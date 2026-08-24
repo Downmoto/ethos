@@ -26,7 +26,14 @@ class _ReadFileArguments(BaseModel):
 class _ListFilesArguments(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    path: str = Field(default=".", min_length=1)
+    path: str = Field(
+        default=".",
+        min_length=1,
+        description=(
+            'Workspace-relative directory. Use "." for the workspace root; '
+            "never pass an absolute path."
+        ),
+    )
 
 
 @dataclass

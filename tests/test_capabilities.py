@@ -303,6 +303,9 @@ def test_list_files_returns_bounded_workspace_relative_paths(
         "list_files",
     ]
     tool = next(tool for tool in tools if tool.definition.name == "list_files")
+    assert 'Use \\".\\" for the workspace root' in json.dumps(
+        tool.definition.parameters_schema
+    )
     executor = ToolExecutor(ToolRegistry((tool,)))
 
     async def list_files(path: str) -> str:
