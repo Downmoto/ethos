@@ -105,6 +105,10 @@ lives in the Ethos home. For each turn, `AgentRuntime` resolves the global
 settings, streams model output, and atomically replaces history before emitting
 its completion chunk.
 
+The LiteLLM adapter builds complete and streamed final responses through the
+same normalisation path. In particular, a provider `stop` response containing
+native tool calls becomes Ethos `tool_call` in both modes.
+
 `ContextBuilder` is the boundary between that canonical stored history and a
 model request. It owns the base Ethos system instruction, appends run-only
 date, time, and timezone context, appends run-only system instructions, and

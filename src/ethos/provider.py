@@ -265,12 +265,8 @@ class LiteLLMModel:
             )
             or Usage()
         )
-        if finish_reason is FinishReason.STOP and any(
-            isinstance(part, ToolCallPart) for part in parts
-        ):
-            finish_reason = FinishReason.TOOL_CALL
         yield ResponseCompleted(
-            response=ModelResponse(
+            response=_model_response(
                 parts=parts,
                 usage=usage,
                 finish_reason=finish_reason,
@@ -409,11 +405,30 @@ def _response(
         )
         or Usage()
     )
-    return ModelResponse(
+    return _model_response(
         parts=tuple(parts),
         usage=usage,
         finish_reason=_finish_reason(finish_reason),
         provider_response_id=value.id,
+    )
+
+
+def _model_response(
+    *,
+    parts: tuple[TextPart | ReasoningPart | ToolCallPart, ...],
+    usage: Usage,
+    finish_reason: FinishReason,
+    provider_response_id: str | None,
+) -> ModelResponse:
+    if finish_reason is FinishReason.STOP and any(
+        isinstance(part, ToolCallPart) for part in parts
+    ):
+        finish_reason = FinishReason.TOOL_CALL
+    return ModelResponse(
+        parts=parts,
+        usage=usage,
+        finish_reason=finish_reason,
+        provider_response_id=provider_response_id,
     )
 
 

@@ -190,9 +190,11 @@ When skills exist, `ContextBuilder` receives a name-and-description catalogue.
 The capability also contributes the read-only `activate_skill` and
 `read_skill_resource_file` tools. The first loads one complete instruction
 body and lists a configured maximum number of bundled resources without
-reading them. The second reads one referenced UTF-8 file up to the configured
-byte limit while rejecting absolute paths and escapes from the skill
-directory. The limits are `capabilities.skills.max_resources` and
+reading them. The resource count includes only valid files; directories, the
+skill instructions, broken links, and paths resolving outside the skill do
+not consume the limit. The second reads one referenced UTF-8 file up to the
+configured byte limit while rejecting absolute paths and escapes from the
+skill directory. The limits are `capabilities.skills.max_resources` and
 `capabilities.skills.max_resource_file_bytes` in `config.yaml`. Activation is
 also limited by `capabilities.skills.max_skill_file_bytes`, and discovery by
 that same frontmatter bound plus `capabilities.skills.max_skills`. No

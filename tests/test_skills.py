@@ -320,6 +320,36 @@ def test_configured_skill_resource_limits_are_enforced(tmp_path: Path) -> None:
         asyncio.run(resource_tool.execute(resource))
 
 
+def test_skill_resource_limit_counts_only_valid_files(tmp_path: Path) -> None:
+    user = tmp_path / "skills"
+    skill_file = _write_skill(user, "review", "review")
+    (skill_file.parent / "broken.txt").symlink_to("missing.txt")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside", encoding="utf-8")
+    (skill_file.parent / "outside.txt").symlink_to(outside)
+    resource = skill_file.parent / "first" / "second" / "third" / "guide.md"
+    resource.parent.mkdir(parents=True)
+    resource.write_text("guide", encoding="utf-8")
+    capability = SkillsCapability(
+        user,
+        events=EnvelopeEventEmitter(),
+        max_resources=1,
+    )
+    context = _context(tmp_path)
+    asyncio.run(capability.instructions(context))
+    activation_tool = asyncio.run(capability.tools(context))[0]
+    activation = activation_tool.arguments_type.model_validate(
+        {"name": "review"}
+    )
+
+    content = asyncio.run(activation_tool.execute(activation))
+
+    assert content.count("<file>") == 1
+    assert "<file>first/second/third/guide.md</file>" in content
+    assert "broken.txt" not in content
+    assert "outside.txt" not in content
+
+
 def test_skill_activation_rejects_an_oversized_instruction_body(
     tmp_path: Path,
 ) -> None:

@@ -978,6 +978,67 @@ def test_litellm_model_assembles_streamed_tool_calls(
     assert completed.response.finish_reason is FinishReason.TOOL_CALL
 
 
+def test_ollama_complete_and_streamed_tool_responses_match() -> None:
+    usage = {
+        "prompt_tokens": 3,
+        "completion_tokens": 2,
+        "total_tokens": 5,
+    }
+
+    async def completion(**kwargs: object) -> object:
+        if kwargs.get("stream") is True:
+            return stream(
+                chunk(
+                    response_id="native-id",
+                    tool_calls=[
+                        tool_call_delta(
+                            0,
+                            call_id="call-1",
+                            name="read_file",
+                            arguments="{}",
+                        )
+                    ],
+                ),
+                chunk(finish_reason="stop", response_id="native-id"),
+                chunk(usage=usage, response_id="native-id"),
+            )
+        return response(
+            None,
+            finish_reason="stop",
+            response_id="native-id",
+            usage=usage,
+            tool_calls=[
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": "{}",
+                    },
+                }
+            ],
+        )
+
+    model = LiteLLMModel(
+        AIProvider(ProviderName.OLLAMA, None),
+        "model",
+        completion,
+    )
+    request = ModelRequest(messages=())
+
+    complete = asyncio.run(model.request(request))
+
+    async def collect() -> list[ModelEvent]:
+        return [event async for event in model.stream(request)]
+
+    events = asyncio.run(collect())
+    streamed = events[-1]
+
+    assert isinstance(streamed, ResponseCompleted)
+    assert streamed.response == complete
+    assert complete.finish_reason is FinishReason.TOOL_CALL
+
+
 @pytest.mark.parametrize("arguments", ["", "not JSON", "[]"])
 def test_litellm_model_preserves_streamed_raw_tool_arguments(
     arguments: str,

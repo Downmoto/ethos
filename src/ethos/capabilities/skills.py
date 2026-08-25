@@ -7,7 +7,6 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from itertools import islice
 from pathlib import Path
 from typing import cast
 
@@ -430,7 +429,7 @@ def _skill_content(
 def _get_skill_resources(skill: Skill, max_resources: int) -> tuple[str, ...]:
     root = skill.directory.resolve()
     resources: list[str] = []
-    for path in islice(root.rglob("*"), max_resources + 2):
+    for path in root.rglob("*"):
         if path == skill.location or not path.is_file():
             continue
         try:
