@@ -356,6 +356,7 @@ def workspace() -> None:
 @click.argument("name")
 @requires_home
 def workspace_create(name: str) -> None:
+    """Create a workspace."""
     view = _run(lambda ethos, context: ethos.create_workspace(name, context))
     click.echo(f"workspace created: {view.name}")
 
@@ -363,6 +364,7 @@ def workspace_create(name: str) -> None:
 @workspace.command("list")
 @requires_home
 def workspace_list() -> None:
+    """List all workspaces."""
     views = _run(lambda ethos, context: ethos.list_workspaces(context))
     click.echo("\n".join(view.name for view in views))
 
@@ -371,6 +373,7 @@ def workspace_list() -> None:
 @click.argument("name")
 @requires_home
 def workspace_show(name: str) -> None:
+    """Show a workspace and its path."""
     view = _run(lambda ethos, context: ethos.show_workspace(name, context))
     click.echo(f"{view.name}\t{view.path}")
 
@@ -384,6 +387,7 @@ def session() -> None:
 @click.argument("workspace_name", metavar="WORKSPACE")
 @requires_home
 def session_create(workspace_name: str) -> None:
+    """Create a session in a workspace."""
     view = _run(
         lambda ethos, context: ethos.create_session(workspace_name, context)
     )
@@ -394,6 +398,7 @@ def session_create(workspace_name: str) -> None:
 @click.argument("workspace_name", metavar="WORKSPACE")
 @requires_home
 def session_list(workspace_name: str) -> None:
+    """List a workspace's sessions."""
     views = _run(
         lambda ethos, context: ethos.list_sessions(workspace_name, context)
     )
@@ -410,6 +415,7 @@ def session_list(workspace_name: str) -> None:
 @click.argument("session_id", metavar="SESSION")
 @requires_home
 def session_show(workspace_name: str, session_id: str) -> None:
+    """Show a session and its status."""
     view = _run(
         lambda ethos, context: ethos.show_session(
             workspace_name, session_id, context
@@ -424,6 +430,7 @@ def session_show(workspace_name: str, session_id: str) -> None:
 @click.argument("session_id", metavar="SESSION")
 @requires_home
 def session_history(workspace_name: str, session_id: str) -> None:
+    """Print a session's complete message history."""
     messages = _run(
         lambda ethos, context: ethos.session_history(
             workspace_name, session_id, context
@@ -457,6 +464,7 @@ def _format_history_message(message: Message) -> str:
 @click.argument("session_id", metavar="SESSION")
 @requires_home
 def session_archive(workspace_name: str, session_id: str) -> None:
+    """Archive a session."""
     view = _run(
         lambda ethos, context: ethos.archive_session(
             workspace_name, session_id, context
@@ -485,6 +493,7 @@ def session_recover(workspace_name: str, session_id: str) -> None:
 @click.argument("prompt")
 @requires_home
 def session_chat(workspace_name: str, session_id: str, prompt: str) -> None:
+    """Continue a session with one prompt."""
     try:
         asyncio.run(
             _print_response(_chat_requests(workspace_name, session_id, prompt))
