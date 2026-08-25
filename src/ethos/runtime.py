@@ -5,7 +5,8 @@ and runtime concurrency compose.
 """
 
 import asyncio
-from collections.abc import AsyncIterator, Callable, Iterable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Annotated, Final, Literal, cast
@@ -228,7 +229,25 @@ class AgentRuntime:
         self._max_model_rounds = max_model_rounds
         self._max_tool_calls_per_response = max_tool_calls_per_response
         self._answer_now_after_seconds = answer_now_after_seconds
-        self._locks: dict[tuple[str, str], asyncio.Lock] = {}
+        self._locks: dict[tuple[str, str], tuple[asyncio.Lock, int]] = {}
+
+    @asynccontextmanager
+    async def _session_lock(
+        self, workspace_name: str, session_id: str
+    ) -> AsyncGenerator[None]:
+        key = (workspace_name, session_id)
+        entry = self._locks.get(key)
+        lock, users = entry if entry is not None else (asyncio.Lock(), 0)
+        self._locks[key] = (lock, users + 1)
+        try:
+            async with lock:
+                yield
+        finally:
+            users = self._locks[key][1]
+            if users == 1:
+                del self._locks[key]
+            else:
+                self._locks[key] = (lock, users - 1)
 
     async def run(
         self,
@@ -245,9 +264,7 @@ class AgentRuntime:
         Cancelling or abandoning the iterator preserves the latest completed
         checkpoint. ``done=True`` follows the durable final response.
         """
-        key = (workspace_name, session_id)
-        lock = self._locks.setdefault(key, asyncio.Lock())
-        async with lock:
+        async with self._session_lock(workspace_name, session_id):
             with self._sessions.runtime_lock(workspace_name, session_id):
                 session = await self._recover_executing_approvals(
                     workspace_name,
@@ -329,9 +346,7 @@ class AgentRuntime:
         event_location: str = "runtime",
     ) -> AsyncIterator[RuntimeStreamEvent]:
         """Consume one pending approval and resume its interrupted turn."""
-        key = (workspace_name, session_id)
-        lock = self._locks.setdefault(key, asyncio.Lock())
-        async with lock:
+        async with self._session_lock(workspace_name, session_id):
             with self._sessions.runtime_lock(workspace_name, session_id):
                 async for event in self._resolve_approval_locked(
                     workspace_name,
@@ -350,9 +365,7 @@ class AgentRuntime:
         event_location: str = "runtime",
     ) -> Session:
         """Close interrupted tool calls without replaying their side effects."""
-        key = (workspace_name, session_id)
-        lock = self._locks.setdefault(key, asyncio.Lock())
-        async with lock:
+        async with self._session_lock(workspace_name, session_id):
             with self._sessions.runtime_lock(workspace_name, session_id):
                 session = await self._recover_executing_approvals(
                     workspace_name,

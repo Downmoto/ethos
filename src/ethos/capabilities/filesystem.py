@@ -10,6 +10,7 @@ from typing import Final
 from pydantic import BaseModel, ConfigDict, Field
 
 from ethos.capabilities import RunContext
+from ethos.capabilities._files import FileTooLargeError, read_bounded_utf8
 from ethos.models import ToolDefinition
 from ethos.tools import Tool, ToolEffect, ToolExecutionError
 
@@ -62,12 +63,10 @@ class _ReadFileTool:
         )
         if not path.is_file():
             raise ToolExecutionError("read_file path must be a workspace file")
-        with path.open("rb") as file:
-            content = file.read(self.max_file_bytes + 1)
-        if len(content) > self.max_file_bytes:
-            raise ToolExecutionError("read_file exceeds size limit")
         try:
-            return content.decode("utf-8")
+            return read_bounded_utf8(path, self.max_file_bytes)
+        except FileTooLargeError:
+            raise ToolExecutionError("read_file exceeds size limit") from None
         except UnicodeDecodeError as error:
             raise ToolExecutionError(
                 "read_file only supports UTF-8 text files"

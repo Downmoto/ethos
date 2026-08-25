@@ -32,22 +32,12 @@ class ContextBuilder:
 
     def _build_date_time_context(self) -> str:
         now = datetime.datetime.now().astimezone()
-
-        current_date = now.strftime("%A, %d %B %Y")
-        current_time = now.strftime("%H:%M")
-
-        tz_name = now.tzname()
-
         offset = now.strftime("%z")
-        formatted_offset = f"{offset[:3]}:{offset[3:]}"
-
-        message = (
-            f"Current date: {current_date}\n"
-            f"Current time: {current_time}\n"
-            f"Timezone: {tz_name} (UTC{formatted_offset})"
+        return (
+            f"Current date: {now:%A, %d %B %Y}\n"
+            f"Current time: {now:%H:%M}\n"
+            f"Timezone: {now.tzname()} (UTC{offset[:3]}:{offset[3:]})"
         )
-
-        return message
 
     def build(
         self,

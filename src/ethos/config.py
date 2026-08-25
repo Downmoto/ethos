@@ -2,13 +2,16 @@
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Final, Self
+from typing import Annotated, Final, Self
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     ConfigDict,
     Field,
+    HttpUrl,
     SecretStr,
+    field_validator,
     model_validator,
 )
 from pydantic_settings import (
@@ -26,21 +29,46 @@ CONFIG_FILE: Final = "config.yaml"
 DB_PATH: Final = HOME_PATH / "data" / "ethos.db"
 
 
+def _require_non_empty(value: str) -> str:
+    if not value.strip():
+        raise ValueError("value must not be empty")
+    return value
+
+
+def _require_non_empty_secret(value: SecretStr) -> SecretStr:
+    _require_non_empty(value.get_secret_value())
+    return value
+
+
+type NonEmptyString = Annotated[str, AfterValidator(_require_non_empty)]
+type NonEmptySecret = Annotated[
+    SecretStr, AfterValidator(_require_non_empty_secret)
+]
+
+
 class ProviderConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: ProviderName
-    model_name: str
+    model_name: NonEmptyString
     reasoning_effort: ReasoningEffort = ReasoningEffort.NONE
     ollama_base_url: str = "http://localhost:11434"
+
+    @field_validator("ollama_base_url")
+    @classmethod
+    def validate_ollama_base_url(cls, value: str) -> str:
+        url = HttpUrl(value)
+        if url.username is not None or url.password is not None:
+            raise ValueError("ollama_base_url must not contain credentials")
+        return value
 
 
 class KeysConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    openai_api_key: SecretStr | None = None
-    google_api_key: SecretStr | None = None
-    ollama_api_key: SecretStr | None = None
+    openai_api_key: NonEmptySecret | None = None
+    google_api_key: NonEmptySecret | None = None
+    ollama_api_key: NonEmptySecret | None = None
 
 
 class VoxConfig(BaseModel):
@@ -48,7 +76,7 @@ class VoxConfig(BaseModel):
 
     host: str = Field(default="127.0.0.1", min_length=1)
     port: int = Field(default=8000, ge=1, le=65535)
-    bearer_token: SecretStr | None = None
+    bearer_token: NonEmptySecret | None = None
 
 
 class SkillsCapabilityConfig(BaseModel):

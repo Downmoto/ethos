@@ -695,6 +695,7 @@ def test_runtime_serialises_each_conversation(tmp_path: Path) -> None:
         if isinstance(part, TextPart)
     ]
     assert prompts == ["first", "second", "third"]
+    assert runtime._locks == {}
 
 
 def test_runtime_rejects_archived_session(tmp_path: Path) -> None:

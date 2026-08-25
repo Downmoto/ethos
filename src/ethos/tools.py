@@ -23,6 +23,11 @@ TOOL_TIMEOUT_SECONDS: Final = 30.0
 MAX_DENIAL_REASON_LENGTH: Final = 500
 
 
+def _validate_policy_reason(reason: str, kind: str) -> None:
+    if not reason or len(reason) > MAX_DENIAL_REASON_LENGTH:
+        raise ValueError(f"{kind} reason must be between 1 and 500 characters")
+
+
 class ToolEffect(StrEnum):
     READ = "read"
     WRITE = "write"
@@ -46,10 +51,7 @@ class Deny:
     reason: str
 
     def __post_init__(self) -> None:
-        if not self.reason or len(self.reason) > MAX_DENIAL_REASON_LENGTH:
-            raise ValueError(
-                "denial reason must be between 1 and 500 characters"
-            )
+        _validate_policy_reason(self.reason, "denial")
 
 
 @dataclass(frozen=True)
@@ -57,10 +59,7 @@ class RequireApproval:
     reason: str
 
     def __post_init__(self) -> None:
-        if not self.reason or len(self.reason) > MAX_DENIAL_REASON_LENGTH:
-            raise ValueError(
-                "approval reason must be between 1 and 500 characters"
-            )
+        _validate_policy_reason(self.reason, "approval")
 
 
 class ToolPolicy(Protocol):
@@ -246,6 +245,8 @@ class ToolExecutor:
                         object,
                         await prepared.tool.execute(prepared.arguments),
                     )
+            if not isinstance(content, str):
+                return _error(prepared.call, "tool execution failed")
         except TimeoutError as error:
             if prepared.tool.effect is ToolEffect.WRITE:
                 raise ToolExecutionIndeterminateError(
@@ -260,8 +261,6 @@ class ToolExecutor:
                     "write tool execution outcome is unknown"
                 ) from error
             return _error(prepared.call, "tool execution failed")
-        if not isinstance(content, str):
-            raise TypeError("tool returned a non-string result")
         return ToolResultPart(
             call_id=prepared.call.call_id,
             name=prepared.call.name,

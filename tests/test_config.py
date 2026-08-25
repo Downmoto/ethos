@@ -132,12 +132,67 @@ def test_settings_require_selected_provider_key() -> None:
 
 def test_settings_allow_ollama_without_api_key() -> None:
     settings = EthosSettings.model_validate(
-        {"provider": {"name": "ollama", "model_name": "llama3.2"}}
+        {
+            "provider": {"name": "ollama", "model_name": "llama3.2"},
+            "gateway": {"bearer_token": None},
+        }
     )
 
     assert settings.keys.ollama_api_key is None
+    assert settings.gateway.bearer_token is None
     assert settings.provider.ollama_base_url == "http://localhost:11434"
     assert settings.runtime.answer_now_after_seconds == 60.0
+
+
+@pytest.mark.parametrize(
+    "provider",
+    (
+        {"name": "ollama", "model_name": ""},
+        {"name": "ollama", "model_name": "   "},
+        {
+            "name": "ollama",
+            "model_name": "llama3.2",
+            "ollama_base_url": "",
+        },
+        {
+            "name": "ollama",
+            "model_name": "llama3.2",
+            "ollama_base_url": "ftp://localhost",
+        },
+        {
+            "name": "ollama",
+            "model_name": "llama3.2",
+            "ollama_base_url": "http://user:password@localhost",
+        },
+    ),
+)
+def test_settings_reject_invalid_provider_values(
+    provider: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        EthosSettings.model_validate({"provider": provider})
+
+
+@pytest.mark.parametrize(
+    "settings",
+    (
+        {
+            "provider": {"name": "openai", "model_name": "gpt-5-mini"},
+            "keys": {"openai_api_key": ""},
+        },
+        {
+            "provider": {"name": "ollama", "model_name": "llama3.2"},
+            "keys": {"ollama_api_key": "   "},
+        },
+        {
+            "provider": {"name": "ollama", "model_name": "llama3.2"},
+            "gateway": {"bearer_token": ""},
+        },
+    ),
+)
+def test_settings_reject_empty_secrets(settings: dict[str, object]) -> None:
+    with pytest.raises(ValidationError, match="value must not be empty"):
+        EthosSettings.model_validate(settings)
 
 
 def test_settings_validate_answer_now_deadline() -> None:

@@ -14,6 +14,7 @@ import yaml  # type: ignore[import-untyped]
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ethos.capabilities import RunContext
+from ethos.capabilities._files import FileTooLargeError, read_bounded_utf8
 from ethos.events import event_factory
 from ethos.events.emitters import EnvelopeEventEmitter
 from ethos.events.models import EventPayload, NonEmptyString
@@ -385,16 +386,13 @@ def _skill_content(
     max_resources: int,
 ) -> str:
     try:
-        with skill.location.open("rb") as file:
-            content = file.read(max_skill_file_bytes + 1)
-    except OSError as error:
-        raise ToolExecutionError("skill is no longer readable") from error
-    if len(content) > max_skill_file_bytes:
-        raise ToolExecutionError("skill file exceeds size limit")
-    try:
-        contents = content.decode("utf-8")
+        contents = read_bounded_utf8(skill.location, max_skill_file_bytes)
+    except FileTooLargeError:
+        raise ToolExecutionError("skill file exceeds size limit") from None
     except UnicodeDecodeError as error:
         raise ToolExecutionError("skill is not UTF-8 text") from error
+    except OSError as error:
+        raise ToolExecutionError("skill is no longer readable") from error
 
     lines = contents.splitlines()
     if not lines or lines[0].strip() != "---":
@@ -457,12 +455,10 @@ def _read_skill_resource_file(
         raise ToolExecutionError("skill file path must be inside the skill")
     if not path.is_file():
         raise ToolExecutionError("skill file does not exist")
-    with path.open("rb") as file:
-        content = file.read(max_resource_file_bytes + 1)
-    if len(content) > max_resource_file_bytes:
-        raise ToolExecutionError("skill file exceeds size limit")
     try:
-        return content.decode("utf-8")
+        return read_bounded_utf8(path, max_resource_file_bytes)
+    except FileTooLargeError:
+        raise ToolExecutionError("skill file exceeds size limit") from None
     except UnicodeDecodeError as error:
         raise ToolExecutionError("skill file is not UTF-8 text") from error
 

@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import Callable
 from time import sleep
+from typing import cast
 
 import pytest
 from pydantic import BaseModel
@@ -271,6 +272,23 @@ def test_tool_exception_does_not_expose_exception_text() -> None:
 
     assert result.content == "tool execution failed"
     assert "Toronto" not in result.content
+    assert result.is_error
+
+
+@pytest.mark.parametrize("effect", tuple(ToolEffect))
+def test_non_string_tool_result_returns_stable_error(
+    effect: ToolEffect,
+) -> None:
+    execute = cast(Callable[[BaseModel], str], lambda _arguments: object())
+    tool = FakeTool("weather", effect=effect, execute=execute)
+    executor = ToolExecutor(
+        ToolRegistry((tool,)),
+        RecordingPolicy(Allow()),
+    )
+
+    result = asyncio.run(run_allowed(executor, call()))
+
+    assert result.content == "tool execution failed"
     assert result.is_error
 
 
