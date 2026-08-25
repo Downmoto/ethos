@@ -2,25 +2,30 @@
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
-from pydantic_ai.messages import (
-    ModelRequest,
-    TextContent,
-    TextPart,
-    UserPromptPart,
-)
 
+from ethos.capabilities import Capability
+from ethos.capabilities.filesystem import ReadOnlyFilesystemCapability
+from ethos.capabilities.skills import SkillsCapability
+from ethos.config import get_settings
 from ethos.events import create_event_emitter, event_factory
 from ethos.events.emitters import EnvelopeEventEmitter
 from ethos.events.models import EventPayload
 from ethos.events.types import EventType
-from ethos.home import DB_PATH
-from ethos.runtime import AgentRuntime
+from ethos.home import DB_PATH, SKILLS_PATH
+from ethos.models import Message, Usage
+from ethos.runtime import (
+    AgentRuntime,
+    ApprovalStreamEvent,
+    RuntimeStreamEvent,
+)
 from ethos.sessions import SESSIONS_DIR, Session, SessionManager
 from ethos.storage import Storage
+from ethos.tools import ToolEffect
 from ethos.workspaces import WORKSPACES_DIR, Workspace, WorkspaceManager
 
 
@@ -68,32 +73,37 @@ class SessionView(BaseModel):
         )
 
 
-class HistoryMessage(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    role: Literal["user", "assistant"]
-    text: str
-
-
-class Usage(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    input_tokens: int = Field(default=0, ge=0)
-    output_tokens: int = Field(default=0, ge=0)
-
-    @property
-    def total_tokens(self) -> int:
-        return self.input_tokens + self.output_tokens
-
-
 class ChatChunk(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    kind: Literal["chunk"] = "chunk"
     text: str = ""
+    text_kind: Literal["answer", "reasoning"] = "answer"
     workspace: str
     session_id: str
     usage: Usage | None = None
     done: bool = False
+
+
+class ApprovalChunk(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["approval"] = "approval"
+    approval_id: str
+    call_id: str
+    tool_name: str
+    arguments: dict[str, object]
+    effect: ToolEffect
+    reason: str
+    created_at: datetime
+    workspace: str
+    session_id: str
+
+
+type ChatEvent = Annotated[
+    ChatChunk | ApprovalChunk,
+    Field(discriminator="kind"),
+]
 
 
 class _WorkspaceEventItem(BaseModel):
@@ -152,7 +162,45 @@ class Ethos:
 
     def _runtime(self) -> AgentRuntime:
         if self._agent is None:
-            self._agent = AgentRuntime(self.sessions)
+            settings = get_settings()
+            skills_config = settings.capabilities.skills
+            filesystem_config = settings.capabilities.read_only_file_system
+            capabilities: list[Capability] = []
+            if filesystem_config.enabled:
+                capabilities.append(
+                    ReadOnlyFilesystemCapability(
+                        max_read_file_bytes=(
+                            filesystem_config.max_read_file_bytes
+                        ),
+                        max_list_file_entries=(
+                            filesystem_config.max_list_file_entries
+                        ),
+                    )
+                )
+            if skills_config.enabled:
+                capabilities.append(
+                    SkillsCapability(
+                        self.home / SKILLS_PATH,
+                        self.home.parent / ".agents" / "skills",
+                        events=self.events,
+                        max_skill_file_bytes=(
+                            skills_config.max_skill_file_bytes
+                        ),
+                        max_skills=skills_config.max_skills,
+                        max_resource_file_bytes=(
+                            skills_config.max_resource_file_bytes
+                        ),
+                        max_resources=skills_config.max_resources,
+                    )
+                )
+            self._agent = AgentRuntime(
+                self.sessions,
+                capabilities=capabilities,
+                events=self.events,
+                answer_now_after_seconds=(
+                    settings.runtime.answer_now_after_seconds
+                ),
+            )
         return self._agent
 
     async def create_workspace(
@@ -205,12 +253,12 @@ class Ethos:
 
     async def session_history(
         self, workspace: str, session_id: str, context: RequestContext
-    ) -> tuple[HistoryMessage, ...]:
+    ) -> tuple[Message, ...]:
         session = self.sessions.get(workspace, session_id)
         await self._emit_sessions(
             context, EventType.SESSION_HISTORY, (session,)
         )
-        return _history(session)
+        return session.messages
 
     async def archive_session(
         self, workspace: str, session_id: str, context: RequestContext
@@ -221,25 +269,93 @@ class Ethos:
         )
         return SessionView.from_session(session)
 
+    async def recover_session(
+        self, workspace: str, session_id: str, context: RequestContext
+    ) -> SessionView:
+        session = await self._runtime().recover(
+            workspace,
+            session_id,
+            event_location=context.source,
+        )
+        await self._emit_sessions(
+            context, EventType.SESSION_RECOVER, (session,)
+        )
+        return SessionView.from_session(session)
+
     async def chat(
         self,
         workspace: str,
         session_id: str,
         prompt: str,
         context: RequestContext,
-    ) -> AsyncIterator[ChatChunk]:
+    ) -> AsyncIterator[ChatEvent]:
         if not prompt:
             raise ValueError("prompt must not be empty")
+        async for event in self._chat_events(
+            self._runtime().run(
+                prompt,
+                workspace,
+                session_id,
+                event_location=context.source,
+            ),
+            workspace,
+            session_id,
+            context,
+        ):
+            yield event
+
+    async def resolve_approval(
+        self,
+        workspace: str,
+        session_id: str,
+        approval_id: str,
+        approved: bool,
+        context: RequestContext,
+    ) -> AsyncIterator[ChatEvent]:
+        async for event in self._chat_events(
+            self._runtime().resolve_approval(
+                workspace,
+                session_id,
+                approval_id,
+                approved=approved,
+                event_location=context.source,
+            ),
+            workspace,
+            session_id,
+            context,
+        ):
+            yield event
+
+    async def _chat_events(
+        self,
+        events: AsyncIterator[RuntimeStreamEvent],
+        workspace: str,
+        session_id: str,
+        context: RequestContext,
+    ) -> AsyncIterator[ChatEvent]:
+        """Translate runtime events and always record the resulting session.
+
+        A paused, abandoned, or failed stream has no final ``done`` event, but
+        may still have durable checkpoints. The fallback emission preserves
+        the service-level contract that ``SESSION_CHAT`` reflects that state.
+        """
+
         emitted = False
-        async for event in self._runtime().run(prompt, workspace, session_id):
-            usage = (
-                Usage(
-                    input_tokens=event.usage.input_tokens,
-                    output_tokens=event.usage.output_tokens,
+        async for event in events:
+            if isinstance(event, ApprovalStreamEvent):
+                approval = event.approval
+                yield ApprovalChunk(
+                    approval_id=approval.id,
+                    call_id=approval.call.call_id,
+                    tool_name=approval.tool_name,
+                    arguments=approval.arguments,
+                    effect=approval.effect,
+                    reason=approval.reason,
+                    created_at=approval.created_at,
+                    workspace=workspace,
+                    session_id=session_id,
                 )
-                if event.usage is not None
-                else None
-            )
+                continue
             if event.done:
                 session = self.sessions.get(workspace, session_id)
                 await self._emit_sessions(
@@ -248,9 +364,10 @@ class Ethos:
                 emitted = True
             yield ChatChunk(
                 text=event.text,
+                text_kind=event.text_kind,
                 workspace=workspace,
                 session_id=session_id,
-                usage=usage,
+                usage=event.usage,
                 done=event.done,
             )
         if not emitted:
@@ -278,7 +395,6 @@ class Ethos:
                     for item in workspaces
                 ),
             ),
-            tuple(item.name for item in workspaces),
         )
 
     async def _emit_sessions(
@@ -304,11 +420,6 @@ class Ethos:
                     for item in sessions
                 ),
             ),
-            tuple(
-                tag
-                for item in sessions
-                for tag in (item.workspace_name, str(item.id))
-            ),
         )
 
 
@@ -317,45 +428,11 @@ async def _emit(
     event_type: EventType,
     context: RequestContext,
     payload: EventPayload,
-    tags: tuple[str, ...],
 ) -> None:
     await emitter.emit(
         event_factory(
             event_type,
             location=context.source,
-            details=event_type.value,
             payload=payload,
-            tags=tags,
         )
     )
-
-
-def _history(session: Session) -> tuple[HistoryMessage, ...]:
-    messages: list[HistoryMessage] = []
-    for message in session.messages:
-        role: Literal["user", "assistant"]
-        parts: list[str]
-        if isinstance(message, ModelRequest):
-            role = "user"
-            parts = []
-            for part in message.parts:
-                if not isinstance(part, UserPromptPart):
-                    continue
-                if isinstance(part.content, str):
-                    parts.append(part.content)
-                else:
-                    parts.extend(
-                        item if isinstance(item, str) else item.content
-                        for item in part.content
-                        if isinstance(item, (str, TextContent))
-                    )
-        else:
-            role = "assistant"
-            parts = [
-                part.content
-                for part in message.parts
-                if isinstance(part, TextPart)
-            ]
-        if parts:
-            messages.append(HistoryMessage(role=role, text="\n".join(parts)))
-    return tuple(messages)

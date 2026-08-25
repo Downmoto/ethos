@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -25,12 +24,11 @@ class Storage:
         self._db.execute(
             """
             CREATE TABLE IF NOT EXISTS event_envelopes (
-                id TEXT PRIMARY KEY,
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                id TEXT NOT NULL UNIQUE,
                 created_at TEXT NOT NULL,
                 event_type TEXT NOT NULL,
                 source_name TEXT NOT NULL,
-                source_detail TEXT,
-                tags TEXT NOT NULL,
                 payload TEXT NOT NULL
             )
             """
@@ -42,18 +40,15 @@ class Storage:
         self._db.execute(
             """
             INSERT INTO event_envelopes (
-                id, created_at, event_type, source_name,
-                source_detail, tags, payload
+                id, created_at, event_type, source_name, payload
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?)
             """,
             (
                 str(event.id),
                 event.created_at.isoformat(),
                 event.type.value,
                 event.source.name,
-                event.source.detail,
-                json.dumps(event.tags),
                 event.payload.model_dump_json(),
             ),
         )

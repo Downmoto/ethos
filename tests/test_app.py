@@ -1,16 +1,35 @@
+import asyncio
 import logging
 import subprocess
 import sys
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
+import click
 import pytest
 import yaml  # type: ignore[import-untyped]
 from click.testing import CliRunner
 
 from ethos import app
 from ethos.home import initialise_home
-from ethos.service import ChatChunk
+from ethos.models import (
+    Message,
+    ReasoningPart,
+    Role,
+    ToolCallPart,
+    ToolResultPart,
+    Usage,
+)
+from ethos.service import (
+    ApprovalChunk,
+    ChatChunk,
+    Ethos,
+    RequestContext,
+    SessionView,
+)
+from ethos.tools import ToolEffect
 
 
 def test_otel_detach_context_error_is_suppressed(
@@ -37,6 +56,38 @@ def test_init_command_initialises_default_home(
     assert (tmp_path / ".ethos/data/ethos.db").exists()
 
 
+def test_history_format_includes_tool_calls_and_results() -> None:
+    call = Message(
+        role=Role.ASSISTANT,
+        parts=(
+            ReasoningPart(text="checking"),
+            ToolCallPart(
+                call_id="call-1",
+                name="list_files",
+                arguments_json='{"path":"."}',
+            ),
+        ),
+    )
+    result = Message(
+        role=Role.TOOL,
+        parts=(
+            ToolResultPart(
+                call_id="call-1",
+                name="list_files",
+                content="[]",
+            ),
+        ),
+    )
+
+    assert app._format_history_message(call) == (
+        "assistant: reasoning: checking\n"
+        'tool call list_files (call-1): {"path":"."}'
+    )
+    assert app._format_history_message(result) == (
+        "tool: tool result list_files (call-1): []"
+    )
+
+
 def test_init_reports_existing_home(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -60,12 +111,13 @@ def test_onboarding_configures_provider(
     result = CliRunner().invoke(
         app.main,
         ["onboard"],
-        input="openai\ngpt-5-mini\ntest-key\n",
+        input="openai\ngpt-5-mini\nnone\ntest-key\n",
     )
 
     config = yaml.safe_load((home / "config.yaml").read_text())
     assert result.exit_code == 0
     assert config["provider"]["name"] == "openai"
+    assert config["provider"]["reasoning_effort"] == "none"
 
 
 def test_start_runs_vox_in_foreground(
@@ -158,6 +210,31 @@ def test_cli_uses_shared_service_for_resources(
     assert listed.output == "default\nhealth\n"
 
 
+def test_session_recover_command_reports_repaired_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app, "HOME_PATH", Path("."))
+    monkeypatch.setattr(
+        app,
+        "_run",
+        lambda _operation: SessionView(
+            id="session-id",
+            workspace="default",
+            created_at="2026-08-24T00:00:00+00:00",
+            archived_at=None,
+            archived=False,
+            message_count=3,
+        ),
+    )
+
+    result = CliRunner().invoke(
+        app.main, ["session", "recover", "default", "session-id"]
+    )
+
+    assert result.exit_code == 0
+    assert result.output == "session recovered: session-id\n"
+
+
 def test_ask_streams_response(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -169,6 +246,12 @@ def test_ask_streams_response(
             text="hello",
             workspace="default",
             session_id="session",
+            usage=Usage(
+                input_tokens=2,
+                output_tokens=1,
+                reasoning_tokens=1,
+                reasoning_tokens_estimated=True,
+            ),
             done=True,
         )
 
@@ -177,4 +260,135 @@ def test_ask_streams_response(
     result = CliRunner().invoke(app.main, ["ask", "hi"])
 
     assert result.exit_code == 0
-    assert "hello" in result.output
+    assert result.output == (
+        f"hello\n{app.ETHOS_EXIT_LOGO}\n"
+        "Usage: 2 input tokens, 1 output tokens, "
+        "~1 reasoning tokens, 3 total tokens\n"
+        "Session ID: session\n"
+    )
+
+
+def test_ask_renders_reasoning_separately(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    monkeypatch.setattr(app, "HOME_PATH", home)
+
+    async def chunks(_prompt: str) -> AsyncIterator[ChatChunk]:
+        yield ChatChunk(
+            text="thinking",
+            text_kind="reasoning",
+            workspace="default",
+            session_id="session",
+        )
+        yield ChatChunk(
+            text="answer",
+            workspace="default",
+            session_id="session",
+            done=True,
+        )
+
+    monkeypatch.setattr(app, "_ask_requests", chunks)
+
+    result = CliRunner().invoke(app.main, ["ask", "hi"])
+
+    assert result.exit_code == 0
+    assert result.stdout == "answer\n"
+    assert "Reasoning\nthinking" in result.stderr
+
+
+def approval_chunk() -> ApprovalChunk:
+    return ApprovalChunk(
+        approval_id="approval-1",
+        call_id="call-1",
+        tool_name="write_file",
+        arguments={"path": "README.md", "content": "hello"},
+        effect=ToolEffect.WRITE,
+        reason="write tool requires approval",
+        created_at=datetime(2026, 8, 21, tzinfo=UTC),
+        workspace="default",
+        session_id="session-1",
+    )
+
+
+def test_cli_asks_once_with_exact_tool_and_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    prompts: list[str] = []
+    monkeypatch.setattr(app, "_is_interactive", lambda: True)
+
+    def confirm(prompt: str, **_kwargs: object) -> bool:
+        prompts.append(prompt)
+        return True
+
+    monkeypatch.setattr(click, "confirm", confirm)
+
+    assert app._approval_decision(approval_chunk())
+
+    assert prompts == ["Approve this tool call?"]
+    error = capsys.readouterr().err
+    assert "Tool approval required: write_file" in error
+    assert 'Arguments: {"content": "hello", "path": "README.md"}' in error
+
+
+def test_noninteractive_cli_denies_without_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(app, "_is_interactive", lambda: False)
+    monkeypatch.setattr(
+        click,
+        "confirm",
+        lambda *_args, **_kwargs: pytest.fail("must not prompt"),
+    )
+
+    assert not app._approval_decision(approval_chunk())
+
+    assert "Denied: input is not interactive" in capsys.readouterr().err
+
+
+def test_cli_resumes_stream_with_denial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decisions: list[bool] = []
+
+    class FakeEthos:
+        async def resolve_approval(
+            self,
+            workspace: str,
+            session_id: str,
+            approval_id: str,
+            approved: bool,
+            context: RequestContext,
+        ) -> AsyncIterator[ChatChunk]:
+            del workspace, session_id, approval_id, context
+            decisions.append(approved)
+            yield ChatChunk(
+                text="denied safely",
+                workspace="default",
+                session_id="session-1",
+                done=True,
+            )
+
+    async def initial() -> AsyncIterator[ApprovalChunk]:
+        yield approval_chunk()
+
+    monkeypatch.setattr(app, "_approval_decision", lambda _approval: False)
+
+    async def collect() -> list[object]:
+        return [
+            event
+            async for event in app._resolve_cli_approvals(
+                cast(Ethos, FakeEthos()),
+                initial(),
+                RequestContext("test", "owner", {}),
+            )
+        ]
+
+    events = asyncio.run(collect())
+
+    assert decisions == [False]
+    assert isinstance(events[0], ApprovalChunk)
+    assert isinstance(events[1], ChatChunk)
+    assert events[1].text == "denied safely"

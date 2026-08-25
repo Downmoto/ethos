@@ -7,7 +7,13 @@ from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializeAsAny,
+    field_validator,
+)
 
 from ethos.events.types import EventType
 
@@ -20,7 +26,6 @@ class EventSource(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: NonEmptyString
-    detail: NonEmptyString | None = None
 
 
 class EventPayload(BaseModel):
@@ -42,17 +47,12 @@ class EventEnvelope(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    # Handled and not invoked manually
     id: UUID = Field(default_factory=uuid4)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     type: EventType
     source: EventSource
-    tags: tuple[NonEmptyString, ...] = Field(
-        default=(),
-        description="Optional labels for later hook filtering and debugging.",
-    )
-    payload: EventPayload = Field(default_factory=EventPayload)
+    payload: SerializeAsAny[EventPayload] = Field(default_factory=EventPayload)
 
     @field_validator("created_at")
     @classmethod

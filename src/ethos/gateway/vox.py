@@ -16,13 +16,15 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 
 from ethos.config import VoxConfig
+from ethos.models import Message
 from ethos.service import (
+    ChatEvent,
     Ethos,
-    HistoryMessage,
     RequestContext,
     SessionView,
     WorkspaceView,
 )
+from ethos.sessions import ApprovalStateError
 
 
 class _UvicornServer(uvicorn.Server):
@@ -49,6 +51,30 @@ def _is_loopback(host: str) -> bool:
         return ip_address(host).is_loopback
     except ValueError:
         return host == "localhost"
+
+
+async def _event_stream(
+    events: AsyncIterator[ChatEvent],
+) -> StreamingResponse:
+    """Prefetch once so pre-stream failures retain normal HTTP error mapping."""
+
+    try:
+        first = await anext(events)
+    except StopAsyncIteration:
+        first = None
+
+    async def encoded() -> AsyncIterator[str]:
+        try:
+            if first is not None:
+                yield f"data: {first.model_dump_json()}\n\n"
+            async for event in events:
+                yield f"data: {event.model_dump_json()}\n\n"
+        finally:
+            close = getattr(events, "aclose", None)
+            if close is not None:
+                await close()
+
+    return StreamingResponse(encoded(), media_type="text/event-stream")
 
 
 class VoxServer:
@@ -110,6 +136,12 @@ class VoxServer:
         async def invalid(_request: Request, error: ValueError) -> JSONResponse:
             return JSONResponse(status_code=422, content={"detail": str(error)})
 
+        @app.exception_handler(ApprovalStateError)
+        async def invalid_approval(
+            _request: Request, error: ApprovalStateError
+        ) -> JSONResponse:
+            return JSONResponse(status_code=409, content={"detail": str(error)})
+
         @app.post("/workspaces", status_code=status.HTTP_201_CREATED)
         async def create_workspace(
             body: _WorkspaceBody, request: Request
@@ -154,7 +186,7 @@ class VoxServer:
         @app.get("/workspaces/{workspace}/sessions/{session_id}/history")
         async def session_history(
             workspace: str, session_id: str, request: Request
-        ) -> tuple[HistoryMessage, ...]:
+        ) -> tuple[Message, ...]:
             return await ethos.session_history(
                 workspace, session_id, context(request)
             )
@@ -167,6 +199,14 @@ class VoxServer:
                 workspace, session_id, context(request)
             )
 
+        @app.post("/workspaces/{workspace}/sessions/{session_id}/recover")
+        async def recover_session(
+            workspace: str, session_id: str, request: Request
+        ) -> SessionView:
+            return await ethos.recover_session(
+                workspace, session_id, context(request)
+            )
+
         @app.post("/workspaces/{workspace}/sessions/{session_id}/messages")
         async def chat(
             workspace: str,
@@ -175,14 +215,49 @@ class VoxServer:
             request: Request,
         ) -> StreamingResponse:
             request_context = context(request)
+            return await _event_stream(
+                ethos.chat(workspace, session_id, body.prompt, request_context)
+            )
 
-            async def events() -> AsyncIterator[str]:
-                async for chunk in ethos.chat(
-                    workspace, session_id, body.prompt, request_context
-                ):
-                    yield f"data: {chunk.model_dump_json()}\n\n"
+        @app.post(
+            "/workspaces/{workspace}/sessions/{session_id}/"
+            "approvals/{approval_id}/approve"
+        )
+        async def approve(
+            workspace: str,
+            session_id: str,
+            approval_id: str,
+            request: Request,
+        ) -> StreamingResponse:
+            return await _event_stream(
+                ethos.resolve_approval(
+                    workspace,
+                    session_id,
+                    approval_id,
+                    True,
+                    context(request),
+                )
+            )
 
-            return StreamingResponse(events(), media_type="text/event-stream")
+        @app.post(
+            "/workspaces/{workspace}/sessions/{session_id}/"
+            "approvals/{approval_id}/deny"
+        )
+        async def deny(
+            workspace: str,
+            session_id: str,
+            approval_id: str,
+            request: Request,
+        ) -> StreamingResponse:
+            return await _event_stream(
+                ethos.resolve_approval(
+                    workspace,
+                    session_id,
+                    approval_id,
+                    False,
+                    context(request),
+                )
+            )
 
         return app
 

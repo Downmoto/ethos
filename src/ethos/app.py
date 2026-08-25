@@ -2,17 +2,15 @@
 
 import asyncio
 import getpass
+import json
 import logging
-import math
 import shutil
 import subprocess
 import sys
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import suppress
 from functools import wraps
 from pathlib import Path
-from time import monotonic
 from typing import TypeGuard
 
 import click
@@ -27,9 +25,28 @@ from ethos.gateway import (
     stop_background,
 )
 from ethos.home import initialise_home
+from ethos.models import (
+    Message,
+    ReasoningPart,
+    TextPart,
+    ToolCallPart,
+)
 from ethos.onboarding import run_onboarding
-from ethos.service import ChatChunk, Ethos, RequestContext
+from ethos.service import (
+    ApprovalChunk,
+    ChatEvent,
+    Ethos,
+    RequestContext,
+)
 from ethos.workspaces import DEFAULT_WORKSPACE
+
+ETHOS_EXIT_LOGO: str = """
+       █▄ █▄
+      ▄██▄██
+ ▄█▀█▄ ██ ████▄ ▄███▄ ▄██▀█
+ ██▄█▀ ██ ██ ██ ██ ██ ▀███▄
+▄▀█▄▄▄▄██▄██ ██▄▀███▀█▄▄██▀
+"""
 
 
 class _IgnoreOtelDetachContextError(logging.Filter):
@@ -42,111 +59,50 @@ logging.getLogger("opentelemetry.context").addFilter(
 )
 
 
-class _ThinkingStatus:
-    def __init__(self) -> None:
-        self._started_at = monotonic()
-        self._line_width = 0
-
-    async def show(self) -> None:
-        while True:
-            await asyncio.sleep(0.1)
-            self.render()
-
-    def render(self) -> None:
-        status = f"Thinking · {monotonic() - self._started_at:.1f}s"
-        self._line_width = max(self._line_width, len(status))
-        click.echo(f"\r{status}", nl=False, err=True)
-
-    def clear(self) -> None:
-        click.echo(f"\r{' ' * self._line_width}\r", nl=False, err=True)
-
-
-class _TokenTracker:
-    def __init__(self, output_path: Path) -> None:
-        self._output_path = output_path
-        self._characters = 0
-        self._line_width = 0
-        self._started_at = monotonic()
-
-    def update(self, chunk: ChatChunk) -> None:
-        self._characters += len(chunk.text)
-        usage = (
-            chunk.usage if chunk.usage and chunk.usage.total_tokens else None
-        )
-        action = "Wrote" if chunk.done else "Writing"
-        tokens = (
-            f"~{math.ceil(self._characters / 4):,} output tokens"
-            if usage is None
-            else f"{usage.input_tokens:,} input + {usage.output_tokens:,} "
-            f"output = {usage.total_tokens:,} tokens"
-        )
-        self._render(
-            f"{action} {self._output_path} · {tokens} · "
-            f"{monotonic() - self._started_at:.1f}s",
-            done=chunk.done,
-        )
-
-    def fail(self) -> None:
-        self._render(
-            f"Stopped {self._output_path} · partial output retained",
-            done=True,
-        )
-
-    def _render(self, status: str, *, done: bool) -> None:
-        self._line_width = max(self._line_width, len(status))
-        click.echo(f"\r{status.ljust(self._line_width)}", nl=done, err=True)
-
-
-async def _stream_response(
-    chunks: AsyncIterator[ChatChunk],
-) -> AsyncIterator[ChatChunk]:
-    status = _ThinkingStatus()
-    status.render()
-    status_task: asyncio.Task[None] | None = asyncio.create_task(status.show())
+async def _print_response(
+    chunks: AsyncIterator[ChatEvent], *, print_usage: bool = False
+) -> None:
+    wrote_output = False
+    wrote_reasoning = False
+    usage = None
+    session_id = None
     try:
         async for chunk in chunks:
-            if status_task is not None and (chunk.text or chunk.done):
-                status_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await status_task
-                status.clear()
-                status_task = None
-            yield chunk
-    finally:
-        if status_task is not None:
-            status_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await status_task
-            status.clear()
-
-
-async def _print_response(chunks: AsyncIterator[ChatChunk]) -> None:
-    wrote_output = False
-    try:
-        async for chunk in _stream_response(chunks):
-            if chunk.text:
+            if isinstance(chunk, ApprovalChunk):
+                continue
+            if chunk.usage is not None:
+                usage = chunk.usage
+            if session_id is None:
+                session_id = chunk.session_id
+            if chunk.text and chunk.text_kind == "reasoning":
+                if not wrote_reasoning:
+                    click.echo("Reasoning", err=True)
+                click.secho(chunk.text, nl=False, dim=True, err=True)
+                wrote_reasoning = True
+            elif chunk.text:
+                if wrote_reasoning and not wrote_output:
+                    click.echo(err=True)
                 click.echo(chunk.text, nl=False)
                 wrote_output = True
     finally:
         if wrote_output:
             click.echo()
-
-
-async def _write_response(
-    chunks: AsyncIterator[ChatChunk], output_path: Path
-) -> None:
-    output = output_path.open("x", encoding="utf-8")
-    tracker = _TokenTracker(output_path)
-    try:
-        with output:
-            async for chunk in _stream_response(chunks):
-                if chunk.text:
-                    output.write(chunk.text)
-                    output.flush()
-                tracker.update(chunk)
-    except Exception:
-        tracker.fail()
-        raise
+        elif wrote_reasoning:
+            click.echo(err=True)
+    if print_usage and usage is not None:
+        reasoning_tokens = (
+            f"~{usage.reasoning_tokens}"
+            if usage.reasoning_tokens_estimated
+            else str(usage.reasoning_tokens)
+        )
+        click.secho(ETHOS_EXIT_LOGO, fg="green")
+        click.echo(
+            f"Usage: {usage.input_tokens} input tokens, "
+            f"{usage.output_tokens} output tokens, "
+            f"{reasoning_tokens} reasoning tokens, "
+            f"{usage.total_tokens} total tokens\n"
+            f"Session ID: {session_id}"
+        )
 
 
 def _cli_context() -> RequestContext:
@@ -175,22 +131,68 @@ def _run[Result](
 
 async def _chat_requests(
     workspace: str, session_id: str, prompt: str
-) -> AsyncIterator[ChatChunk]:
+) -> AsyncIterator[ChatEvent]:
     with Ethos(HOME_PATH) as ethos:
-        async for chunk in ethos.chat(
-            workspace, session_id, prompt, _cli_context()
+        context = _cli_context()
+        async for chunk in _resolve_cli_approvals(
+            ethos,
+            ethos.chat(workspace, session_id, prompt, context),
+            context,
         ):
             yield chunk
 
 
-async def _ask_requests(prompt: str) -> AsyncIterator[ChatChunk]:
+async def _ask_requests(prompt: str) -> AsyncIterator[ChatEvent]:
     with Ethos(HOME_PATH) as ethos:
         context = _cli_context()
         created = await ethos.create_session(DEFAULT_WORKSPACE, context)
-        async for chunk in ethos.chat(
-            DEFAULT_WORKSPACE, created.id, prompt, context
+        async for chunk in _resolve_cli_approvals(
+            ethos,
+            ethos.chat(DEFAULT_WORKSPACE, created.id, prompt, context),
+            context,
         ):
             yield chunk
+
+
+async def _resolve_cli_approvals(
+    ethos: Ethos,
+    events: AsyncIterator[ChatEvent],
+    context: RequestContext,
+) -> AsyncIterator[ChatEvent]:
+    """Drain and resume each approval pause until the chat actually finishes."""
+
+    while True:
+        approval: ApprovalChunk | None = None
+        async for event in events:
+            yield event
+            if isinstance(event, ApprovalChunk):
+                approval = event
+        if approval is None:
+            return
+        events = ethos.resolve_approval(
+            approval.workspace,
+            approval.session_id,
+            approval.approval_id,
+            _approval_decision(approval),
+            context,
+        )
+
+
+def _approval_decision(approval: ApprovalChunk) -> bool:
+    click.echo(f"Tool approval required: {approval.tool_name}", err=True)
+    click.echo(
+        f"Arguments: {json.dumps(approval.arguments, sort_keys=True)}",
+        err=True,
+    )
+    click.echo(f"Reason: {approval.reason}", err=True)
+    if not _is_interactive():
+        click.echo("Denied: input is not interactive", err=True)
+        return False
+    return click.confirm("Approve this tool call?", default=False, err=True)
+
+
+def _is_interactive() -> bool:
+    return sys.stdin.isatty()
 
 
 async def _serve(*, tracked: bool) -> None:
@@ -354,6 +356,7 @@ def workspace() -> None:
 @click.argument("name")
 @requires_home
 def workspace_create(name: str) -> None:
+    """Create a workspace."""
     view = _run(lambda ethos, context: ethos.create_workspace(name, context))
     click.echo(f"workspace created: {view.name}")
 
@@ -361,6 +364,7 @@ def workspace_create(name: str) -> None:
 @workspace.command("list")
 @requires_home
 def workspace_list() -> None:
+    """List all workspaces."""
     views = _run(lambda ethos, context: ethos.list_workspaces(context))
     click.echo("\n".join(view.name for view in views))
 
@@ -369,6 +373,7 @@ def workspace_list() -> None:
 @click.argument("name")
 @requires_home
 def workspace_show(name: str) -> None:
+    """Show a workspace and its path."""
     view = _run(lambda ethos, context: ethos.show_workspace(name, context))
     click.echo(f"{view.name}\t{view.path}")
 
@@ -382,6 +387,7 @@ def session() -> None:
 @click.argument("workspace_name", metavar="WORKSPACE")
 @requires_home
 def session_create(workspace_name: str) -> None:
+    """Create a session in a workspace."""
     view = _run(
         lambda ethos, context: ethos.create_session(workspace_name, context)
     )
@@ -392,6 +398,7 @@ def session_create(workspace_name: str) -> None:
 @click.argument("workspace_name", metavar="WORKSPACE")
 @requires_home
 def session_list(workspace_name: str) -> None:
+    """List a workspace's sessions."""
     views = _run(
         lambda ethos, context: ethos.list_sessions(workspace_name, context)
     )
@@ -408,6 +415,7 @@ def session_list(workspace_name: str) -> None:
 @click.argument("session_id", metavar="SESSION")
 @requires_home
 def session_show(workspace_name: str, session_id: str) -> None:
+    """Show a session and its status."""
     view = _run(
         lambda ethos, context: ethos.show_session(
             workspace_name, session_id, context
@@ -422,14 +430,33 @@ def session_show(workspace_name: str, session_id: str) -> None:
 @click.argument("session_id", metavar="SESSION")
 @requires_home
 def session_history(workspace_name: str, session_id: str) -> None:
+    """Print a session's complete message history."""
     messages = _run(
         lambda ethos, context: ethos.session_history(
             workspace_name, session_id, context
         )
     )
-    click.echo(
-        "\n\n".join(f"{message.role}: {message.text}" for message in messages)
-    )
+    click.echo("\n\n".join(_format_history_message(item) for item in messages))
+
+
+def _format_history_message(message: Message) -> str:
+    parts: list[str] = []
+    for part in message.parts:
+        if isinstance(part, TextPart):
+            parts.append(part.text)
+        elif isinstance(part, ReasoningPart):
+            parts.append(f"reasoning: {part.text}")
+        elif isinstance(part, ToolCallPart):
+            parts.append(
+                f"tool call {part.name} ({part.call_id}): {part.arguments_json}"
+            )
+        else:
+            outcome = " error" if part.is_error else ""
+            parts.append(
+                f"tool result{outcome} {part.name} ({part.call_id}): "
+                f"{part.content}"
+            )
+    return f"{message.role.value}: " + "\n".join(parts)
 
 
 @session.command("archive")
@@ -437,6 +464,7 @@ def session_history(workspace_name: str, session_id: str) -> None:
 @click.argument("session_id", metavar="SESSION")
 @requires_home
 def session_archive(workspace_name: str, session_id: str) -> None:
+    """Archive a session."""
     view = _run(
         lambda ethos, context: ethos.archive_session(
             workspace_name, session_id, context
@@ -445,12 +473,27 @@ def session_archive(workspace_name: str, session_id: str) -> None:
     click.echo(f"session archived: {view.id}")
 
 
+@session.command("recover")
+@click.argument("workspace_name", metavar="WORKSPACE")
+@click.argument("session_id", metavar="SESSION")
+@requires_home
+def session_recover(workspace_name: str, session_id: str) -> None:
+    """Close interrupted tool calls without replaying them."""
+    view = _run(
+        lambda ethos, context: ethos.recover_session(
+            workspace_name, session_id, context
+        )
+    )
+    click.echo(f"session recovered: {view.id}")
+
+
 @session.command("chat")
 @click.argument("workspace_name", metavar="WORKSPACE")
 @click.argument("session_id", metavar="SESSION")
 @click.argument("prompt")
 @requires_home
 def session_chat(workspace_name: str, session_id: str, prompt: str) -> None:
+    """Continue a session with one prompt."""
     try:
         asyncio.run(
             _print_response(_chat_requests(workspace_name, session_id, prompt))
@@ -461,24 +504,11 @@ def session_chat(workspace_name: str, session_id: str, prompt: str) -> None:
 
 @main.command()
 @click.argument("prompt")
-@click.option(
-    "-o",
-    "--to",
-    "output_path",
-    type=click.Path(path_type=Path, dir_okay=False),
-)
 @requires_home
-def ask(prompt: str, output_path: Path | None) -> None:
+def ask(prompt: str) -> None:
     """Send one prompt in a fresh default-workspace session."""
     try:
-        if output_path is None:
-            asyncio.run(_print_response(_ask_requests(prompt)))
-        else:
-            asyncio.run(_write_response(_ask_requests(prompt), output_path))
-    except FileExistsError as error:
-        raise click.ClickException(
-            f"output file already exists: {output_path}"
-        ) from error
+        asyncio.run(_print_response(_ask_requests(prompt), print_usage=True))
     except ValidationError as error:
         message = (
             "ethos is not configured. Run [ethos onboard] first."
@@ -487,12 +517,7 @@ def ask(prompt: str, output_path: Path | None) -> None:
         )
         raise click.ClickException(message) from error
     except Exception as error:
-        retained = (
-            f"\nOutput retained at: {output_path}"
-            if output_path is not None and output_path.exists()
-            else ""
-        )
-        raise click.ClickException(f"{error}{retained}") from error
+        raise click.ClickException(str(error)) from error
 
 
 if __name__ == "__main__":

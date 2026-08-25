@@ -1,4 +1,4 @@
-import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import turso
@@ -11,15 +11,17 @@ from ethos.storage import Storage
 def test_storage_persists_each_event(tmp_path: Path) -> None:
     db_path = tmp_path / "events.db"
     storage = Storage(db_path)
+    created_at = datetime(2026, 8, 24, tzinfo=UTC)
     first = EventEnvelope(
         type=EventType.APP_STARTED,
-        source=EventSource(name="test", detail="first"),
-        tags=("storage",),
+        source=EventSource(name="test"),
+        created_at=created_at,
         payload=EventPayload(schema_name="test.payload"),
     )
     second = EventEnvelope(
         type=EventType.APP_INITIALISED,
-        source=EventSource(name="test", detail="second"),
+        source=EventSource(name="test"),
+        created_at=created_at,
     )
 
     storage.write_event(first)
@@ -30,24 +32,24 @@ def test_storage_persists_each_event(tmp_path: Path) -> None:
 
     rows = db.execute(
         """
-        SELECT id, event_type, source_detail, tags, payload
+        SELECT sequence, id, event_type, source_name, payload
         FROM event_envelopes
-        ORDER BY created_at
+        ORDER BY sequence
         """
     ).fetchall()
     assert rows == [
         (
+            1,
             str(first.id),
             EventType.APP_STARTED.value,
-            "first",
-            json.dumps(first.tags),
+            "test",
             first.payload.model_dump_json(),
         ),
         (
+            2,
             str(second.id),
             EventType.APP_INITIALISED.value,
-            "second",
-            json.dumps(second.tags),
+            "test",
             second.payload.model_dump_json(),
         ),
     ]

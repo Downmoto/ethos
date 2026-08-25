@@ -1,0 +1,328 @@
+"""Policy-guarded model tool registration and execution.
+
+Model output is untrusted at this boundary. Every call is resolved, decoded,
+schema-validated, and authorised before user tool code can run. Definitive
+failures become bounded, model-facing results; indeterminate write outcomes
+propagate without exposing exception or argument details.
+"""
+
+import asyncio
+import json
+from collections.abc import Iterable
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import Final, Protocol, Self, cast
+from uuid import NAMESPACE_URL, UUID, uuid5
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    model_validator,
+)
+
+from ethos.models import ToolCallPart, ToolDefinition, ToolResultPart, Usage
+
+TOOL_TIMEOUT_SECONDS: Final = 30.0
+MAX_DENIAL_REASON_LENGTH: Final = 500
+
+
+def _validate_policy_reason(reason: str, kind: str) -> None:
+    if not reason or len(reason) > MAX_DENIAL_REASON_LENGTH:
+        raise ValueError(f"{kind} reason must be between 1 and 500 characters")
+
+
+class ToolEffect(StrEnum):
+    READ = "read"
+    WRITE = "write"
+
+
+class Tool(Protocol):
+    """A registered async operation with validated arguments and an effect."""
+
+    definition: ToolDefinition
+    effect: ToolEffect
+    arguments_type: type[BaseModel]
+
+    async def execute(self, arguments: BaseModel) -> str: ...
+
+
+@dataclass(frozen=True)
+class Allow:
+    pass
+
+
+@dataclass(frozen=True)
+class Deny:
+    reason: str
+
+    def __post_init__(self) -> None:
+        _validate_policy_reason(self.reason, "denial")
+
+
+@dataclass(frozen=True)
+class RequireApproval:
+    reason: str
+
+    def __post_init__(self) -> None:
+        _validate_policy_reason(self.reason, "approval")
+
+
+class ToolPolicy(Protocol):
+    """Authorise one validated call immediately before tool execution."""
+
+    async def decide(
+        self, call: ToolCallPart, tool: Tool
+    ) -> Allow | Deny | RequireApproval: ...
+
+
+class DefaultToolPolicy:
+    """Permit reads and require explicit approval for write side effects."""
+
+    async def decide(
+        self, call: ToolCallPart, tool: Tool
+    ) -> Allow | Deny | RequireApproval:
+        if tool.effect is ToolEffect.READ:
+            return Allow()
+        return RequireApproval(reason="write tool requires approval")
+
+
+class ToolPolicyError(RuntimeError):
+    """A tool policy failed without exposing its internal exception."""
+
+
+class ToolExecutionError(RuntimeError):
+    """A definitive, safe tool error that may be shown to the model."""
+
+
+class ToolExecutionIndeterminateError(RuntimeError):
+    """A write tool stopped without a definitive execution outcome."""
+
+
+class ApprovalState(StrEnum):
+    PENDING = "pending"
+    EXECUTING = "executing"
+    COMPLETED = "completed"
+    DENIED = "denied"
+    INDETERMINATE = "indeterminate"
+
+
+class ToolPreparationOutcome(StrEnum):
+    ALLOW = "allow"
+    DENY = "deny"
+    REQUIRE_APPROVAL = "require_approval"
+    INVALID = "invalid"
+    UNKNOWN = "unknown"
+
+
+class ToolApproval(BaseModel):
+    """Durable, single-use state for a validated write-tool request.
+
+    The stored call and normalised arguments bind approval to the exact payload
+    that was shown to the user; runtime resumption revalidates both. The
+    ``answer_now`` flag preserves fallback mode across an approval pause.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: str = Field(min_length=1)
+    run_id: UUID
+    call: ToolCallPart
+    tool_name: str = Field(min_length=1)
+    arguments: dict[str, object]
+    effect: ToolEffect
+    reason: str = Field(min_length=1, max_length=MAX_DENIAL_REASON_LENGTH)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    state: ApprovalState = ApprovalState.PENDING
+    round_number: int = Field(ge=1)
+    usage: Usage = Field(default_factory=Usage)
+    answer_now: bool = False
+    result: ToolResultPart | None = None
+
+    @model_validator(mode="after")
+    def validate_state(self) -> Self:
+        if self.call.name != self.tool_name:
+            raise ValueError("approval tool name does not match call")
+        finished = self.state in (ApprovalState.COMPLETED, ApprovalState.DENIED)
+        if finished != (self.result is not None):
+            raise ValueError("approval state and result do not match")
+        if self.result is not None and (
+            self.result.call_id != self.call.call_id
+            or self.result.name != self.tool_name
+        ):
+            raise ValueError("approval result does not match call")
+        return self
+
+
+@dataclass(frozen=True)
+class PreparedToolCall:
+    """A resolved, validated call that is allowed or awaiting approval."""
+
+    call: ToolCallPart
+    tool: Tool
+    arguments: BaseModel
+    decision: Allow | RequireApproval
+
+
+@dataclass(frozen=True)
+class RejectedToolCall:
+    """A safe model-facing result for a call that must not execute."""
+
+    result: ToolResultPart
+    outcome: ToolPreparationOutcome
+    effect: ToolEffect | None
+
+
+def approval_request_id(session_id: str, call_id: str) -> str:
+    """Derive the stable, session-bound identifier for one provider call."""
+
+    return str(uuid5(NAMESPACE_URL, f"ethos:{session_id}:{call_id}"))
+
+
+class ToolRegistry:
+    """Store uniquely named tools in deterministic registration order."""
+
+    def __init__(self, tools: Iterable[Tool] = ()) -> None:
+        self._tools: dict[str, Tool] = {}
+        for tool in tools:
+            self.register(tool)
+
+    @property
+    def definitions(self) -> tuple[ToolDefinition, ...]:
+        return tuple(tool.definition for tool in self._tools.values())
+
+    @property
+    def tools(self) -> tuple[Tool, ...]:
+        return tuple(self._tools.values())
+
+    def register(self, tool: Tool) -> None:
+        name = tool.definition.name
+        if name in self._tools:
+            raise ValueError(f"tool is already registered: {name}")
+        self._tools[name] = tool
+
+    def get(self, name: str) -> Tool | None:
+        return self._tools.get(name)
+
+
+class ToolExecutor:
+    """Validate, authorise, and execute calls through one mandatory path.
+
+    Preparation converts unknown calls, invalid arguments, and denials into
+    safe results. Execution converts definitive tool failures into safe results
+    while cancellation, policy failure, and indeterminate write outcomes
+    propagate for the runtime to checkpoint or recover.
+    """
+
+    def __init__(
+        self,
+        registry: ToolRegistry,
+        policy: ToolPolicy | None = None,
+    ) -> None:
+        self._registry = registry
+        self._policy = policy if policy is not None else DefaultToolPolicy()
+
+    def for_registry(self, registry: ToolRegistry) -> "ToolExecutor":
+        """Reuse this executor's policy with an isolated per-run registry."""
+
+        return ToolExecutor(registry, self._policy)
+
+    async def prepare(
+        self, call: ToolCallPart
+    ) -> PreparedToolCall | RejectedToolCall:
+        """Resolve, validate, and authorise a call without executing it."""
+
+        tool = self._registry.get(call.name)
+        if tool is None:
+            return RejectedToolCall(
+                _error(call, "unknown tool"),
+                ToolPreparationOutcome.UNKNOWN,
+                None,
+            )
+
+        try:
+            value = json.loads(
+                call.arguments_json,
+                parse_constant=_reject_json_constant,
+            )
+            if not isinstance(value, dict):
+                raise ValueError
+            arguments = tool.arguments_type.model_validate(value)
+        except (json.JSONDecodeError, ValidationError, ValueError):
+            return RejectedToolCall(
+                _error(call, "invalid tool arguments"),
+                ToolPreparationOutcome.INVALID,
+                tool.effect,
+            )
+
+        try:
+            decision = cast(object, await self._policy.decide(call, tool))
+        except Exception as error:
+            raise ToolPolicyError("tool policy failed") from error
+        if isinstance(decision, Deny):
+            return RejectedToolCall(
+                _error(call, decision.reason),
+                ToolPreparationOutcome.DENY,
+                tool.effect,
+            )
+        if not isinstance(decision, (Allow, RequireApproval)):
+            raise ToolPolicyError("tool policy failed")
+        return PreparedToolCall(call, tool, arguments, decision)
+
+    async def run(self, prepared: PreparedToolCall) -> ToolResultPart:
+        """Execute a prepared call while preserving side-effect certainty.
+
+        Read calls have a deadline and can safely become error results. Write
+        calls are not cancelled by an executor deadline because interruption
+        cannot prove whether their side effect occurred; unexpected write
+        failures are therefore reported as indeterminate.
+        """
+
+        try:
+            if prepared.tool.effect is ToolEffect.WRITE:
+                content = cast(
+                    object,
+                    await prepared.tool.execute(prepared.arguments),
+                )
+            else:
+                async with asyncio.timeout(TOOL_TIMEOUT_SECONDS):
+                    content = cast(
+                        object,
+                        await prepared.tool.execute(prepared.arguments),
+                    )
+            if not isinstance(content, str):
+                return _error(prepared.call, "tool execution failed")
+        except TimeoutError as error:
+            if prepared.tool.effect is ToolEffect.WRITE:
+                raise ToolExecutionIndeterminateError(
+                    "write tool execution outcome is unknown"
+                ) from error
+            return _error(prepared.call, "tool execution timed out")
+        except ToolExecutionError as error:
+            return _error(prepared.call, str(error))
+        except Exception as error:
+            if prepared.tool.effect is ToolEffect.WRITE:
+                raise ToolExecutionIndeterminateError(
+                    "write tool execution outcome is unknown"
+                ) from error
+            return _error(prepared.call, "tool execution failed")
+        return ToolResultPart(
+            call_id=prepared.call.call_id,
+            name=prepared.call.name,
+            content=content,
+        )
+
+
+def _error(call: ToolCallPart, content: str) -> ToolResultPart:
+    return ToolResultPart(
+        call_id=call.call_id,
+        name=call.name,
+        content=content,
+        is_error=True,
+    )
+
+
+def _reject_json_constant(_value: str) -> None:
+    raise ValueError

@@ -8,6 +8,7 @@ import click
 import yaml  # type: ignore[import-untyped]
 
 from ethos.config import CONFIG_FILE, EthosSettings
+from ethos.models import ReasoningEffort
 from ethos.provider import ProviderName
 
 type Config = dict[str, Any]
@@ -34,6 +35,16 @@ def configure_model(config: Config) -> None:
     _section(config, "provider")["model_name"] = click.prompt("Model")
 
 
+def configure_reasoning(config: Config) -> None:
+    """Choose how much model reasoning to request."""
+    provider = _section(config, "provider")
+    provider["reasoning_effort"] = click.prompt(
+        "Reasoning effort",
+        type=click.Choice([effort.value for effort in ReasoningEffort]),
+        default=provider.get("reasoning_effort", ReasoningEffort.NONE.value),
+    )
+
+
 def configure_credentials(config: Config) -> None:
     """Collect the connection details required by the selected provider."""
     provider = _section(config, "provider")["name"]
@@ -44,7 +55,7 @@ def configure_credentials(config: Config) -> None:
         provider_config["ollama_base_url"] = click.prompt(
             "Ollama base URL",
             default=provider_config.get(
-                "ollama_base_url", "http://localhost:11434/v1"
+                "ollama_base_url", "http://localhost:11434"
             ),
         )
         api_key = click.prompt(
@@ -66,6 +77,7 @@ def configure_credentials(config: Config) -> None:
 ONBOARDING_STEPS: Final[tuple[OnboardingStep, ...]] = (
     configure_provider,
     configure_model,
+    configure_reasoning,
     configure_credentials,
 )
 

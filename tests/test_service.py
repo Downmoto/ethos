@@ -2,10 +2,31 @@ import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import cast
+from uuid import uuid4
 
+import pytest
+
+from ethos.config import EthosSettings
+from ethos.events.types import EventType
 from ethos.home import initialise_home
-from ethos.runtime import AgentRuntime, PromptStreamEvent
-from ethos.service import Ethos, RequestContext
+from ethos.models import (
+    Message,
+    ReasoningPart,
+    Role,
+    TextPart,
+    ToolCallPart,
+    ToolResultPart,
+    Usage,
+)
+from ethos.runtime import AgentRuntime, ApprovalStreamEvent, PromptStreamEvent
+from ethos.service import (
+    ApprovalChunk,
+    ChatChunk,
+    Ethos,
+    RequestContext,
+)
+from ethos.sessions import Session
+from ethos.tools import ToolApproval, ToolEffect
 
 
 def context() -> RequestContext:
@@ -38,7 +59,131 @@ def test_service_shares_workspace_and_session_behaviour(tmp_path: Path) -> None:
     asyncio.run(exercise())
 
 
-def test_service_translates_runtime_streams(tmp_path: Path) -> None:
+def test_service_recovers_session_through_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+
+    async def exercise() -> None:
+        with Ethos(home) as ethos:
+            session = await ethos.create_session("default", context())
+
+            class FakeRuntime:
+                async def recover(
+                    self,
+                    workspace: str,
+                    session_id: str,
+                    *,
+                    event_location: str,
+                ) -> Session:
+                    assert (workspace, session_id, event_location) == (
+                        "default",
+                        session.id,
+                        "test",
+                    )
+                    return ethos.sessions.get(workspace, session_id)
+
+            emitted: list[EventType] = []
+
+            async def record_event(
+                _context: RequestContext,
+                event_type: EventType,
+                _sessions: tuple[Session, ...],
+            ) -> None:
+                emitted.append(event_type)
+
+            ethos._agent = cast(AgentRuntime, FakeRuntime())
+            monkeypatch.setattr(ethos, "_emit_sessions", record_event)
+
+            recovered = await ethos.recover_session(
+                "default", session.id, context()
+            )
+
+            assert recovered.id == session.id
+            assert emitted == [EventType.SESSION_RECOVER]
+
+    asyncio.run(exercise())
+
+
+def test_service_omits_disabled_capabilities(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    settings = EthosSettings.model_validate(
+        {
+            "provider": {"name": "ollama", "model_name": "qwen3"},
+            "capabilities": {
+                "skills": {"enabled": False},
+                "read_only_file_system": {"enabled": False},
+            },
+        }
+    )
+    monkeypatch.setattr("ethos.service.get_settings", lambda: settings)
+
+    with Ethos(home) as ethos:
+        assert ethos._runtime()._capabilities == ()
+
+
+def test_service_projects_ethos_messages_into_history(tmp_path: Path) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+
+    async def exercise() -> None:
+        with Ethos(home) as ethos:
+            session = await ethos.create_session("default", context())
+            messages = (
+                Message(
+                    role=Role.USER,
+                    parts=(
+                        TextPart(text="first"),
+                        TextPart(text="second"),
+                    ),
+                ),
+                Message(
+                    role=Role.ASSISTANT,
+                    parts=(
+                        ReasoningPart(text="thinking"),
+                        TextPart(text="answer"),
+                    ),
+                ),
+                Message(
+                    role=Role.ASSISTANT,
+                    parts=(
+                        ToolCallPart(
+                            call_id="call-1",
+                            name="weather",
+                            arguments_json='{"location":"Toronto"}',
+                        ),
+                    ),
+                ),
+                Message(
+                    role=Role.TOOL,
+                    parts=(
+                        ToolResultPart(
+                            call_id="call-1",
+                            name="weather",
+                            content="23 degrees",
+                        ),
+                    ),
+                ),
+            )
+            ethos.sessions.replace_messages(
+                "default",
+                session.id,
+                messages,
+            )
+
+            history = await ethos.session_history(
+                "default", session.id, context()
+            )
+
+            assert history == messages
+
+    asyncio.run(exercise())
+
+
+def test_service_emits_chat_event_for_incomplete_stream(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     home = initialise_home(tmp_path / ".ethos")
 
     async def exercise() -> None:
@@ -47,8 +192,14 @@ def test_service_translates_runtime_streams(tmp_path: Path) -> None:
 
             class FakeRuntime:
                 async def run(
-                    self, prompt: str, workspace: str, session_id: str
+                    self,
+                    prompt: str,
+                    workspace: str,
+                    session_id: str,
+                    *,
+                    event_location: str,
                 ) -> AsyncIterator[PromptStreamEvent]:
+                    assert event_location == "test"
                     assert (prompt, workspace, session_id) == (
                         "hello",
                         "default",
@@ -56,7 +207,17 @@ def test_service_translates_runtime_streams(tmp_path: Path) -> None:
                     )
                     yield PromptStreamEvent(text="reply")
 
+            emitted: list[EventType] = []
+
+            async def record_event(
+                _context: RequestContext,
+                event_type: EventType,
+                _sessions: tuple[Session, ...],
+            ) -> None:
+                emitted.append(event_type)
+
             ethos._agent = cast(AgentRuntime, FakeRuntime())
+            monkeypatch.setattr(ethos, "_emit_sessions", record_event)
             chunks = [
                 chunk
                 async for chunk in ethos.chat(
@@ -64,8 +225,152 @@ def test_service_translates_runtime_streams(tmp_path: Path) -> None:
                 )
             ]
 
-            assert [chunk.text for chunk in chunks] == ["reply"]
+            assert [
+                chunk.text for chunk in chunks if isinstance(chunk, ChatChunk)
+            ] == ["reply"]
             assert chunks[0].workspace == "default"
             assert chunks[0].session_id == session.id
+            assert emitted == [EventType.SESSION_CHAT]
+
+    asyncio.run(exercise())
+
+
+def test_service_emits_chat_event_after_persistence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+
+    async def exercise() -> None:
+        with Ethos(home) as ethos:
+            session = await ethos.create_session("default", context())
+            observed_message_counts: list[int] = []
+
+            class FakeRuntime:
+                async def run(
+                    self,
+                    prompt: str,
+                    workspace: str,
+                    session_id: str,
+                    *,
+                    event_location: str,
+                ) -> AsyncIterator[PromptStreamEvent]:
+                    assert event_location == "test"
+                    ethos.sessions.replace_messages(
+                        workspace,
+                        session_id,
+                        (
+                            Message(
+                                role=Role.USER,
+                                parts=(TextPart(text=prompt),),
+                            ),
+                        ),
+                    )
+                    yield PromptStreamEvent(done=True)
+
+            async def record_event(
+                _context: RequestContext,
+                event_type: EventType,
+                sessions: tuple[Session, ...],
+            ) -> None:
+                assert event_type is EventType.SESSION_CHAT
+                observed_message_counts.append(len(sessions[0].messages))
+
+            ethos._agent = cast(AgentRuntime, FakeRuntime())
+            monkeypatch.setattr(ethos, "_emit_sessions", record_event)
+
+            chunks = [
+                chunk
+                async for chunk in ethos.chat(
+                    "default", session.id, "hello", context()
+                )
+            ]
+
+            assert isinstance(chunks[-1], ChatChunk)
+            assert chunks[-1].done
+            assert observed_message_counts == [1]
+
+    asyncio.run(exercise())
+
+
+def test_service_projects_and_resolves_approval_events(tmp_path: Path) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+
+    async def exercise() -> None:
+        with Ethos(home) as ethos:
+            session = await ethos.create_session("default", context())
+            approval = ToolApproval(
+                id="approval-1",
+                run_id=uuid4(),
+                call=ToolCallPart(
+                    call_id="call-1",
+                    name="write_file",
+                    arguments_json='{"path":"README.md"}',
+                ),
+                tool_name="write_file",
+                arguments={"path": "README.md"},
+                effect=ToolEffect.WRITE,
+                reason="write tool requires approval",
+                round_number=1,
+                usage=Usage(input_tokens=2, output_tokens=1),
+            )
+
+            class FakeRuntime:
+                async def run(
+                    self,
+                    prompt: str,
+                    workspace: str,
+                    session_id: str,
+                    *,
+                    event_location: str,
+                ) -> AsyncIterator[ApprovalStreamEvent]:
+                    assert event_location == "test"
+                    del prompt, workspace, session_id
+                    yield ApprovalStreamEvent(approval)
+
+                async def resolve_approval(
+                    self,
+                    workspace: str,
+                    session_id: str,
+                    approval_id: str,
+                    *,
+                    approved: bool,
+                    event_location: str,
+                ) -> AsyncIterator[PromptStreamEvent]:
+                    assert event_location == "test"
+                    assert (workspace, session_id, approval_id, approved) == (
+                        "default",
+                        session.id,
+                        "approval-1",
+                        True,
+                    )
+                    yield PromptStreamEvent(usage=Usage(), done=True)
+
+            ethos._agent = cast(AgentRuntime, FakeRuntime())
+
+            requested = [
+                event
+                async for event in ethos.chat(
+                    "default", session.id, "hello", context()
+                )
+            ]
+            resumed = [
+                event
+                async for event in ethos.resolve_approval(
+                    "default",
+                    session.id,
+                    "approval-1",
+                    True,
+                    context(),
+                )
+            ]
+
+            assert len(requested) == 1
+            event = requested[0]
+            assert isinstance(event, ApprovalChunk)
+            assert event.approval_id == "approval-1"
+            assert event.tool_name == "write_file"
+            assert event.arguments == {"path": "README.md"}
+            assert isinstance(resumed[-1], ChatChunk)
+            assert resumed[-1].done
 
     asyncio.run(exercise())

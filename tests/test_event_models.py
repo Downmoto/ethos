@@ -12,16 +12,12 @@ def test_event_factory_returns_correct_event_envelope() -> None:
     envelope = event_factory(
         event_type=EventType.APP_STARTED,
         location=__name__,
-        details="test_event_factory",
         payload=EventPayload(),
-        tags=("test",),
     )
 
     assert envelope.type == EventType.APP_STARTED
     assert envelope.source.name == __name__
-    assert envelope.source.detail == "test_event_factory"
     assert envelope.payload == EventPayload()
-    assert envelope.tags[0] == "test"
 
 
 def test_event_envelope_rejects_naive_created_at() -> None:

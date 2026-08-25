@@ -10,12 +10,12 @@ requires-python = ">=3.12, <3.14"
 dependencies = [
     "click>=8.4.1",
     "pydantic>=2.13.4",
-    "pydantic-ai-slim[google,openai]>=2.0.0",
     "pydantic-settings>=2.14.1",
     "pyyaml>=6.0.3",
     "pyturso>=0.6.1",
     "fastapi>=0.139.2",
     "uvicorn>=0.51.0",
+    "litellm>=1.97.0",
 ]
 
 [project.scripts]
@@ -38,6 +38,9 @@ no_implicit_reexport = true
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests"]
+markers = [
+    "integration: makes an opt-in request to an external service",
+]
 
 [build-system]
 requires = ["uv_build>=0.11.21,<0.12.0"]

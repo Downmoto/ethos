@@ -4,6 +4,7 @@ import pytest
 from pydantic import SecretStr, ValidationError
 
 from ethos.config import EthosSettings
+from ethos.models import ReasoningEffort
 from ethos.provider import ProviderName
 
 
@@ -16,6 +17,63 @@ def test_settings_accept_nested_api_keys() -> None:
     )
 
     assert settings.keys.openai_api_key == SecretStr("secret-key")
+    assert settings.provider.reasoning_effort is ReasoningEffort.NONE
+
+
+def test_settings_accept_reasoning_effort() -> None:
+    settings = EthosSettings.model_validate(
+        {
+            "provider": {
+                "name": "ollama",
+                "model_name": "qwen3",
+                "reasoning_effort": "high",
+            }
+        }
+    )
+
+    assert settings.provider.reasoning_effort is ReasoningEffort.HIGH
+
+
+def test_settings_configure_capabilities() -> None:
+    settings = EthosSettings.model_validate(
+        {
+            "provider": {"name": "ollama", "model_name": "qwen3"},
+            "capabilities": {
+                "skills": {
+                    "enabled": False,
+                    "max_skill_file_bytes": 8192,
+                    "max_skills": 24,
+                    "max_resource_file_bytes": 4096,
+                    "max_resources": 12,
+                },
+                "read_only_file_system": {
+                    "enabled": False,
+                    "max_read_file_bytes": 2048,
+                    "max_list_file_entries": 20,
+                },
+            },
+        }
+    )
+
+    assert not settings.capabilities.skills.enabled
+    assert settings.capabilities.skills.max_skill_file_bytes == 8192
+    assert settings.capabilities.skills.max_skills == 24
+    assert settings.capabilities.skills.max_resource_file_bytes == 4096
+    assert settings.capabilities.skills.max_resources == 12
+    filesystem = settings.capabilities.read_only_file_system
+    assert not filesystem.enabled
+    assert filesystem.max_read_file_bytes == 2048
+    assert filesystem.max_list_file_entries == 20
+
+    with pytest.raises(ValidationError):
+        EthosSettings.model_validate(
+            {
+                "provider": {"name": "ollama", "model_name": "qwen3"},
+                "capabilities": {
+                    "read_only_file_system": {"max_read_file_bytes": 0}
+                },
+            }
+        )
 
 
 def test_settings_load_provider_from_environment(
@@ -74,10 +132,80 @@ def test_settings_require_selected_provider_key() -> None:
 
 def test_settings_allow_ollama_without_api_key() -> None:
     settings = EthosSettings.model_validate(
-        {"provider": {"name": "ollama", "model_name": "llama3.2"}}
+        {
+            "provider": {"name": "ollama", "model_name": "llama3.2"},
+            "gateway": {"bearer_token": None},
+        }
     )
 
     assert settings.keys.ollama_api_key is None
+    assert settings.gateway.bearer_token is None
+    assert settings.provider.ollama_base_url == "http://localhost:11434"
+    assert settings.runtime.answer_now_after_seconds == 60.0
+
+
+@pytest.mark.parametrize(
+    "provider",
+    (
+        {"name": "ollama", "model_name": ""},
+        {"name": "ollama", "model_name": "   "},
+        {
+            "name": "ollama",
+            "model_name": "llama3.2",
+            "ollama_base_url": "",
+        },
+        {
+            "name": "ollama",
+            "model_name": "llama3.2",
+            "ollama_base_url": "ftp://localhost",
+        },
+        {
+            "name": "ollama",
+            "model_name": "llama3.2",
+            "ollama_base_url": "http://user:password@localhost",
+        },
+    ),
+)
+def test_settings_reject_invalid_provider_values(
+    provider: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        EthosSettings.model_validate({"provider": provider})
+
+
+@pytest.mark.parametrize(
+    "settings",
+    (
+        {
+            "provider": {"name": "openai", "model_name": "gpt-5-mini"},
+            "keys": {"openai_api_key": ""},
+        },
+        {
+            "provider": {"name": "ollama", "model_name": "llama3.2"},
+            "keys": {"ollama_api_key": "   "},
+        },
+        {
+            "provider": {"name": "ollama", "model_name": "llama3.2"},
+            "gateway": {"bearer_token": ""},
+        },
+    ),
+)
+def test_settings_reject_empty_secrets(settings: dict[str, object]) -> None:
+    with pytest.raises(ValidationError, match="value must not be empty"):
+        EthosSettings.model_validate(settings)
+
+
+def test_settings_validate_answer_now_deadline() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="answer_now_after_seconds",
+    ):
+        EthosSettings.model_validate(
+            {
+                "provider": {"name": "ollama", "model_name": "llama3.2"},
+                "runtime": {"answer_now_after_seconds": 0},
+            }
+        )
 
 
 def test_settings_validate_gateway_bind() -> None:
