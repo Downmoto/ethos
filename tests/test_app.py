@@ -261,7 +261,8 @@ def test_ask_streams_response(
 
     assert result.exit_code == 0
     assert result.output == (
-        "hello\nUsage: 2 input tokens, 1 output tokens, "
+        f"hello\n{app.ETHOS_EXIT_LOGO}\n"
+        "Usage: 2 input tokens, 1 output tokens, "
         "~1 reasoning tokens, 3 total tokens\n"
         "Session ID: session\n"
     )

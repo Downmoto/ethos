@@ -40,6 +40,14 @@ from ethos.service import (
 )
 from ethos.workspaces import DEFAULT_WORKSPACE
 
+ETHOS_EXIT_LOGO: str = """
+       █▄ █▄
+      ▄██▄██
+ ▄█▀█▄ ██ ████▄ ▄███▄ ▄██▀█
+ ██▄█▀ ██ ██ ██ ██ ██ ▀███▄
+▄▀█▄▄▄▄██▄██ ██▄▀███▀█▄▄██▀
+"""
+
 
 class _IgnoreOtelDetachContextError(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
@@ -87,6 +95,7 @@ async def _print_response(
             if usage.reasoning_tokens_estimated
             else str(usage.reasoning_tokens)
         )
+        click.secho(ETHOS_EXIT_LOGO, fg="green")
         click.echo(
             f"Usage: {usage.input_tokens} input tokens, "
             f"{usage.output_tokens} output tokens, "

@@ -53,6 +53,18 @@ payload has `kind: "chunk"` for answer/reasoning text, usage, and completion,
 or `kind: "approval"` with `approval_id`, `call_id`, `tool_name`, validated
 `arguments`, `effect`, `reason`, `created_at`, `workspace`, and `session_id`.
 
+Session history is available through:
+
+```text
+GET /workspaces/{workspace}/sessions/{session}/history
+```
+
+It returns canonical `Message` values. Each message has a role and
+discriminated parts; assistant messages can include text, reasoning, and raw
+tool calls, while tool messages include complete results. The response may
+contain tool arguments or file contents, so authenticated consumers must treat
+it as sensitive session data.
+
 Pending requests are resolved through authenticated endpoints:
 
 ```text
@@ -78,8 +90,14 @@ not own or implement the external consumer also named Vox.
 ### CLI
 
 The Click CLI is a local interface. It opens an Ethos service lifetime and
-calls it directly rather than sending HTTP requests. Formatting, terminal
-progress, and output-file handling remain CLI concerns.
+calls it directly rather than sending HTTP requests. Formatting and terminal
+progress remain CLI concerns. `ethos ask` writes answer text to stdout and
+diagnostic reasoning or usage to stderr, so callers can use ordinary shell
+redirection when they need a file.
+
+`ethos session history` prints the same canonical message content exposed by
+the service and Vox, including reasoning, raw tool arguments, and complete tool
+results.
 
 `ethos session recover <workspace> <session>` is the explicit repair path for
 an interrupted tool checkpoint. It records non-replayable error results so the
