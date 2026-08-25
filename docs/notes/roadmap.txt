@@ -1,0 +1,44 @@
+This document holds the roadmap to beta v0.1.0.
+
+Milestone 1 — Core capabilities:
+    Details: milestone-1-core-capabilities.md
+    Agent runtime:
+        Full filesystem:
+            Create, update, move, and delete files within workspace boundaries.
+        Shell:
+            Run workspace-scoped commands with approvals, timeouts, and streamed output.
+        Web:
+            Search, browse, and retrieve web content for use during a run.
+        MCP (deferred for last in this milestone):
+            Connect to MCP servers and expose their tools and resources to the runtime.
+    Ethos app:
+        Capability management:
+            Configure capability availability and permissions globally and per workspace.
+        Provider management:
+            Configure, validate, and select providers and models without editing files manually.
+
+Milestone 2 — Personalisation:
+    Details: milestone-2-personalisation.md
+    Agent runtime:
+        Memory:
+            Store durable memories and retrieve relevant context for future runs.
+        Personas:
+            Run with named identities that define behaviour, model preferences, capabilities, and memory.
+    Ethos app:
+        Memory management:
+            Inspect, add, edit, and delete stored memories.
+        Persona management:
+            Create, configure, select, and remove personas.
+
+Milestone 3 — Orchestration:
+    Details: milestone-3-orchestration.md
+    Agent runtime:
+        Multi-agent delegation:
+            Delegate bounded tasks to child agents and combine their results into the parent run.
+    Ethos app:
+        Workflows:
+            Define and run reusable sequences of agent tasks and capabilities.
+        Hooks:
+            Trigger configured actions from Ethos lifecycle events.
+        Scheduling:
+            Run workflows once or on a recurring schedule and retain their execution history.
