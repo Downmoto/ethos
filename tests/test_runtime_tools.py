@@ -272,6 +272,50 @@ def test_runtime_completes_several_tool_rounds(tmp_path: Path) -> None:
     assert [len(request.messages) for request in model.requests] == [4, 6, 8]
 
 
+def test_runtime_rejects_reused_call_id_before_checkpoint(
+    tmp_path: Path,
+) -> None:
+    model = FakeModel(
+        (
+            call_response(tool_call("call-1")),
+            call_response(
+                tool_call("call-1", arguments_json='{"value":"two"}')
+            ),
+        ),
+        stream_chunks=((), ()),
+        features=ModelFeatures(tools=True),
+    )
+    sessions, session, runtime, tool = setup_runtime(tmp_path, model)
+
+    with pytest.raises(
+        ModelProtocolError,
+        match="tool call ID was reused",
+    ):
+        asyncio.run(collect(runtime, session))
+
+    assert tool.values == ["one"]
+    stored = sessions.get("my-project", str(session.id))
+    assert [message.role for message in stored.messages] == [
+        Role.USER,
+        Role.ASSISTANT,
+        Role.TOOL,
+    ]
+
+    follow_up_model = FakeModel(
+        (text_response("healthy"),),
+        stream_chunks=(("healthy",),),
+        features=ModelFeatures(tools=True),
+    )
+    follow_up = AgentRuntime(
+        sessions,
+        lambda: follow_up_model,
+        ToolRegistry((tool,)),
+        events=EnvelopeEventEmitter(),
+    )
+
+    assert asyncio.run(collect(follow_up, session))[-1].done
+
+
 def test_write_tool_waits_for_durable_approval(tmp_path: Path) -> None:
     model = FakeModel(
         (call_response(tool_call()), text_response()),

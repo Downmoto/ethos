@@ -221,14 +221,22 @@ operator explicitly repairs it with the CLI command
 `ethos session recover <workspace> <session>` or Vox endpoint
 `POST /workspaces/{workspace}/sessions/{session}/recover`.
 
+Provider tool-call IDs must be unique for the life of a session. Ethos rejects
+a reused ID as a model protocol error before checkpointing the new assistant
+response, executing its tool, or creating an approval.
+
 Write calls persist the original call, tool name, validated arguments, effect,
 reason, creation time, round, and usage. Approval atomically changes `pending`
 to `executing` before the tool runs. Completion atomically stores `completed`
 and its result; denial stores `denied` and an error result. If the process dies
 while `executing`, the OS releases its lock and the next runtime load persists
-`indeterminate`. That state can never execute automatically. Pending requests
-survive restart, and every approval is single-use and bound to its exact call
-payload.
+`indeterminate`. Executor deadlines apply only to read tools: write tools wait
+for a definitive result, while cancellation or an unexpected exception leaves
+their outcome unknown for the same indeterminate recovery path. A
+`ToolExecutionError` from a write tool therefore promises that execution has
+stopped with a definitive failure. An indeterminate approval can never execute
+automatically. Pending requests survive restart, and every approval is
+single-use and bound to its exact call payload.
 
 Session recovery never runs or replays a tool. It closes each unresolved call
 with a durable error result stating that the execution outcome is unknown,

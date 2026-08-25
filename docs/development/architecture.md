@@ -160,7 +160,11 @@ Runtime events are awaited in execution order. In particular, an approval and
 `tool.execution.started` are durable before a write tool can run, while
 `tool.execution.completed` follows the durable result. A cancelled process can
 therefore leave a started event without a terminal event. Ethos preserves that
-incomplete trace instead of inventing a completion during cleanup.
+incomplete trace instead of inventing a completion during cleanup. Executor
+deadlines apply only to reads; writes wait for a definitive result or remain
+recoverably indeterminate after cancellation or an unexpected failure.
+Provider tool-call IDs are session-unique and reuse is rejected before the
+assistant response is persisted.
 
 ## Deferred AI design
 

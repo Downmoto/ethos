@@ -781,6 +781,8 @@ class AgentRuntime:
                     for part in completed.parts
                     if isinstance(part, ToolCallPart)
                 )
+                if calls:
+                    _unresolved_tool_calls((*messages, assistant_message))
                 if calls and not tools:
                     raise ModelProtocolError(
                         "text runtime received unsupported parts"
@@ -1183,9 +1185,7 @@ def _unresolved_tool_calls(
                 if not isinstance(part, ToolCallPart):
                     continue
                 if part.call_id in call_ids:
-                    raise ModelProtocolError(
-                        "session contains unresolved tool call history"
-                    )
+                    raise ModelProtocolError("tool call ID was reused")
                 call_ids.add(part.call_id)
                 unresolved[part.call_id] = part
         elif message.role is Role.TOOL:

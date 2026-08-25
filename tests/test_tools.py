@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Callable
+from time import sleep
 
 import pytest
 from pydantic import BaseModel
@@ -16,6 +17,7 @@ from ethos.tools import (
     Tool,
     ToolEffect,
     ToolExecutionError,
+    ToolExecutionIndeterminateError,
     ToolExecutor,
     ToolPolicyError,
     ToolPreparationOutcome,
@@ -307,6 +309,57 @@ def test_tool_timeout_returns_stable_error(
         assert result.is_error
 
     asyncio.run(run())
+
+
+def test_thread_backed_write_waits_past_the_read_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tools_module, "TOOL_TIMEOUT_SECONDS", 0.0)
+    writes: list[str] = []
+
+    class ThreadBackedWrite(FakeTool):
+        async def execute(self, arguments: BaseModel) -> str:
+            assert isinstance(arguments, WeatherArguments)
+            self.arguments.append(arguments)
+
+            def write() -> str:
+                sleep(0.01)
+                writes.append(arguments.location)
+                return "written"
+
+            return await asyncio.to_thread(write)
+
+    tool = ThreadBackedWrite("save", effect=ToolEffect.WRITE)
+    executor = ToolExecutor(
+        ToolRegistry((tool,)),
+        RecordingPolicy(Allow()),
+    )
+
+    result = asyncio.run(run_allowed(executor, call(name="save")))
+
+    assert result.content == "written"
+    assert not result.is_error
+    assert writes == ["Toronto"]
+
+
+def test_unexpected_write_failure_has_an_indeterminate_outcome() -> None:
+    def fail(_arguments: BaseModel) -> str:
+        raise RuntimeError("secret write failure")
+
+    tool = FakeTool("save", effect=ToolEffect.WRITE, execute=fail)
+    executor = ToolExecutor(
+        ToolRegistry((tool,)),
+        RecordingPolicy(Allow()),
+    )
+
+    with pytest.raises(
+        ToolExecutionIndeterminateError,
+        match="^write tool execution outcome is unknown$",
+    ) as caught:
+        asyncio.run(run_allowed(executor, call(name="save")))
+
+    assert isinstance(caught.value.__cause__, RuntimeError)
+    assert "secret" not in str(caught.value)
 
 
 def test_cancelled_tool_execution_propagates() -> None:

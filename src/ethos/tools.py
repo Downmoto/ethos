@@ -83,7 +83,11 @@ class ToolPolicyError(RuntimeError):
 
 
 class ToolExecutionError(RuntimeError):
-    """A safe, actionable tool error that may be shown to the model."""
+    """A definitive, safe tool error that may be shown to the model."""
+
+
+class ToolExecutionIndeterminateError(RuntimeError):
+    """A write tool stopped without a definitive execution outcome."""
 
 
 class ApprovalState(StrEnum):
@@ -231,16 +235,30 @@ class ToolExecutor:
 
     async def run(self, prepared: PreparedToolCall) -> ToolResultPart:
         try:
-            async with asyncio.timeout(TOOL_TIMEOUT_SECONDS):
+            if prepared.tool.effect is ToolEffect.WRITE:
                 content = cast(
                     object,
                     await prepared.tool.execute(prepared.arguments),
                 )
-        except TimeoutError:
+            else:
+                async with asyncio.timeout(TOOL_TIMEOUT_SECONDS):
+                    content = cast(
+                        object,
+                        await prepared.tool.execute(prepared.arguments),
+                    )
+        except TimeoutError as error:
+            if prepared.tool.effect is ToolEffect.WRITE:
+                raise ToolExecutionIndeterminateError(
+                    "write tool execution outcome is unknown"
+                ) from error
             return _error(prepared.call, "tool execution timed out")
         except ToolExecutionError as error:
             return _error(prepared.call, str(error))
-        except Exception:
+        except Exception as error:
+            if prepared.tool.effect is ToolEffect.WRITE:
+                raise ToolExecutionIndeterminateError(
+                    "write tool execution outcome is unknown"
+                ) from error
             return _error(prepared.call, "tool execution failed")
         if not isinstance(content, str):
             raise TypeError("tool returned a non-string result")
