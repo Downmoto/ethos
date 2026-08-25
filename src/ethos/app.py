@@ -454,6 +454,20 @@ def session_archive(workspace_name: str, session_id: str) -> None:
     click.echo(f"session archived: {view.id}")
 
 
+@session.command("recover")
+@click.argument("workspace_name", metavar="WORKSPACE")
+@click.argument("session_id", metavar="SESSION")
+@requires_home
+def session_recover(workspace_name: str, session_id: str) -> None:
+    """Close interrupted tool calls without replaying them."""
+    view = _run(
+        lambda ethos, context: ethos.recover_session(
+            workspace_name, session_id, context
+        )
+    )
+    click.echo(f"session recovered: {view.id}")
+
+
 @session.command("chat")
 @click.argument("workspace_name", metavar="WORKSPACE")
 @click.argument("session_id", metavar="SESSION")

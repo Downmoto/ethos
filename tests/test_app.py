@@ -22,7 +22,13 @@ from ethos.models import (
     ToolResultPart,
     Usage,
 )
-from ethos.service import ApprovalChunk, ChatChunk, Ethos, RequestContext
+from ethos.service import (
+    ApprovalChunk,
+    ChatChunk,
+    Ethos,
+    RequestContext,
+    SessionView,
+)
 from ethos.tools import ToolEffect
 
 
@@ -202,6 +208,31 @@ def test_cli_uses_shared_service_for_resources(
     assert created.exit_code == 0
     assert created.output == "workspace created: health\n"
     assert listed.output == "default\nhealth\n"
+
+
+def test_session_recover_command_reports_repaired_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app, "HOME_PATH", Path("."))
+    monkeypatch.setattr(
+        app,
+        "_run",
+        lambda _operation: SessionView(
+            id="session-id",
+            workspace="default",
+            created_at="2026-08-24T00:00:00+00:00",
+            archived_at=None,
+            archived=False,
+            message_count=3,
+        ),
+    )
+
+    result = CliRunner().invoke(
+        app.main, ["session", "recover", "default", "session-id"]
+    )
+
+    assert result.exit_code == 0
+    assert result.output == "session recovered: session-id\n"
 
 
 def test_ask_streams_response(

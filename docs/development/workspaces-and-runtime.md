@@ -212,7 +212,10 @@ A response without tool calls is persisted only after its provider stream
 finishes normally. A response with tool calls is checkpointed before tool
 execution, and every result is a separate checkpoint. If execution fails or
 is cancelled, the latest successful checkpoint remains durable. A later user
-turn rejects an assistant tool call without exactly one stored result.
+turn rejects an assistant tool call without exactly one stored result until an
+operator explicitly repairs it with the CLI command
+`ethos session recover <workspace> <session>` or Vox endpoint
+`POST /workspaces/{workspace}/sessions/{session}/recover`.
 
 Write calls persist the original call, tool name, validated arguments, effect,
 reason, creation time, round, and usage. Approval atomically changes `pending`
@@ -222,6 +225,12 @@ while `executing`, the OS releases its lock and the next runtime load persists
 `indeterminate`. That state can never execute automatically. Pending requests
 survive restart, and every approval is single-use and bound to its exact call
 payload.
+
+Session recovery never runs or replays a tool. It closes each unresolved call
+with a durable error result stating that the execution outcome is unknown,
+marks pending approvals denied, and preserves interrupted executions as
+`indeterminate`. The repaired history can then accept a new user turn. Running
+recovery on a session without unresolved calls fails without changing it.
 
 Text may already have reached a caller before completion or a later
 persistence failure. Streamed output therefore does not by itself prove that
@@ -289,4 +298,5 @@ and documenting them:
 - Invalid or redirected filesystem state fails closed.
 - A final runtime completion event follows successful history persistence.
 - Answer-now fallback is attempted at most once per run.
+- Interrupted tool recovery never executes or replays a tool.
 - Atomic file replacement is not represented as a cross-process transaction.

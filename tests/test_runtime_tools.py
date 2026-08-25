@@ -26,6 +26,7 @@ from ethos.models import (
 from ethos.provider import ModelProtocolError
 from ethos.runtime import (
     ANSWER_NOW_INSTRUCTION,
+    INTERRUPTED_TOOL_RESULT,
     MAX_MODEL_ROUNDS,
     MAX_TOOL_CALLS_PER_RESPONSE,
     AgentLimitError,
@@ -342,6 +343,40 @@ def test_write_tool_waits_for_durable_approval(tmp_path: Path) -> None:
             )
         )
     assert tool.values == ["one"]
+
+
+def test_recovery_denies_pending_approval(tmp_path: Path) -> None:
+    model = FakeModel(
+        (call_response(tool_call()),),
+        features=ModelFeatures(tools=True),
+    )
+    _sessions, session, runtime, tool = setup_runtime(
+        tmp_path,
+        model,
+        RuntimeTool(effect=ToolEffect.WRITE),
+    )
+    pending = asyncio.run(
+        _collect_runtime(runtime.run("hello", "my-project", str(session.id)))
+    )
+    event = pending[0]
+    assert isinstance(event, ApprovalStreamEvent)
+
+    recovered = asyncio.run(runtime.recover("my-project", str(session.id)))
+
+    approval = recovered.approvals[0]
+    assert approval.state is ApprovalState.DENIED
+    assert approval.result == ToolResultPart(
+        call_id="call-1",
+        name="echo",
+        content=INTERRUPTED_TOOL_RESULT,
+        is_error=True,
+    )
+    assert approval.result is not None
+    assert recovered.messages[-1] == Message(
+        role=Role.TOOL,
+        parts=(approval.result,),
+    )
+    assert tool.values == []
 
 
 def test_denied_write_tool_resumes_with_error_result(tmp_path: Path) -> None:
@@ -902,6 +937,30 @@ def test_cancellation_during_tool_leaves_assistant_checkpoint(
     assert tool.values == ["one"]
     assert [message.role for message in stored] == [Role.USER, Role.ASSISTANT]
 
+    resumed_model = FakeModel(
+        (text_response("continued"),),
+        stream_chunks=(("continued",),),
+        features=ModelFeatures(tools=True),
+    )
+    restarted = AgentRuntime(
+        sessions,
+        lambda: resumed_model,
+        ToolRegistry((tool,)),
+        events=EnvelopeEventEmitter(),
+    )
+    recovered = asyncio.run(restarted.recover("my-project", str(session.id)))
+    assert recovered.messages[-1].parts[0] == ToolResultPart(
+        call_id="call-1",
+        name="echo",
+        content=INTERRUPTED_TOOL_RESULT,
+        is_error=True,
+    )
+
+    resumed = asyncio.run(collect(restarted, session))
+
+    assert resumed[-1].done
+    assert tool.values == ["one"]
+
 
 def test_cancellation_after_result_checkpoint_preserves_result(
     tmp_path: Path,
@@ -1365,13 +1424,31 @@ def test_failed_completion_checkpoint_leaves_execution_indeterminate(
         is ApprovalState.EXECUTING
     )
     monkeypatch.setattr(sessions, "transition_approval", transition)
-    sessions.recover_executing_approvals("my-project", str(session.id))
+    restarted = AgentRuntime(
+        sessions,
+        lambda: FakeModel(
+            (text_response("continued"),),
+            stream_chunks=(("continued",),),
+            features=ModelFeatures(tools=True),
+        ),
+        ToolRegistry((tool,)),
+        events=EnvelopeEventEmitter(),
+    )
+    recovered = asyncio.run(restarted.recover("my-project", str(session.id)))
     assert (
         sessions.get_approval(
             "my-project", str(session.id), event.approval.id
         ).state
         is ApprovalState.INDETERMINATE
     )
+    assert recovered.messages[-1].parts[0] == ToolResultPart(
+        call_id="call-1",
+        name="echo",
+        content=INTERRUPTED_TOOL_RESULT,
+        is_error=True,
+    )
+    assert asyncio.run(collect(restarted, session))[-1].done
+    assert tool.values == ["one"]
 
 
 def test_concurrent_approval_cannot_execute_twice(tmp_path: Path) -> None:
@@ -1431,6 +1508,16 @@ def test_concurrent_approval_cannot_execute_twice(tmp_path: Path) -> None:
         executing.cancel()
         with pytest.raises(asyncio.CancelledError):
             await executing
+        assert tool.values == ["one"]
+
+        recovered = await second_runtime.recover("my-project", str(session.id))
+        assert recovered.approvals[0].state is ApprovalState.INDETERMINATE
+        assert recovered.messages[-1].parts[0] == ToolResultPart(
+            call_id="call-1",
+            name="echo",
+            content=INTERRUPTED_TOOL_RESULT,
+            is_error=True,
+        )
         assert tool.values == ["one"]
 
     asyncio.run(exercise())

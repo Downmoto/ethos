@@ -265,6 +265,19 @@ class Ethos:
         )
         return SessionView.from_session(session)
 
+    async def recover_session(
+        self, workspace: str, session_id: str, context: RequestContext
+    ) -> SessionView:
+        session = await self._runtime().recover(
+            workspace,
+            session_id,
+            event_location=context.source,
+        )
+        await self._emit_sessions(
+            context, EventType.SESSION_RECOVER, (session,)
+        )
+        return SessionView.from_session(session)
+
     async def chat(
         self,
         workspace: str,

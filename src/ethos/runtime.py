@@ -62,6 +62,9 @@ ANSWER_NOW_INSTRUCTION: Final = (
     "Continue the task and provide the final answer as soon as possible; "
     "use a tool only if required."
 )
+INTERRUPTED_TOOL_RESULT: Final = (
+    "interrupted tool call was not replayed; execution outcome is unknown"
+)
 
 
 class AgentLimitError(RuntimeError):
@@ -338,6 +341,72 @@ class AgentRuntime:
                     event_location=event_location,
                 ):
                     yield event
+
+    async def recover(
+        self,
+        workspace_name: str,
+        session_id: str,
+        *,
+        event_location: str = "runtime",
+    ) -> Session:
+        """Close interrupted tool calls without replaying their side effects."""
+        key = (workspace_name, session_id)
+        lock = self._locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            with self._sessions.runtime_lock(workspace_name, session_id):
+                session = await self._recover_executing_approvals(
+                    workspace_name,
+                    session_id,
+                    event_location,
+                )
+                if session.archived:
+                    raise ValueError(f"session is archived: {session_id}")
+                calls = _unresolved_tool_calls(session.messages)
+                if not calls:
+                    raise ApprovalStateError(
+                        "session has no unresolved tool calls"
+                    )
+
+                messages = session.messages
+                for call in calls:
+                    result = ToolResultPart(
+                        call_id=call.call_id,
+                        name=call.name,
+                        content=INTERRUPTED_TOOL_RESULT,
+                        is_error=True,
+                    )
+                    messages += (Message(role=Role.TOOL, parts=(result,)),)
+                    approval = next(
+                        (
+                            item
+                            for item in session.approvals
+                            if item.call == call
+                            and item.state is ApprovalState.PENDING
+                        ),
+                        None,
+                    )
+                    if approval is None:
+                        session = self._sessions.replace_messages(
+                            workspace_name,
+                            session_id,
+                            messages,
+                        )
+                        continue
+                    session = self._sessions.transition_approval(
+                        workspace_name,
+                        session_id,
+                        approval.id,
+                        expected=ApprovalState.PENDING,
+                        state=ApprovalState.DENIED,
+                        result=result,
+                        messages=messages,
+                    )
+                    await self._emit(
+                        EventType.TOOL_APPROVAL_DENIED,
+                        _approval_payload(approval, workspace_name, session_id),
+                        event_location,
+                    )
+                return session
 
     async def _resolve_approval_locked(
         self,

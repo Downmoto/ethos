@@ -59,6 +59,52 @@ def test_service_shares_workspace_and_session_behaviour(tmp_path: Path) -> None:
     asyncio.run(exercise())
 
 
+def test_service_recovers_session_through_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+
+    async def exercise() -> None:
+        with Ethos(home) as ethos:
+            session = await ethos.create_session("default", context())
+
+            class FakeRuntime:
+                async def recover(
+                    self,
+                    workspace: str,
+                    session_id: str,
+                    *,
+                    event_location: str,
+                ) -> Session:
+                    assert (workspace, session_id, event_location) == (
+                        "default",
+                        session.id,
+                        "test",
+                    )
+                    return ethos.sessions.get(workspace, session_id)
+
+            emitted: list[EventType] = []
+
+            async def record_event(
+                _context: RequestContext,
+                event_type: EventType,
+                _sessions: tuple[Session, ...],
+            ) -> None:
+                emitted.append(event_type)
+
+            ethos._agent = cast(AgentRuntime, FakeRuntime())
+            monkeypatch.setattr(ethos, "_emit_sessions", record_event)
+
+            recovered = await ethos.recover_session(
+                "default", session.id, context()
+            )
+
+            assert recovered.id == session.id
+            assert emitted == [EventType.SESSION_RECOVER]
+
+    asyncio.run(exercise())
+
+
 def test_service_omits_disabled_capabilities(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

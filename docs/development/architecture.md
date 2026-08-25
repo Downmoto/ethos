@@ -63,6 +63,15 @@ POST /workspaces/{workspace}/sessions/{session}/approvals/{approval}/deny
 Both return the resumed chat as SSE. An approval from another session is 404;
 a stale, executing, completed, denied, or indeterminate request is 409.
 
+Interrupted tool checkpoints are repaired without replay through:
+
+```text
+POST /workspaces/{workspace}/sessions/{session}/recover
+```
+
+The response is the repaired session resource. A session without unresolved
+tool calls returns 409.
+
 A bearer token is mandatory when Vox binds beyond loopback. The protocol does
 not own or implement the external consumer also named Vox.
 
@@ -71,6 +80,10 @@ not own or implement the external consumer also named Vox.
 The Click CLI is a local interface. It opens an Ethos service lifetime and
 calls it directly rather than sending HTTP requests. Formatting, terminal
 progress, and output-file handling remain CLI concerns.
+
+`ethos session recover <workspace> <session>` is the explicit repair path for
+an interrupted tool checkpoint. It records non-replayable error results so the
+session can continue without risking a repeated side effect.
 
 For a write-tool approval it prints the exact tool name and validated JSON
 arguments, then asks once with denial as the default. If stdin is not a

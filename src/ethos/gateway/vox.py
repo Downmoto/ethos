@@ -197,6 +197,14 @@ class VoxServer:
                 workspace, session_id, context(request)
             )
 
+        @app.post("/workspaces/{workspace}/sessions/{session_id}/recover")
+        async def recover_session(
+            workspace: str, session_id: str, request: Request
+        ) -> SessionView:
+            return await ethos.recover_session(
+                workspace, session_id, context(request)
+            )
+
         @app.post("/workspaces/{workspace}/sessions/{session_id}/messages")
         async def chat(
             workspace: str,

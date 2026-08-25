@@ -112,6 +112,12 @@ class FakeEthos:
         self.record("archive_session", workspace, session_id, context)
         return SESSION.model_copy(update={"archived": True})
 
+    async def recover_session(
+        self, workspace: str, session_id: str, context: RequestContext
+    ) -> SessionView:
+        self.record("recover_session", workspace, session_id, context)
+        return SESSION
+
     async def chat(
         self,
         workspace: str,
@@ -230,6 +236,14 @@ class FakeEthos:
             "archive_session",
             200,
             SESSION.model_copy(update={"archived": True}).model_dump(),
+        ),
+        (
+            "POST",
+            "/workspaces/my-project/sessions/session-id/recover",
+            None,
+            "recover_session",
+            200,
+            SESSION.model_dump(),
         ),
     ],
 )

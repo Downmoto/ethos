@@ -20,6 +20,7 @@ class EventType(StrEnum):
     SESSION_SHOW = "session.show"
     SESSION_HISTORY = "session.history"
     SESSION_ARCHIVE = "session.archive"
+    SESSION_RECOVER = "session.recover"
     SESSION_CHAT = "session.chat"
 
     # skill events
