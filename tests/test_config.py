@@ -41,6 +41,8 @@ def test_settings_configure_capabilities() -> None:
             "capabilities": {
                 "skills": {
                     "enabled": False,
+                    "max_skill_file_bytes": 8192,
+                    "max_skills": 24,
                     "max_resource_file_bytes": 4096,
                     "max_resources": 12,
                 },
@@ -54,6 +56,8 @@ def test_settings_configure_capabilities() -> None:
     )
 
     assert not settings.capabilities.skills.enabled
+    assert settings.capabilities.skills.max_skill_file_bytes == 8192
+    assert settings.capabilities.skills.max_skills == 24
     assert settings.capabilities.skills.max_resource_file_bytes == 4096
     assert settings.capabilities.skills.max_resources == 12
     filesystem = settings.capabilities.read_only_file_system

@@ -55,6 +55,8 @@ class SkillsCapabilityConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
+    max_skill_file_bytes: int = Field(default=100 * 1024, ge=1)
+    max_skills: int = Field(default=200, ge=1)
     max_resource_file_bytes: int = Field(default=100 * 1024, ge=1)
     max_resources: int = Field(default=200, ge=1)
 

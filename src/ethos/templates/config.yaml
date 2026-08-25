@@ -10,6 +10,10 @@ capabilities:
   skills:
     # Enable Agent Skills discovery and activation tools.
     enabled: true
+    # Maximum bytes read from one SKILL.md frontmatter or instruction file.
+    max_skill_file_bytes: 102400
+    # Maximum number of skills disclosed for one run.
+    max_skills: 200
     # Maximum bytes read from one referenced UTF-8 skill resource.
     max_resource_file_bytes: 102400
     # Maximum bundled resource paths listed when a skill is activated.

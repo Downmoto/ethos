@@ -182,7 +182,9 @@ Later locations take precedence, so project skills override user skills;
 collisions and cosmetic specification violations emit `skill.diagnostic`
 events. Files with unparseable YAML or missing names or descriptions are
 skipped without blocking other valid skills. Discovery retains only each
-skill's name, description, and absolute `SKILL.md` location.
+skill's name, description, and absolute `SKILL.md` location. It reads only a
+bounded frontmatter prefix and discloses at most the configured number of
+skills, preferring later locations when the limit is reached.
 
 When skills exist, `ContextBuilder` receives a name-and-description catalogue.
 The capability also contributes the read-only `activate_skill` and
@@ -191,8 +193,10 @@ body and lists a configured maximum number of bundled resources without
 reading them. The second reads one referenced UTF-8 file up to the configured
 byte limit while rejecting absolute paths and escapes from the skill
 directory. The limits are `capabilities.skills.max_resources` and
-`capabilities.skills.max_resource_file_bytes` in `config.yaml`. No catalogue
-or skill tools are added when discovery finds nothing or
+`capabilities.skills.max_resource_file_bytes` in `config.yaml`. Activation is
+also limited by `capabilities.skills.max_skill_file_bytes`, and discovery by
+that same frontmatter bound plus `capabilities.skills.max_skills`. No
+catalogue or skill tools are added when discovery finds nothing or
 `capabilities.skills.enabled` is `false`.
 
 ### Concurrency guarantee

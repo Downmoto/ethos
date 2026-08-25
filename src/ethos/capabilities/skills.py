@@ -54,6 +54,8 @@ class SkillDiagnosticCode(StrEnum):
     NAME_DIRECTORY_MISMATCH = "name_directory_mismatch"
     INVALID_NAME = "invalid_name"
     DESCRIPTION_TOO_LONG = "description_too_long"
+    FRONTMATTER_TOO_LARGE = "frontmatter_too_large"
+    SKILL_LIMIT_REACHED = "skill_limit_reached"
     SHADOWED = "shadowed"
 
 
@@ -92,68 +94,107 @@ def _report(
 def discover_skills(
     *skills_roots: Path,
     reporter: DiagnosticReporter | None = None,
+    max_skill_file_bytes: int = 100 * 1024,
+    max_skills: int = 200,
 ) -> tuple[Skill, ...]:
     """Discover direct child skills, with later roots taking precedence."""
+    if max_skill_file_bytes < 1 or max_skills < 1:
+        raise ValueError("skill discovery limits must be positive")
     skills: dict[str, Skill] = {}
-    for skills_root in skills_roots:
+    for skills_root in reversed(skills_roots):
         try:
-            directories = (
-                sorted(skills_root.iterdir(), key=lambda path: path.name)
-                if skills_root.is_dir()
-                else ()
-            )
+            if not skills_root.is_dir():
+                continue
+            directories = skills_root.iterdir()
+            for directory in directories:
+                path = directory / "SKILL.md"
+                if not directory.is_dir() or not path.is_file():
+                    continue
+                if len(skills) == max_skills:
+                    _report(
+                        reporter,
+                        SkillDiagnosticCode.SKILL_LIMIT_REACHED,
+                        path,
+                    )
+                    return tuple(skills[name] for name in sorted(skills))
+                skill = _parse_skill(
+                    path.resolve(),
+                    max_skill_file_bytes,
+                    reporter,
+                )
+                if skill is None:
+                    continue
+                name = skill.metadata.name
+                if name in skills:
+                    _report(
+                        reporter,
+                        SkillDiagnosticCode.SHADOWED,
+                        skill.location,
+                        skill_name=name,
+                        related_path=skills[name].location,
+                    )
+                    continue
+                skills[name] = skill
         except OSError:
             _report(reporter, SkillDiagnosticCode.UNREADABLE_ROOT, skills_root)
-            continue
-        for directory in directories:
-            path = directory / "SKILL.md"
-            if not directory.is_dir() or not path.is_file():
-                continue
-            skill = _parse_skill(path.resolve(), reporter)
-            if skill is None:
-                continue
-            name = skill.metadata.name
-            if name in skills:
-                _report(
-                    reporter,
-                    SkillDiagnosticCode.SHADOWED,
-                    skill.location,
-                    skill_name=name,
-                    related_path=skills[name].location,
-                )
-            skills[name] = skill
     return tuple(skills[name] for name in sorted(skills))
 
 
 def _parse_skill(
     path: Path,
+    max_skill_file_bytes: int,
     reporter: DiagnosticReporter | None = None,
 ) -> Skill | None:
     try:
-        contents = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
+        with path.open("rb") as file:
+            first = file.readline(max_skill_file_bytes + 1)
+            bytes_read = len(first)
+            if bytes_read > max_skill_file_bytes:
+                _report(
+                    reporter,
+                    SkillDiagnosticCode.FRONTMATTER_TOO_LARGE,
+                    path,
+                )
+                return None
+            if first.strip() != b"---":
+                _report(
+                    reporter,
+                    SkillDiagnosticCode.MISSING_FRONTMATTER,
+                    path,
+                )
+                return None
+
+            frontmatter_lines: list[bytes] = []
+            while bytes_read <= max_skill_file_bytes:
+                line = file.readline(max_skill_file_bytes - bytes_read + 1)
+                if not line:
+                    _report(
+                        reporter,
+                        SkillDiagnosticCode.MISSING_CLOSING_FRONTMATTER,
+                        path,
+                    )
+                    return None
+                bytes_read += len(line)
+                if bytes_read > max_skill_file_bytes:
+                    _report(
+                        reporter,
+                        SkillDiagnosticCode.FRONTMATTER_TOO_LARGE,
+                        path,
+                    )
+                    return None
+                if line.strip() == b"---":
+                    break
+                frontmatter_lines.append(line)
+    except OSError:
         _report(reporter, SkillDiagnosticCode.UNREADABLE_SKILL, path)
         return None
 
-    lines = contents.splitlines()
-    if not lines or lines[0].strip() != "---":
-        _report(reporter, SkillDiagnosticCode.MISSING_FRONTMATTER, path)
-        return None
     try:
-        end = next(
-            index
-            for index, line in enumerate(lines[1:], start=1)
-            if line.strip() == "---"
-        )
-    except StopIteration:
-        _report(
-            reporter,
-            SkillDiagnosticCode.MISSING_CLOSING_FRONTMATTER,
-            path,
-        )
+        frontmatter = b"".join(frontmatter_lines).decode("utf-8")
+    except UnicodeDecodeError:
+        _report(reporter, SkillDiagnosticCode.UNREADABLE_SKILL, path)
         return None
 
-    frontmatter = "\n".join(lines[1:end])
     try:
         value = _load_frontmatter(frontmatter)
         metadata = SkillMetadata.model_validate(value)
@@ -176,7 +217,15 @@ def _parse_skill(
             path,
             skill_name=name,
         )
-    if len(name) > 64 or _VALID_SKILL_NAME.fullmatch(name) is None:
+    if len(name) > 64:
+        _report(
+            reporter,
+            SkillDiagnosticCode.INVALID_NAME,
+            path,
+            skill_name=name,
+        )
+        return None
+    if _VALID_SKILL_NAME.fullmatch(name) is None:
         _report(
             reporter,
             SkillDiagnosticCode.INVALID_NAME,
@@ -190,6 +239,7 @@ def _parse_skill(
             path,
             skill_name=name,
         )
+        return None
     return Skill(metadata, path)
 
 
@@ -247,8 +297,14 @@ class _ActivateSkillTool:
     effect: ToolEffect = ToolEffect.READ
     arguments_type: type[BaseModel] = _ActivateSkillArguments
 
-    def __init__(self, skills: dict[str, Skill], max_resources: int) -> None:
+    def __init__(
+        self,
+        skills: dict[str, Skill],
+        max_skill_file_bytes: int,
+        max_resources: int,
+    ) -> None:
         self._skills = skills
+        self._max_skill_file_bytes = max_skill_file_bytes
         self._max_resources = max_resources
         self.definition = ToolDefinition(
             name="activate_skill",
@@ -268,7 +324,10 @@ class _ActivateSkillTool:
         if skill is None:
             raise ToolExecutionError("unknown skill")
         return await asyncio.to_thread(
-            _skill_content, skill, self._max_resources
+            _skill_content,
+            skill,
+            self._max_skill_file_bytes,
+            self._max_resources,
         )
 
 
@@ -321,19 +380,36 @@ def _skill_arguments_schema(
     return schema
 
 
-def _skill_content(skill: Skill, max_resources: int) -> str:
-    parsed = _parse_skill(skill.location)
-    if parsed is None:
-        raise ToolExecutionError("skill is no longer readable")
-    contents = skill.location.read_text(encoding="utf-8")
+def _skill_content(
+    skill: Skill,
+    max_skill_file_bytes: int,
+    max_resources: int,
+) -> str:
+    try:
+        with skill.location.open("rb") as file:
+            content = file.read(max_skill_file_bytes + 1)
+    except OSError as error:
+        raise ToolExecutionError("skill is no longer readable") from error
+    if len(content) > max_skill_file_bytes:
+        raise ToolExecutionError("skill file exceeds size limit")
+    try:
+        contents = content.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ToolExecutionError("skill is not UTF-8 text") from error
+
     lines = contents.splitlines()
-    end = next(
-        index
-        for index, line in enumerate(lines[1:], start=1)
-        if line.strip() == "---"
-    )
+    if not lines or lines[0].strip() != "---":
+        raise ToolExecutionError("skill is no longer readable")
+    try:
+        end = next(
+            index
+            for index, line in enumerate(lines[1:], start=1)
+            if line.strip() == "---"
+        )
+    except StopIteration:
+        raise ToolExecutionError("skill is no longer readable") from None
     body = "\n".join(lines[end + 1 :]).strip()
-    resources = _skill_resources(skill, max_resources)
+    resources = _get_skill_resources(skill, max_resources)
     resource_block = ""
     if resources:
         files = "\n".join(
@@ -351,7 +427,7 @@ def _skill_content(skill: Skill, max_resources: int) -> str:
     )
 
 
-def _skill_resources(skill: Skill, max_resources: int) -> tuple[str, ...]:
+def _get_skill_resources(skill: Skill, max_resources: int) -> tuple[str, ...]:
     root = skill.directory.resolve()
     resources: list[str] = []
     for path in islice(root.rglob("*"), max_resources + 2):
@@ -401,14 +477,26 @@ class SkillsCapability:
         shared_user_skills_root: Path | None = None,
         *,
         events: EnvelopeEventEmitter,
+        max_skill_file_bytes: int = 100 * 1024,
+        max_skills: int = 200,
         max_resource_file_bytes: int = 100 * 1024,
         max_resources: int = 200,
     ) -> None:
-        if max_resource_file_bytes < 1 or max_resources < 1:
-            raise ValueError("skill resource limits must be positive")
+        if (
+            min(
+                max_skill_file_bytes,
+                max_skills,
+                max_resource_file_bytes,
+                max_resources,
+            )
+            < 1
+        ):
+            raise ValueError("skill limits must be positive")
         self._user_skills_root = user_skills_root
         self._shared_user_skills_root = shared_user_skills_root
         self._events = events
+        self._max_skill_file_bytes = max_skill_file_bytes
+        self._max_skills = max_skills
         self._max_resource_file_bytes = max_resource_file_bytes
         self._max_resources = max_resources
         self._resolved: dict[RunContext, tuple[Skill, ...]] = {}
@@ -439,7 +527,11 @@ class SkillsCapability:
             return ()
         skills_by_name = {skill.metadata.name: skill for skill in skills}
         return (
-            _ActivateSkillTool(skills_by_name, self._max_resources),
+            _ActivateSkillTool(
+                skills_by_name,
+                self._max_skill_file_bytes,
+                self._max_resources,
+            ),
             _ReadSkillResourceFileTool(
                 skills_by_name,
                 self._max_resource_file_bytes,
@@ -461,4 +553,9 @@ class SkillsCapability:
             context.workspace_path / ".agents" / "skills",
             context.workspace_path / ".ethos" / "skills",
         )
-        return discover_skills(*roots, reporter=reporter)
+        return discover_skills(
+            *roots,
+            reporter=reporter,
+            max_skill_file_bytes=self._max_skill_file_bytes,
+            max_skills=self._max_skills,
+        )

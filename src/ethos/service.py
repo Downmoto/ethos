@@ -183,6 +183,10 @@ class Ethos:
                         self.home / SKILLS_PATH,
                         self.home.parent / ".agents" / "skills",
                         events=self.events,
+                        max_skill_file_bytes=(
+                            skills_config.max_skill_file_bytes
+                        ),
+                        max_skills=skills_config.max_skills,
                         max_resource_file_bytes=(
                             skills_config.max_resource_file_bytes
                         ),

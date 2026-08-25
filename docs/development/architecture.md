@@ -127,9 +127,10 @@ The skills capability implements Agent Skills through progressive disclosure.
 It adds only discovered names and descriptions to run-scoped context. The
 model can then load one complete `SKILL.md` body with `activate_skill` and read
 referenced bundled files individually with `read_skill_resource_file`. Skill
-metadata is parsed without executing embedded content, and both skill tools
-are bounded read operations routed through the normal tool policy. Discovery
-problems are recorded as typed `skill.diagnostic` lifecycle events.
+metadata is parsed from bounded frontmatter without executing embedded
+content, the catalogue has a configured skill-count limit, and both skill
+tools are bounded read operations routed through the normal tool policy.
+Discovery problems are recorded as typed `skill.diagnostic` lifecycle events.
 
 Every request also receives a run-only system instruction containing the
 active workspace name and path plus the session ID. This lets the model reason

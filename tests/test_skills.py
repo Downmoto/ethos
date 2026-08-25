@@ -102,6 +102,12 @@ def test_discovery_is_lenient_and_skips_unusable_skills(
         description="Use this skill when: reviewing code",
     )
     _write_skill(root, "missing-description", "missing", description=None)
+    _write_skill(
+        root,
+        "long-description",
+        "long-description",
+        description="x" * 1025,
+    )
     malformed = root / "malformed"
     malformed.mkdir(parents=True)
     (malformed / "SKILL.md").write_text("not frontmatter", encoding="utf-8")
@@ -116,6 +122,7 @@ def test_discovery_is_lenient_and_skips_unusable_skills(
     assert {diagnostic.code for diagnostic in diagnostics} == {
         SkillDiagnosticCode.NAME_DIRECTORY_MISMATCH,
         SkillDiagnosticCode.INVALID_NAME,
+        SkillDiagnosticCode.DESCRIPTION_TOO_LONG,
         SkillDiagnosticCode.INVALID_METADATA,
         SkillDiagnosticCode.MISSING_FRONTMATTER,
     }
@@ -141,7 +148,65 @@ def test_later_skill_roots_override_earlier_roots(
     assert skills[0].metadata.description == "Project version"
     assert skills[0].location == project_file.resolve()
     assert diagnostics[0].code is SkillDiagnosticCode.SHADOWED
-    assert diagnostics[0].related_path == str(user / "review" / "SKILL.md")
+    assert diagnostics[0].path == str(user / "review" / "SKILL.md")
+    assert diagnostics[0].related_path == str(project_file)
+
+
+def test_discovery_rejects_frontmatter_over_its_byte_limit(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "skills"
+    skill_file = _write_skill(
+        root,
+        "review",
+        "review",
+        description="A description that exceeds the configured prefix",
+    )
+    diagnostics: list[SkillDiagnosticEventPayload] = []
+
+    skills = discover_skills(
+        root,
+        reporter=diagnostics.append,
+        max_skill_file_bytes=32,
+    )
+
+    assert skills == ()
+    assert diagnostics == [
+        SkillDiagnosticEventPayload(
+            code=SkillDiagnosticCode.FRONTMATTER_TOO_LARGE,
+            path=str(skill_file.resolve()),
+        )
+    ]
+
+
+def test_discovery_bounds_skill_count_and_prefers_project_skills(
+    tmp_path: Path,
+) -> None:
+    user = tmp_path / "user"
+    project = tmp_path / "project"
+    _write_skill(user, "alpha", "alpha", description="User skill")
+    project_file = _write_skill(
+        project,
+        "beta",
+        "beta",
+        description="Project skill",
+    )
+    diagnostics: list[SkillDiagnosticEventPayload] = []
+
+    skills = discover_skills(
+        user,
+        project,
+        reporter=diagnostics.append,
+        max_skills=1,
+    )
+
+    assert [skill.location for skill in skills] == [project_file.resolve()]
+    assert diagnostics == [
+        SkillDiagnosticEventPayload(
+            code=SkillDiagnosticCode.SKILL_LIMIT_REACHED,
+            path=str(user / "alpha" / "SKILL.md"),
+        )
+    ]
 
 
 def test_capability_emits_discovery_diagnostics_as_ethos_events(
@@ -253,6 +318,31 @@ def test_configured_skill_resource_limits_are_enforced(tmp_path: Path) -> None:
     assert content.count("<file>") == 1
     with pytest.raises(ToolExecutionError, match="exceeds size limit"):
         asyncio.run(resource_tool.execute(resource))
+
+
+def test_skill_activation_rejects_an_oversized_instruction_body(
+    tmp_path: Path,
+) -> None:
+    user = tmp_path / "skills"
+    _write_skill(user, "review", "review", instructions="x" * 200)
+    capability = SkillsCapability(
+        user,
+        events=EnvelopeEventEmitter(),
+        max_skill_file_bytes=64,
+    )
+    context = _context(tmp_path)
+
+    assert asyncio.run(capability.instructions(context))
+    activation_tool = asyncio.run(capability.tools(context))[0]
+    activation = activation_tool.arguments_type.model_validate(
+        {"name": "review"}
+    )
+
+    with pytest.raises(
+        ToolExecutionError,
+        match="^skill file exceeds size limit$",
+    ):
+        asyncio.run(activation_tool.execute(activation))
 
 
 def test_project_native_skill_has_highest_precedence(tmp_path: Path) -> None:
