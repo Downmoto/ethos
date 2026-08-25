@@ -1,0 +1,219 @@
+# Milestone 1 — Core capabilities
+
+This document proposes the work required to complete the first milestone on
+the road to beta v0.1.0. It defines product scope and completion outcomes, not
+the final implementation design.
+
+## Goal
+
+Give Ethos the core capabilities needed to work safely inside a workspace,
+retrieve outside information, and let users configure the models and tools
+available to each run.
+
+## Delivery order
+
+1. Capability management
+2. Provider management
+3. Full filesystem
+4. Shell
+5. Web
+6. MCP
+
+MCP remains last so its external tools can reuse stable capability,
+configuration, and tool-policy boundaries.
+
+## Capability management
+
+### Outcome
+
+Users can control which capabilities are available globally and in each
+workspace, and can understand the effective configuration before starting a
+run.
+
+### Scope
+
+- Enable or disable registered capabilities globally.
+- Override global capability settings per workspace.
+- Configure capability-specific limits and permissions.
+- Show the effective capabilities and settings for a workspace.
+- Validate changes before saving them.
+- Apply configuration changes to subsequent runs without reinitialising Ethos.
+
+### Complete when
+
+- Capability configuration has one canonical model and persistence path.
+- The service, CLI, and Vox protocol expose the same management behaviour.
+- Invalid or unknown configuration fails without partially changing state.
+- Runtime capability resolution honours the effective workspace settings.
+- Configuration changes emit lifecycle events without recording secrets.
+
+## Provider management
+
+### Outcome
+
+Users can configure, validate, and select a model provider without manually
+editing Ethos configuration files.
+
+### Scope
+
+- Add and update supported provider configuration.
+- Configure model name, reasoning effort, and provider-specific settings.
+- Store or reference credentials without displaying them after entry.
+- Validate provider configuration and report actionable failures.
+- Select the default provider and model used by new runs.
+- Show the active provider and model with credentials redacted.
+
+### Complete when
+
+- Onboarding and later provider changes use the same configuration path.
+- Configuration can be changed without reinitialising Ethos.
+- A provider can be checked before it becomes the default.
+- Failed validation leaves the previous working configuration intact.
+- Provider changes are reflected in subsequent runs and lifecycle events.
+
+## Full filesystem
+
+### Outcome
+
+The agent can complete ordinary file-management and editing tasks within its
+active workspace while preserving the existing workspace boundary.
+
+### Scope
+
+- Keep the existing bounded file and directory reads.
+- Create and update UTF-8 text files.
+- Create directories.
+- Move and rename files and directories.
+- Delete files and directories.
+- Return clear, bounded results for successful and failed operations.
+
+### Safety boundaries
+
+- All paths remain relative to the active workspace.
+- Resolved paths and symbolic links cannot escape the workspace.
+- Mutating operations pass through the existing write-tool approval flow.
+- File sizes, directory listings, and tool results remain bounded.
+- File replacement avoids leaving partially written content.
+
+### Complete when
+
+- Each supported operation works through the shared capability and tool-policy
+  path.
+- Invalid paths, incompatible path types, and boundary escapes fail safely.
+- Denied, cancelled, and interrupted writes preserve recoverable session state.
+- CLI and Vox consumers receive consistent approvals and results.
+- Tests cover successful operations and the destructive boundary cases.
+
+## Shell
+
+### Outcome
+
+The agent can run non-interactive commands inside the active workspace and
+reliably report their output and exit status.
+
+### Scope
+
+- Run commands with the workspace as the working directory.
+- Capture standard output, standard error, and exit status.
+- Stream output while a command is running.
+- Enforce execution time and output limits.
+- Support cancellation and process cleanup.
+- Provide a controlled set of environment variables without exposing secrets.
+
+### Safety boundaries
+
+- Shell execution requires explicit approval.
+- The approval shows the exact command and working directory.
+- Ethos does not infer that a command is safe from its text.
+- The execution boundary must be defined before implementation; using the
+  workspace as the working directory alone does not restrict host access.
+- Output returned to the model and stored in history is bounded.
+- Persistent terminals, interactive prompts, and unrestricted host access are
+  outside this milestone.
+
+### Complete when
+
+- Commands execute only after approval through the shared tool path.
+- Completion, failure, timeout, cancellation, and indeterminate outcomes are
+  distinguishable.
+- Child processes do not remain running after a definitive timeout or
+  cancellation.
+- Runtime events record bounded execution metadata without command output or
+  secrets.
+- Behaviour is consistent through CLI and Vox sessions.
+
+## Web
+
+### Outcome
+
+The agent can find and retrieve public web information with enough source
+context for the user to verify it.
+
+### Scope
+
+- Search the public web.
+- Retrieve content from a specific URL.
+- Extract readable text and basic source metadata.
+- Preserve source URLs with returned information.
+- Bound response size, redirects, and request duration.
+- Report unsupported or inaccessible content clearly.
+
+### Safety boundaries
+
+- Network access follows explicit capability configuration.
+- Requests cannot target private, loopback, or otherwise restricted networks.
+- Credentials and private session data are not added to requests implicitly.
+- Browser automation, authenticated browsing, and file downloads are outside
+  this milestone.
+
+### Complete when
+
+- Search and retrieval work through the standard capability and tool paths.
+- Results include source identity and are bounded before entering history.
+- Redirects, malformed URLs, timeouts, and restricted targets fail safely.
+- Provider or transport failures produce useful model-facing errors without
+  leaking internal exception details.
+- Network activity emits lifecycle events without storing retrieved content.
+
+## MCP
+
+### Outcome
+
+Users can connect configured MCP servers and make their tools and resources
+available to Ethos runs under the same controls as native capabilities.
+
+### Scope
+
+- Add, update, enable, disable, and remove MCP server definitions.
+- Establish connections using explicitly supported transports.
+- Discover server tools and resources for each run.
+- Adapt discovered tools to Ethos tool definitions and validated arguments.
+- Read bounded MCP resources.
+- Surface connection and discovery diagnostics.
+
+### Safety boundaries
+
+- MCP tools pass through the same validation, policy, approval, and event path
+  as native tools.
+- Tool-name collisions fail before a model request.
+- Server credentials are never included in model context, results, or events.
+- Resource contents and tool results are bounded before entering history.
+- A failing server does not prevent unrelated capabilities from being used
+  unless it is explicitly required by the workspace.
+
+### Complete when
+
+- Configured servers can contribute tools and resources to a run.
+- Connection, discovery, invocation, timeout, and shutdown behaviour is
+  deterministic and tested.
+- Read and write effects receive the correct policy decision, and unclassified
+  tools require approval.
+- Server failures are isolated and reported without exposing sensitive data.
+- MCP configuration is manageable through the same service, CLI, and Vox
+  boundaries as native capabilities.
+
+## Milestone completion
+
+Milestone 1 is complete when all six features meet their completion criteria,
+the overview and developer documentation reflect the shipped behaviour, and
+the full verification suite passes.
