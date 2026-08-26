@@ -9,11 +9,13 @@ import uvicorn
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
+from ethos.capability_config import CapabilityName
 from ethos.config import VoxConfig
 from ethos.gateway.vox import VoxServer, _event_stream
 from ethos.models import Message, Role, ToolCallPart, ToolResultPart
 from ethos.service import (
     ApprovalChunk,
+    CapabilityView,
     ChatChunk,
     ChatEvent,
     Ethos,
@@ -25,6 +27,20 @@ from ethos.sessions import ApprovalNotFoundError, ApprovalStateError
 from ethos.tools import ToolEffect
 
 WORKSPACE = WorkspaceView(name="my-project", path="/workspaces/my-project")
+CAPABILITY = CapabilityView(
+    name=CapabilityName.SKILLS,
+    scope="global",
+    configured={"enabled": True, "max_skills": 200},
+    effective={"enabled": True, "max_skills": 200},
+)
+WORKSPACE_CAPABILITY = CAPABILITY.model_copy(
+    update={
+        "scope": "workspace",
+        "workspace": "my-project",
+        "configured": {"enabled": False},
+        "effective": {"enabled": False, "max_skills": 200},
+    }
+)
 SESSION = SessionView(
     id="session-id",
     workspace="my-project",
@@ -81,6 +97,48 @@ class FakeEthos:
     ) -> WorkspaceView:
         self.record("show_workspace", name, context)
         return WORKSPACE
+
+    async def list_capabilities(
+        self,
+        context: RequestContext,
+        workspace: str | None = None,
+    ) -> tuple[CapabilityView, ...]:
+        self.record("list_capabilities", context, workspace)
+        return (WORKSPACE_CAPABILITY if workspace else CAPABILITY,)
+
+    async def show_capability(
+        self,
+        capability: str,
+        context: RequestContext,
+        workspace: str | None = None,
+    ) -> CapabilityView:
+        self.record("show_capability", capability, context, workspace)
+        return WORKSPACE_CAPABILITY if workspace else CAPABILITY
+
+    async def configure_capability(
+        self,
+        capability: str,
+        changes: dict[str, object],
+        context: RequestContext,
+        workspace: str | None = None,
+    ) -> CapabilityView:
+        self.record(
+            "configure_capability",
+            capability,
+            changes,
+            context,
+            workspace,
+        )
+        return WORKSPACE_CAPABILITY if workspace else CAPABILITY
+
+    async def reset_capability_override(
+        self,
+        workspace: str,
+        capability: str,
+        context: RequestContext,
+    ) -> CapabilityView:
+        self.record("reset_capability_override", workspace, capability, context)
+        return WORKSPACE_CAPABILITY.model_copy(update={"configured": {}})
 
     async def create_session(
         self, workspace: str, context: RequestContext
@@ -198,6 +256,64 @@ class FakeEthos:
             WORKSPACE.model_dump(),
         ),
         (
+            "GET",
+            "/capabilities",
+            None,
+            "list_capabilities",
+            200,
+            [CAPABILITY.model_dump(mode="json")],
+        ),
+        (
+            "GET",
+            "/capabilities/skills",
+            None,
+            "show_capability",
+            200,
+            CAPABILITY.model_dump(mode="json"),
+        ),
+        (
+            "PUT",
+            "/capabilities/skills",
+            {"settings": {"enabled": True}},
+            "configure_capability",
+            200,
+            CAPABILITY.model_dump(mode="json"),
+        ),
+        (
+            "GET",
+            "/workspaces/my-project/capabilities",
+            None,
+            "list_capabilities",
+            200,
+            [WORKSPACE_CAPABILITY.model_dump(mode="json")],
+        ),
+        (
+            "GET",
+            "/workspaces/my-project/capabilities/skills",
+            None,
+            "show_capability",
+            200,
+            WORKSPACE_CAPABILITY.model_dump(mode="json"),
+        ),
+        (
+            "PUT",
+            "/workspaces/my-project/capabilities/skills",
+            {"settings": {"enabled": False}},
+            "configure_capability",
+            200,
+            WORKSPACE_CAPABILITY.model_dump(mode="json"),
+        ),
+        (
+            "DELETE",
+            "/workspaces/my-project/capabilities/skills",
+            None,
+            "reset_capability_override",
+            200,
+            WORKSPACE_CAPABILITY.model_copy(
+                update={"configured": {}}
+            ).model_dump(mode="json"),
+        ),
+        (
             "POST",
             "/workspaces/my-project/sessions",
             None,
@@ -250,7 +366,7 @@ class FakeEthos:
 def test_vox_preserves_resource_endpoints(
     method: str,
     path: str,
-    body: dict[str, str] | None,
+    body: dict[str, object] | None,
     call: str,
     status_code: int,
     data: object,
@@ -263,7 +379,9 @@ def test_vox_preserves_resource_endpoints(
     assert response.status_code == status_code
     assert response.json() == data
     assert ethos.calls[0][0] == call
-    context = cast(RequestContext, ethos.calls[0][1][-1])
+    context = next(
+        item for item in ethos.calls[0][1] if isinstance(item, RequestContext)
+    )
     assert context.source == "vox"
     assert context.owner_id
     assert context.external_context == {"client_host": "testclient"}

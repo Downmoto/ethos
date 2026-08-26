@@ -34,9 +34,9 @@ behaviour.
 
 ### Service
 
-The service composes workspace and session managers, storage, lifecycle event
-emission, and the lazily created agent runtime. Its methods represent the
-currently supported application operations.
+The service composes workspace and session managers, capability configuration,
+storage, lifecycle event emission, and the lazily created agent runtime. Its
+methods represent the currently supported application operations.
 
 Request context records which trusted adapter initiated an operation. It is
 event metadata, not a generic command envelope or an authentication system.
@@ -84,6 +84,22 @@ POST /workspaces/{workspace}/sessions/{session}/recover
 The response is the repaired session resource. A session without unresolved
 tool calls returns 409.
 
+Capability management uses the same service operations through these global
+and workspace routes:
+
+```text
+GET  /capabilities
+GET  /capabilities/{capability}
+PUT  /capabilities/{capability}
+GET  /workspaces/{workspace}/capabilities
+GET  /workspaces/{workspace}/capabilities/{capability}
+PUT  /workspaces/{workspace}/capabilities/{capability}
+DELETE /workspaces/{workspace}/capabilities/{capability}
+```
+
+`PUT` accepts `{"settings": {...}}`. Workspace `DELETE` removes that
+capability's override and restores global inheritance.
+
 A bearer token is mandatory when Vox binds beyond loopback. The protocol does
 not own or implement the external consumer also named Vox.
 
@@ -102,6 +118,11 @@ results.
 `ethos session recover <workspace> <session>` is the explicit repair path for
 an interrupted tool checkpoint. It records non-replayable error results so the
 session can continue without risking a repeated side effect.
+
+`ethos config capability list`, `show`, `set`, and `reset` expose the same
+management behaviour as Vox. `set` accepts a JSON object of changed fields.
+Passing `--workspace` writes a sparse workspace override; `reset` requires a
+workspace and removes that override.
 
 For a write-tool approval it prints the exact tool name and validated JSON
 arguments, then asks once with denial as the default. If stdin is not a
@@ -134,10 +155,11 @@ attaches available tool definitions without mutating or persisting the
 constructed context.
 
 Capabilities contribute only run-scoped instructions and tools. The runtime
-resolves them in registration order for each session turn, rejects duplicate
-tool names before contacting the model, and gives the resulting values to the
-context builder and mandatory tool executor. The runtime depends on the
-capability protocol rather than naming concrete capabilities.
+loads effective capability configuration and resolves registered capabilities
+in order for each session turn, rejects duplicate tool names before contacting
+the model, and gives the resulting values to the context builder and mandatory
+tool executor. The runtime depends on the capability protocol rather than
+naming concrete capabilities.
 
 The first production capability exposes `list_files` and `read_file`.
 `list_files` returns at most 1,000 sorted, workspace-relative entries from one

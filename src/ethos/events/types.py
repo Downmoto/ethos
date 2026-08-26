@@ -14,6 +14,12 @@ class EventType(StrEnum):
     WORKSPACE_LIST = "workspace.list"
     WORKSPACE_SHOW = "workspace.show"
 
+    # capability events
+    CAPABILITY_LIST = "capability.list"
+    CAPABILITY_SHOW = "capability.show"
+    CAPABILITY_CONFIGURE = "capability.configure"
+    CAPABILITY_RESET = "capability.reset"
+
     # session events
     SESSION_CREATE = "session.create"
     SESSION_LIST = "session.list"

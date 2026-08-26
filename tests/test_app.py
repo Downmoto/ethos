@@ -210,6 +210,110 @@ def test_cli_uses_shared_service_for_resources(
     assert listed.output == "default\nhealth\n"
 
 
+def test_cli_manages_global_and_workspace_capabilities(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    monkeypatch.setattr(app, "HOME_PATH", home)
+    runner = CliRunner()
+    runner.invoke(app.main, ["workspace", "create", "health"])
+
+    global_result = runner.invoke(
+        app.main,
+        ["config", "capability", "set", "skills", '{"max_skills": 10}'],
+    )
+    workspace_result = runner.invoke(
+        app.main,
+        [
+            "config",
+            "capability",
+            "set",
+            "skills",
+            '{"enabled": false, "max_skills": 20}',
+            "--workspace",
+            "health",
+        ],
+    )
+    list_result = runner.invoke(app.main, ["config", "capability", "list"])
+    show_result = runner.invoke(
+        app.main,
+        [
+            "config",
+            "capability",
+            "show",
+            "skills",
+            "--workspace",
+            "health",
+        ],
+    )
+    reset_result = runner.invoke(
+        app.main,
+        [
+            "config",
+            "capability",
+            "reset",
+            "skills",
+            "--workspace",
+            "health",
+        ],
+    )
+
+    assert global_result.exit_code == 0
+    assert "skills (global)" in global_result.output
+    assert "max_skills: 10" in global_result.output
+    assert workspace_result.exit_code == 0
+    assert "skills (workspace: health)" in workspace_result.output
+    assert "Configured:\n  enabled: false\n  max_skills: 20" in (
+        workspace_result.output
+    )
+    assert "Effective:\n  enabled: false" in workspace_result.output
+    assert "max_skills: 10" in workspace_result.output
+    assert list_result.exit_code == 0
+    assert "skills (global)" in list_result.output
+    assert "read_only_file_system (global)" in list_result.output
+    assert show_result.exit_code == 0
+    assert show_result.output == workspace_result.output
+    assert reset_result.exit_code == 0
+    assert "Configured:\n  (inherited)" in reset_result.output
+
+
+@pytest.mark.parametrize(
+    ("command", "descriptions"),
+    (
+        (
+            ["config", "capability", "list", "--help"],
+            ("--workspace NAME", "Show effective settings for this workspace"),
+        ),
+        (
+            ["config", "capability", "show", "--help"],
+            ("CAPABILITY is a registered capability name", "--workspace NAME"),
+        ),
+        (
+            ["config", "capability", "set", "--help"],
+            (
+                "CAPABILITY is a registered capability name",
+                "must be a JSON object containing fields to change",
+                "--workspace NAME",
+            ),
+        ),
+        (
+            ["config", "capability", "reset", "--help"],
+            (
+                "CAPABILITY is a registered capability name",
+                "Workspace whose capability override should be removed",
+            ),
+        ),
+    ),
+)
+def test_capability_command_help_describes_arguments_and_options(
+    command: list[str], descriptions: tuple[str, ...]
+) -> None:
+    result = CliRunner().invoke(app.main, command)
+
+    assert result.exit_code == 0
+    assert all(description in result.output for description in descriptions)
+
+
 def test_session_recover_command_reports_repaired_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

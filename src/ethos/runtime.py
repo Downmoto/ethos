@@ -55,6 +55,7 @@ from ethos.tools import (
 )
 
 type ModelFactory = Callable[[], Model]
+type CapabilityResolver = Callable[[RunContext], Iterable[Capability]]
 
 MAX_MODEL_ROUNDS = 8
 MAX_TOOL_CALLS_PER_RESPONSE = 16
@@ -191,6 +192,7 @@ class AgentRuntime:
         tool_registry: ToolRegistry | None = None,
         tool_executor: ToolExecutor | None = None,
         capabilities: Iterable[Capability] = (),
+        capability_resolver: CapabilityResolver | None = None,
         *,
         events: EnvelopeEventEmitter,
         max_model_rounds: int = MAX_MODEL_ROUNDS,
@@ -228,6 +230,7 @@ class AgentRuntime:
             else ToolExecutor(self._tool_registry)
         )
         self._capabilities = tuple(capabilities)
+        self._capability_resolver = capability_resolver
         self._max_model_rounds = max_model_rounds
         self._max_tool_calls_per_response = max_tool_calls_per_response
         self._answer_now_after_seconds = answer_now_after_seconds
@@ -959,7 +962,9 @@ class AgentRuntime:
         """Compose one run in registration order before contacting the model.
 
         Rebuilding the registry rejects duplicate names and keeps contributed
-        tool instances isolated to this workspace and session.
+        tool instances isolated to this workspace and session. The optional
+        resolver runs once here so configuration changes affect the next run,
+        never one already in progress.
         """
 
         context = RunContext(
@@ -969,7 +974,10 @@ class AgentRuntime:
         )
         instructions: list[str] = []
         tools = list(self._tool_registry.tools)
-        for capability in self._capabilities:
+        capabilities = self._capabilities
+        if self._capability_resolver is not None:
+            capabilities += tuple(self._capability_resolver(context))
+        for capability in capabilities:
             instructions.extend(await capability.instructions(context))
             tools.extend(await capability.tools(context))
         registry = ToolRegistry(tools)

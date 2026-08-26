@@ -11,11 +11,12 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from functools import wraps
 from pathlib import Path
-from typing import TypeGuard
+from typing import TypeGuard, cast
 
 import click
 from pydantic import ValidationError
 
+from ethos.capability_config import CapabilityName
 from ethos.config import HOME_PATH, EthosSettings, get_settings
 from ethos.gateway import (
     BackgroundAlreadyRunning,
@@ -34,6 +35,7 @@ from ethos.models import (
 from ethos.onboarding import run_onboarding
 from ethos.service import (
     ApprovalChunk,
+    CapabilityView,
     ChatEvent,
     Ethos,
     RequestContext,
@@ -376,6 +378,148 @@ def workspace_show(name: str) -> None:
     """Show a workspace and its path."""
     view = _run(lambda ethos, context: ethos.show_workspace(name, context))
     click.echo(f"{view.name}\t{view.path}")
+
+
+@main.group()
+def config() -> None:
+    """Manage Ethos configuration."""
+
+
+@config.group()
+def capability() -> None:
+    """Manage global and workspace capabilities."""
+
+
+@capability.command("list")
+@click.option(
+    "--workspace",
+    metavar="NAME",
+    help="Show effective settings for this workspace instead of globally.",
+)
+@requires_home
+def capability_list(workspace: str | None) -> None:
+    """List registered capabilities and their effective settings."""
+    views = _run(
+        lambda ethos, context: ethos.list_capabilities(context, workspace)
+    )
+    click.echo("\n\n".join(_format_capability(view) for view in views))
+
+
+@capability.command("show")
+@click.argument(
+    "capability_name",
+    metavar="CAPABILITY",
+    type=click.Choice([name.value for name in CapabilityName]),
+)
+@click.option(
+    "--workspace",
+    metavar="NAME",
+    help="Show effective settings for this workspace instead of globally.",
+)
+@requires_home
+def capability_show(capability_name: str, workspace: str | None) -> None:
+    """Show configured and effective settings for CAPABILITY.
+
+    CAPABILITY is a registered capability name shown by ``list``.
+    """
+    view = _run(
+        lambda ethos, context: ethos.show_capability(
+            capability_name, context, workspace
+        )
+    )
+    click.echo(_format_capability(view))
+
+
+@capability.command("set")
+@click.argument(
+    "capability_name",
+    metavar="CAPABILITY",
+    type=click.Choice([name.value for name in CapabilityName]),
+)
+@click.argument("settings", metavar="SETTINGS_JSON")
+@click.option(
+    "--workspace",
+    metavar="NAME",
+    help="Apply changes as sparse overrides for this workspace.",
+)
+@requires_home
+def capability_set(
+    capability_name: str,
+    settings: str,
+    workspace: str | None,
+) -> None:
+    """Apply SETTINGS_JSON changes to CAPABILITY.
+
+    CAPABILITY is a registered capability name shown by ``list``.
+    SETTINGS_JSON must be a JSON object containing fields to change.
+    """
+    try:
+        decoded = json.loads(settings)
+    except json.JSONDecodeError as error:
+        raise click.ClickException(
+            f"invalid settings JSON: {error.msg}"
+        ) from error
+    if not isinstance(decoded, dict):
+        raise click.ClickException("capability settings must be a JSON object")
+    changes = cast(dict[str, object], decoded)
+    view = _run(
+        lambda ethos, context: ethos.configure_capability(
+            capability_name,
+            changes,
+            context,
+            workspace,
+        )
+    )
+    click.echo(_format_capability(view))
+
+
+@capability.command("reset")
+@click.argument(
+    "capability_name",
+    metavar="CAPABILITY",
+    type=click.Choice([name.value for name in CapabilityName]),
+)
+@click.option(
+    "--workspace",
+    metavar="NAME",
+    required=True,
+    help="Workspace whose capability override should be removed.",
+)
+@requires_home
+def capability_reset(capability_name: str, workspace: str) -> None:
+    """Reset CAPABILITY to global inheritance for a workspace.
+
+    CAPABILITY is a registered capability name shown by ``list``.
+    """
+    view = _run(
+        lambda ethos, context: ethos.reset_capability_override(
+            workspace, capability_name, context
+        )
+    )
+    click.echo(_format_capability(view))
+
+
+def _format_capability(view: CapabilityView) -> str:
+    """Render configured and effective values for terminal users."""
+
+    scope = (
+        "global" if view.workspace is None else f"workspace: {view.workspace}"
+    )
+    lines = [f"{view.name.value} ({scope})"]
+    for heading, settings in (
+        ("Configured", view.configured),
+        ("Effective", view.effective),
+    ):
+        lines.append(f"{heading}:")
+        lines.extend(
+            (
+                f"  {name}: {json.dumps(value)}"
+                for name, value in settings.items()
+            )
+            if settings
+            else ("  (inherited)",)
+        )
+    return "\n".join(lines)
 
 
 @main.group()

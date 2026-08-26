@@ -37,8 +37,8 @@ uv run ethos ask "Hello"
 ```
 
 `ask` starts a fresh session and prints its ID with the response. Run
-`uv run ethos --help` to see the available workspace, session, and server
-commands.
+`uv run ethos --help` to see the available workspace, capability, session, and
+server commands.
 
 To run the Vox API:
 
@@ -50,7 +50,17 @@ uv run ethos start
 
 Ethos keeps its configuration, workspaces, sessions, skills, and local event
 data under `~/.ethos`. Provider and runtime settings live in
-`~/.ethos/config.yaml`.
+`~/.ethos/config.yaml`; global capability settings and sparse workspace
+overrides live in `~/.ethos/capabilities.yaml`.
+
+For example, these commands lower the global skill limit and disable skills in
+one workspace:
+
+```sh
+uv run ethos config capability set skills '{"max_skills": 50}'
+uv run ethos config capability set skills '{"enabled": false}' \
+  --workspace my-project
+```
 
 Application state is stored locally, but model requests are sent to the
 provider you select. Session history can contain reasoning, tool arguments,
