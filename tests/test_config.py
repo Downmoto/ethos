@@ -34,48 +34,6 @@ def test_settings_accept_reasoning_effort() -> None:
     assert settings.provider.reasoning_effort is ReasoningEffort.HIGH
 
 
-def test_settings_configure_capabilities() -> None:
-    settings = EthosSettings.model_validate(
-        {
-            "provider": {"name": "ollama", "model_name": "qwen3"},
-            "capabilities": {
-                "skills": {
-                    "enabled": False,
-                    "max_skill_file_bytes": 8192,
-                    "max_skills": 24,
-                    "max_resource_file_bytes": 4096,
-                    "max_resources": 12,
-                },
-                "read_only_file_system": {
-                    "enabled": False,
-                    "max_read_file_bytes": 2048,
-                    "max_list_file_entries": 20,
-                },
-            },
-        }
-    )
-
-    assert not settings.capabilities.skills.enabled
-    assert settings.capabilities.skills.max_skill_file_bytes == 8192
-    assert settings.capabilities.skills.max_skills == 24
-    assert settings.capabilities.skills.max_resource_file_bytes == 4096
-    assert settings.capabilities.skills.max_resources == 12
-    filesystem = settings.capabilities.read_only_file_system
-    assert not filesystem.enabled
-    assert filesystem.max_read_file_bytes == 2048
-    assert filesystem.max_list_file_entries == 20
-
-    with pytest.raises(ValidationError):
-        EthosSettings.model_validate(
-            {
-                "provider": {"name": "ollama", "model_name": "qwen3"},
-                "capabilities": {
-                    "read_only_file_system": {"max_read_file_bytes": 0}
-                },
-            }
-        )
-
-
 def test_settings_load_provider_from_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

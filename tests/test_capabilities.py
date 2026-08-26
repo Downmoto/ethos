@@ -190,6 +190,41 @@ def test_capability_context_is_resolved_per_session(tmp_path: Path) -> None:
     ]
 
 
+def test_runtime_resolves_managed_capabilities_for_each_turn(
+    tmp_path: Path,
+) -> None:
+    workspaces = WorkspaceManager(tmp_path / "workspaces")
+    workspaces.create("project")
+    sessions = SessionManager(workspaces, tmp_path / "sessions")
+    session = sessions.create("project")
+    model = FakeModel(
+        (_response(), _response()),
+        stream_chunks=(("done",), ("done",)),
+        features=ModelFeatures(tools=True),
+    )
+    names = iter(("first", "second"))
+
+    def resolve(_context: RunContext) -> tuple[_Capability, ...]:
+        return (_Capability(next(names)),)
+
+    runtime = AgentRuntime(
+        sessions,
+        lambda: model,
+        capability_resolver=resolve,
+        events=EnvelopeEventEmitter(),
+    )
+
+    asyncio.run(_collect(runtime, "project", str(session.id)))
+    asyncio.run(_collect(runtime, "project", str(session.id)))
+
+    assert [
+        [tool.name for tool in request.tools] for request in model.requests
+    ] == [
+        ["first"],
+        ["second"],
+    ]
+
+
 def test_duplicate_capability_tool_fails_before_model_request(
     tmp_path: Path,
 ) -> None:

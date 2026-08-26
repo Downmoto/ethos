@@ -1,0 +1,25 @@
+# Ethos capability configuration
+
+global:
+  skills:
+    # Enable Agent Skills discovery and activation tools.
+    enabled: true
+    # Maximum bytes read from one SKILL.md frontmatter or instruction file.
+    max_skill_file_bytes: 102400
+    # Maximum number of skills disclosed for one run.
+    max_skills: 200
+    # Maximum bytes read from one referenced UTF-8 skill resource.
+    max_resource_file_bytes: 102400
+    # Maximum bundled resource paths listed when a skill is activated.
+    max_resources: 200
+
+  read_only_file_system:
+    # Enable workspace-bounded list_files and read_file tools.
+    enabled: true
+    # Maximum bytes read from one UTF-8 workspace file.
+    max_read_file_bytes: 102400
+    # Maximum entries returned when listing one workspace directory.
+    max_list_file_entries: 1000
+
+# Workspace entries are sparse overrides. Missing fields inherit globally.
+workspaces: {}

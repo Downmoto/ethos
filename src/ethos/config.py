@@ -79,35 +79,6 @@ class VoxConfig(BaseModel):
     bearer_token: NonEmptySecret | None = None
 
 
-class SkillsCapabilityConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = True
-    max_skill_file_bytes: int = Field(default=100 * 1024, ge=1)
-    max_skills: int = Field(default=200, ge=1)
-    max_resource_file_bytes: int = Field(default=100 * 1024, ge=1)
-    max_resources: int = Field(default=200, ge=1)
-
-
-class ReadOnlyFilesystemCapabilityConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = True
-    max_read_file_bytes: int = Field(default=100 * 1024, ge=1)
-    max_list_file_entries: int = Field(default=1_000, ge=1)
-
-
-class CapabilitiesConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    skills: SkillsCapabilityConfig = Field(
-        default_factory=SkillsCapabilityConfig
-    )
-    read_only_file_system: ReadOnlyFilesystemCapabilityConfig = Field(
-        default_factory=ReadOnlyFilesystemCapabilityConfig
-    )
-
-
 class RuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -118,7 +89,6 @@ class EthosSettings(BaseSettings):
     gateway: VoxConfig = Field(default_factory=VoxConfig)
     provider: ProviderConfig
     keys: KeysConfig = Field(default_factory=KeysConfig)
-    capabilities: CapabilitiesConfig = Field(default_factory=CapabilitiesConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
 
     model_config = SettingsConfigDict(

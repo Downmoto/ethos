@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ethos.config import VoxConfig
 from ethos.models import Message
 from ethos.service import (
+    CapabilityView,
     ChatEvent,
     Ethos,
     RequestContext,
@@ -44,6 +45,12 @@ class _ChatBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     prompt: str = Field(min_length=1)
+
+
+class _CapabilityBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    settings: dict[str, object] = Field(min_length=1)
 
 
 def _is_loopback(host: str) -> bool:
@@ -159,6 +166,69 @@ class VoxServer:
             workspace: str, request: Request
         ) -> WorkspaceView:
             return await ethos.show_workspace(workspace, context(request))
+
+        @app.get("/capabilities")
+        async def list_capabilities(
+            request: Request,
+        ) -> tuple[CapabilityView, ...]:
+            return await ethos.list_capabilities(context(request))
+
+        @app.get("/capabilities/{capability}")
+        async def show_capability(
+            capability: str, request: Request
+        ) -> CapabilityView:
+            return await ethos.show_capability(capability, context(request))
+
+        @app.put("/capabilities/{capability}")
+        async def configure_capability(
+            capability: str,
+            body: _CapabilityBody,
+            request: Request,
+        ) -> CapabilityView:
+            return await ethos.configure_capability(
+                capability, body.settings, context(request)
+            )
+
+        @app.get("/workspaces/{workspace}/capabilities")
+        async def list_workspace_capabilities(
+            workspace: str,
+            request: Request,
+        ) -> tuple[CapabilityView, ...]:
+            return await ethos.list_capabilities(context(request), workspace)
+
+        @app.get("/workspaces/{workspace}/capabilities/{capability}")
+        async def show_workspace_capability(
+            workspace: str,
+            capability: str,
+            request: Request,
+        ) -> CapabilityView:
+            return await ethos.show_capability(
+                capability, context(request), workspace
+            )
+
+        @app.put("/workspaces/{workspace}/capabilities/{capability}")
+        async def configure_workspace_capability(
+            workspace: str,
+            capability: str,
+            body: _CapabilityBody,
+            request: Request,
+        ) -> CapabilityView:
+            return await ethos.configure_capability(
+                capability,
+                body.settings,
+                context(request),
+                workspace,
+            )
+
+        @app.delete("/workspaces/{workspace}/capabilities/{capability}")
+        async def reset_workspace_capability(
+            workspace: str,
+            capability: str,
+            request: Request,
+        ) -> CapabilityView:
+            return await ethos.reset_capability_override(
+                workspace, capability, context(request)
+            )
 
         @app.post(
             "/workspaces/{workspace}/sessions",

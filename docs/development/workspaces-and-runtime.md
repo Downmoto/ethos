@@ -20,6 +20,7 @@ workspace directories:
 ```text
 ~/.ethos/
 ├── config.yaml
+├── capabilities.yaml
 ├── tools.yaml
 ├── data/
 │   └── ethos.db
@@ -51,7 +52,7 @@ symbolic links.
 Rejecting symlinks prevents workspace names from redirecting Ethos outside its
 injected roots.
 
-## Resolving effective settings
+## Resolving application settings
 
 `get_settings()` loads and validates settings in this precedence order, from
 lowest to highest:
@@ -66,6 +67,29 @@ All layers are validated as one `EthosSettings` value. Unknown configuration
 fields are errors rather than ignored typos.
 
 Settings are cached for the process and are not embedded in session records.
+
+## Resolving capabilities
+
+`~/.ethos/capabilities.yaml` is the canonical capability configuration. Its
+`global` section contains complete settings for every registered capability;
+its `workspaces` section contains only explicit workspace overrides. Creating a
+workspace does not add an entry. A missing workspace, capability, or field
+inherits its global value.
+
+Global settings are ceilings. Effective enablement requires both the global
+and workspace values to permit a capability, and effective numeric limits use
+the lower value. A workspace therefore cannot re-enable a globally disabled
+capability or raise a global limit.
+
+The service validates the complete typed configuration before atomically
+replacing the file. Unknown capabilities, fields, and invalid values leave the
+previous file unchanged. Capability list, show, configure, and reset operations
+are shared by the CLI and Vox. Change events record capability and field names,
+but not setting values.
+
+The runtime reloads and resolves this configuration once at the start of every
+turn. Changes therefore apply to subsequent runs without reconstructing the
+service, while an already-running turn retains its resolved capabilities.
 
 ## Session records
 
@@ -163,8 +187,9 @@ The default read-only filesystem capability contributes `list_files` and
 `read_file`. Both resolve relative paths beneath the active workspace.
 `list_files` returns a sorted JSON array for one directory and rejects more
 than its configured entry limit; `read_file` reads UTF-8 text up to its
-configured byte limit. Set `capabilities.read_only_file_system.enabled` to
-`false` to omit both tools. Absolute
+configured byte limit. Set `global.read_only_file_system.enabled` or the active
+workspace override to `false` in `capabilities.yaml` to omit both tools.
+Absolute
 paths, incompatible path types, traversal, and symlinks resolving outside the
 workspace are rejected. All calls still pass through the standard tool
 executor and policy.
@@ -194,12 +219,11 @@ reading them. The resource count includes only valid files; directories, the
 skill instructions, broken links, and paths resolving outside the skill do
 not consume the limit. The second reads one referenced UTF-8 file up to the
 configured byte limit while rejecting absolute paths and escapes from the
-skill directory. The limits are `capabilities.skills.max_resources` and
-`capabilities.skills.max_resource_file_bytes` in `config.yaml`. Activation is
-also limited by `capabilities.skills.max_skill_file_bytes`, and discovery by
-that same frontmatter bound plus `capabilities.skills.max_skills`. No
-catalogue or skill tools are added when discovery finds nothing or
-`capabilities.skills.enabled` is `false`.
+skill directory. The limits are `max_resources` and `max_resource_file_bytes`
+under the effective `skills` capability configuration. Activation is also
+limited by `max_skill_file_bytes`, and discovery by that same frontmatter bound
+plus `max_skills`. No catalogue or skill tools are added when discovery finds
+nothing or the effective `skills.enabled` is `false`.
 
 ### Concurrency guarantee
 

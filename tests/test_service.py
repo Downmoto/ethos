@@ -6,7 +6,9 @@ from uuid import uuid4
 
 import pytest
 
+from ethos.capabilities import RunContext
 from ethos.config import EthosSettings
+from ethos.events.models import EventEnvelope
 from ethos.events.types import EventType
 from ethos.home import initialise_home
 from ethos.models import (
@@ -40,6 +42,7 @@ def test_service_shares_workspace_and_session_behaviour(tmp_path: Path) -> None:
         with Ethos(home) as ethos:
             workspace = await ethos.create_workspace("health", context())
             assert workspace.name == "health"
+            assert ethos.capabilities.load().workspaces == {}
             assert [
                 item.name for item in await ethos.list_workspaces(context())
             ] == [
@@ -110,18 +113,87 @@ def test_service_omits_disabled_capabilities(
 ) -> None:
     home = initialise_home(tmp_path / ".ethos")
     settings = EthosSettings.model_validate(
-        {
-            "provider": {"name": "ollama", "model_name": "qwen3"},
-            "capabilities": {
-                "skills": {"enabled": False},
-                "read_only_file_system": {"enabled": False},
-            },
-        }
+        {"provider": {"name": "ollama", "model_name": "qwen3"}}
     )
     monkeypatch.setattr("ethos.service.get_settings", lambda: settings)
 
     with Ethos(home) as ethos:
-        assert ethos._runtime()._capabilities == ()
+        runtime = ethos._runtime()
+        resolver = runtime._capability_resolver
+        assert resolver is not None
+        run_context = RunContext(
+            "default", ethos.workspaces.get("default").path, "id"
+        )
+        assert len(tuple(resolver(run_context))) == 2
+
+        ethos.capabilities.configure_global("skills", {"enabled": False})
+        ethos.capabilities.configure_global(
+            "read_only_file_system", {"enabled": False}
+        )
+
+        assert tuple(resolver(run_context)) == ()
+        assert ethos._runtime() is runtime
+
+
+def test_service_manages_sparse_workspace_capability_overrides(
+    tmp_path: Path,
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+
+    async def exercise() -> None:
+        with Ethos(home) as ethos:
+            ethos.workspaces.create("health")
+            await ethos.configure_capability(
+                "read_only_file_system",
+                {"max_read_file_bytes": 2048},
+                context(),
+            )
+            workspace = await ethos.configure_capability(
+                "read_only_file_system",
+                {"enabled": False, "max_read_file_bytes": 4096},
+                context(),
+                "health",
+            )
+
+            assert workspace.configured == {
+                "enabled": False,
+                "max_read_file_bytes": 4096,
+            }
+            assert workspace.effective["enabled"] is False
+            assert workspace.effective["max_read_file_bytes"] == 2048
+            reset = await ethos.reset_capability_override(
+                "health", "read_only_file_system", context()
+            )
+            assert reset.configured == {}
+            assert reset.effective["enabled"] is True
+
+    asyncio.run(exercise())
+
+
+def test_capability_change_event_excludes_setting_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+
+    async def exercise() -> None:
+        with Ethos(home) as ethos:
+            events: list[EventEnvelope] = []
+
+            async def capture(event: EventEnvelope) -> EventEnvelope:
+                events.append(event)
+                return event
+
+            monkeypatch.setattr(ethos.events, "emit", capture)
+            await ethos.configure_capability(
+                "skills", {"enabled": False}, context()
+            )
+
+            event = events[0]
+            assert event.type is EventType.CAPABILITY_CONFIGURE
+            assert event.payload.model_dump()["changed_fields"] == ("enabled",)
+            assert "false" not in event.payload.model_dump_json().lower()
+
+    asyncio.run(exercise())
 
 
 def test_service_projects_ethos_messages_into_history(tmp_path: Path) -> None:

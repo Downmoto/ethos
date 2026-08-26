@@ -6,6 +6,7 @@ import pytest
 import yaml  # type: ignore[import-untyped]
 from pydantic import BaseModel
 
+from ethos.capability_config import CAPABILITIES_FILE, CapabilityConfiguration
 from ethos.config import CONFIG_FILE, EthosSettings
 from ethos.home import initialise_home
 from ethos.workspaces import DEFAULT_WORKSPACE, WORKSPACES_DIR, WorkspaceManager
@@ -14,7 +15,8 @@ from ethos.workspaces import DEFAULT_WORKSPACE, WORKSPACES_DIR, WorkspaceManager
 def _model_field_paths(model: type[BaseModel], prefix: str = "") -> set[str]:
     paths: set[str] = set()
     for name, field in model.model_fields.items():
-        path = f"{prefix}.{name}" if prefix else name
+        field_name = field.alias or name
+        path = f"{prefix}.{field_name}" if prefix else field_name
         annotation = field.annotation
         if isinstance(annotation, type) and issubclass(annotation, BaseModel):
             paths.update(_model_field_paths(annotation, path))
@@ -30,7 +32,10 @@ def _config_field_paths(
     for name, value in config.items():
         path = f"{prefix}.{name}" if prefix else name
         if isinstance(value, dict):
-            paths.update(_config_field_paths(value, path))  # pyright: ignore[reportUnknownArgumentType]
+            if value:
+                paths.update(_config_field_paths(value, path))  # pyright: ignore[reportUnknownArgumentType]
+            else:
+                paths.add(path)
         else:
             paths.add(path)
     return paths
@@ -49,6 +54,7 @@ def test_initialise_home_restricts_config_access(tmp_path: Path) -> None:
 
     assert S_IMODE(home.stat().st_mode) == 0o700
     assert S_IMODE((home / CONFIG_FILE).stat().st_mode) == 0o600
+    assert S_IMODE((home / CAPABILITIES_FILE).stat().st_mode) == 0o600
 
 
 def test_config_template_matches_settings_fields() -> None:
@@ -57,6 +63,16 @@ def test_config_template_matches_settings_fields() -> None:
 
     assert isinstance(config, dict)
     assert _config_field_paths(config) == _model_field_paths(EthosSettings)  # pyright: ignore[reportUnknownArgumentType]
+
+
+def test_capability_template_matches_configuration_fields() -> None:
+    template = files("ethos") / "templates" / CAPABILITIES_FILE
+    config = yaml.safe_load(template.read_text())
+
+    assert isinstance(config, dict)
+    assert _config_field_paths(config) == _model_field_paths(  # pyright: ignore[reportUnknownArgumentType]
+        CapabilityConfiguration
+    )
 
 
 def test_initialise_home_creates_database(tmp_path: Path) -> None:
@@ -80,6 +96,7 @@ def test_initialise_home_creates_capability_configuration(
 ) -> None:
     home = initialise_home(tmp_path / ".ethos")
 
+    assert (home / CAPABILITIES_FILE).exists()
     assert (home / "tools.yaml").read_text() == ("tools: {}\ntoolsets: {}\n")
     assert (home / "skills").is_dir()
     assert (home / "sessions").is_dir()

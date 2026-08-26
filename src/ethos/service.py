@@ -8,9 +8,15 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ethos.capabilities import Capability
+from ethos.capabilities import Capability, RunContext
 from ethos.capabilities.filesystem import ReadOnlyFilesystemCapability
 from ethos.capabilities.skills import SkillsCapability
+from ethos.capability_config import (
+    CAPABILITIES_FILE,
+    CapabilityManager,
+    CapabilityName,
+    parse_capability_name,
+)
 from ethos.config import get_settings
 from ethos.events import create_event_emitter, event_factory
 from ethos.events.emitters import EnvelopeEventEmitter
@@ -47,6 +53,16 @@ class WorkspaceView(BaseModel):
     @classmethod
     def from_workspace(cls, workspace: Workspace) -> "WorkspaceView":
         return cls(name=workspace.name, path=str(workspace.path))
+
+
+class CapabilityView(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: CapabilityName
+    scope: Literal["global", "workspace"]
+    workspace: str | None = None
+    configured: dict[str, object]
+    effective: dict[str, object]
 
 
 class SessionView(BaseModel):
@@ -137,6 +153,17 @@ class _SessionEventPayload(EventPayload):
     sessions: tuple[_SessionEventItem, ...]
 
 
+class _CapabilityEventPayload(EventPayload):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    owner_id: str
+    external_context: dict[str, str]
+    capability_names: tuple[CapabilityName, ...]
+    scope: Literal["global", "workspace"]
+    workspace: str | None
+    changed_fields: tuple[str, ...] = ()
+
+
 class Ethos:
     """One application lifetime shared by local and HTTP callers."""
 
@@ -148,6 +175,7 @@ class Ethos:
         self.storage = Storage(home / DB_PATH)
         self.workspaces = WorkspaceManager(home / WORKSPACES_DIR)
         self.sessions = SessionManager(self.workspaces, home / SESSIONS_DIR)
+        self.capabilities = CapabilityManager(home / CAPABILITIES_FILE)
         self.events = create_event_emitter(self.storage)
         self._agent: AgentRuntime | None = None
 
@@ -163,45 +191,141 @@ class Ethos:
     def _runtime(self) -> AgentRuntime:
         if self._agent is None:
             settings = get_settings()
-            skills_config = settings.capabilities.skills
-            filesystem_config = settings.capabilities.read_only_file_system
-            capabilities: list[Capability] = []
-            if filesystem_config.enabled:
-                capabilities.append(
-                    ReadOnlyFilesystemCapability(
-                        max_read_file_bytes=(
-                            filesystem_config.max_read_file_bytes
-                        ),
-                        max_list_file_entries=(
-                            filesystem_config.max_list_file_entries
-                        ),
-                    )
-                )
-            if skills_config.enabled:
-                capabilities.append(
-                    SkillsCapability(
-                        self.home / SKILLS_PATH,
-                        self.home.parent / ".agents" / "skills",
-                        events=self.events,
-                        max_skill_file_bytes=(
-                            skills_config.max_skill_file_bytes
-                        ),
-                        max_skills=skills_config.max_skills,
-                        max_resource_file_bytes=(
-                            skills_config.max_resource_file_bytes
-                        ),
-                        max_resources=skills_config.max_resources,
-                    )
-                )
             self._agent = AgentRuntime(
                 self.sessions,
-                capabilities=capabilities,
+                capability_resolver=self._resolve_capabilities,
                 events=self.events,
                 answer_now_after_seconds=(
                     settings.runtime.answer_now_after_seconds
                 ),
             )
         return self._agent
+
+    def _resolve_capabilities(
+        self, context: RunContext
+    ) -> tuple[Capability, ...]:
+        settings = self.capabilities.effective(context.workspace_name)
+        capabilities: list[Capability] = []
+        filesystem = settings.read_only_file_system
+        if filesystem.enabled:
+            capabilities.append(
+                ReadOnlyFilesystemCapability(
+                    max_read_file_bytes=filesystem.max_read_file_bytes,
+                    max_list_file_entries=filesystem.max_list_file_entries,
+                )
+            )
+        skills = settings.skills
+        if skills.enabled:
+            capabilities.append(
+                SkillsCapability(
+                    self.home / SKILLS_PATH,
+                    self.home.parent / ".agents" / "skills",
+                    events=self.events,
+                    max_skill_file_bytes=skills.max_skill_file_bytes,
+                    max_skills=skills.max_skills,
+                    max_resource_file_bytes=skills.max_resource_file_bytes,
+                    max_resources=skills.max_resources,
+                )
+            )
+        return tuple(capabilities)
+
+    async def list_capabilities(
+        self,
+        context: RequestContext,
+        workspace: str | None = None,
+    ) -> tuple[CapabilityView, ...]:
+        if workspace is not None:
+            self.workspaces.get(workspace)
+        views = tuple(
+            self._capability_view(name, workspace) for name in CapabilityName
+        )
+        await self._emit_capabilities(
+            context,
+            EventType.CAPABILITY_LIST,
+            tuple(item.name for item in views),
+            workspace,
+        )
+        return views
+
+    async def show_capability(
+        self,
+        capability: str,
+        context: RequestContext,
+        workspace: str | None = None,
+    ) -> CapabilityView:
+        if workspace is not None:
+            self.workspaces.get(workspace)
+        name = parse_capability_name(capability)
+        view = self._capability_view(name, workspace)
+        await self._emit_capabilities(
+            context,
+            EventType.CAPABILITY_SHOW,
+            (name,),
+            workspace,
+        )
+        return view
+
+    async def configure_capability(
+        self,
+        capability: str,
+        changes: dict[str, object],
+        context: RequestContext,
+        workspace: str | None = None,
+    ) -> CapabilityView:
+        if not changes:
+            raise ValueError("capability changes must not be empty")
+        name = parse_capability_name(capability)
+        if workspace is None:
+            self.capabilities.configure_global(name, changes)
+        else:
+            self.workspaces.get(workspace)
+            self.capabilities.configure_workspace(workspace, name, changes)
+        view = self._capability_view(name, workspace)
+        await self._emit_capabilities(
+            context,
+            EventType.CAPABILITY_CONFIGURE,
+            (name,),
+            workspace,
+            tuple(sorted(changes)),
+        )
+        return view
+
+    async def reset_capability_override(
+        self,
+        workspace: str,
+        capability: str,
+        context: RequestContext,
+    ) -> CapabilityView:
+        self.workspaces.get(workspace)
+        name = parse_capability_name(capability)
+        self.capabilities.reset_workspace(workspace, name)
+        view = self._capability_view(name, workspace)
+        await self._emit_capabilities(
+            context,
+            EventType.CAPABILITY_RESET,
+            (name,),
+            workspace,
+        )
+        return view
+
+    def _capability_view(
+        self,
+        name: CapabilityName,
+        workspace: str | None,
+    ) -> CapabilityView:
+        effective = self.capabilities.effective(workspace)
+        settings = (
+            effective.skills
+            if name is CapabilityName.SKILLS
+            else effective.read_only_file_system
+        )
+        return CapabilityView(
+            name=name,
+            scope="workspace" if workspace is not None else "global",
+            workspace=workspace,
+            configured=self.capabilities.configured(name, workspace),
+            effective=settings.model_dump(),
+        )
 
     async def create_workspace(
         self, name: str, context: RequestContext
@@ -419,6 +543,29 @@ class Ethos:
                     )
                     for item in sessions
                 ),
+            ),
+        )
+
+    async def _emit_capabilities(
+        self,
+        context: RequestContext,
+        event_type: EventType,
+        names: tuple[CapabilityName, ...],
+        workspace: str | None,
+        changed_fields: tuple[str, ...] = (),
+    ) -> None:
+        await _emit(
+            self.events,
+            event_type,
+            context,
+            _CapabilityEventPayload(
+                schema_name="capability.operation",
+                owner_id=context.owner_id,
+                external_context=context.external_context,
+                capability_names=names,
+                scope="workspace" if workspace is not None else "global",
+                workspace=workspace,
+                changed_fields=changed_fields,
             ),
         )
 
