@@ -1,4 +1,10 @@
-"""Workspace-bounded filesystem capability."""
+"""Workspace-bounded filesystem tools.
+
+Reads may follow links that resolve inside the workspace. Mutations reject
+every symlink component so validation and the eventual write address the same
+path. All blocking filesystem work runs in a worker thread; the tool executor
+owns approval, cancellation, and indeterminate-write handling.
+"""
 
 import asyncio
 import json
@@ -301,6 +307,8 @@ class _SearchFilesTool:
                 basename_when_unqualified=True,
             ):
                 continue
+            # Keep one file isolated until it decodes completely. A late
+            # decoding error must discard its earlier matches as well.
             file_matches: list[dict[str, str | int]] = []
             try:
                 with entry.open(encoding="utf-8") as file:
@@ -556,6 +564,13 @@ class _ApplyPatchTool:
         return await asyncio.to_thread(self._apply, arguments.patch)
 
     def _apply(self, patch: str) -> str:
+        """Validate the complete patch before staging or replacing any file.
+
+        Individual replacements are atomic, but a multi-file patch is not a
+        filesystem transaction. An unexpected failure after replacement starts
+        therefore propagates through the runtime as an indeterminate write.
+        """
+
         if len(patch.encode("utf-8")) > self.max_patch_bytes:
             raise ToolExecutionError("apply_patch exceeds patch size limit")
         operations = _parse_patch(patch)
@@ -613,6 +628,8 @@ class _ApplyPatchTool:
                 )
             changes.append((operation, path, result_content))
 
+        # Prepare every new content file first so ordinary validation and
+        # staging failures leave all targets untouched.
         temporary_files: dict[Path, Path] = {}
         try:
             for _operation, change_path, change_content in changes:
@@ -622,6 +639,7 @@ class _ApplyPatchTool:
                         change_content,
                         self.max_file_bytes,
                     )
+            # Only atomic replacements and deletions remain beyond this point.
             for _operation, change_path, change_content in changes:
                 if change_content is None:
                     change_path.unlink()
@@ -653,6 +671,13 @@ def _read_utf8_range(
     end_line: int | None,
     max_bytes: int,
 ) -> str:
+    """Read and decode only the requested lines, bounding returned raw bytes.
+
+    Lines before ``start_line`` are located by iterating raw lines but are not
+    decoded or retained. This also permits reading a valid range without
+    validating skipped content.
+    """
+
     content: list[str] = []
     size = 0
     with path.open("rb") as file:
@@ -670,6 +695,8 @@ def _read_utf8_range(
 
 
 def _walk(path: Path, *, files_only: bool = False) -> Iterator[Path]:
+    """Yield a deterministic recursive walk without following symlinks."""
+
     for current, directories, files in os.walk(path, followlinks=False):
         current_path = Path(current)
         directories[:] = sorted(
@@ -687,6 +714,8 @@ def _walk(path: Path, *, files_only: bool = False) -> Iterator[Path]:
 
 
 def _display_path(root: Path, path: Path) -> str:
+    """Render one workspace-relative path with a directory marker."""
+
     relative = path.relative_to(root).as_posix()
     return (
         f"{relative}/" if path.is_dir() and not path.is_symlink() else relative
@@ -699,7 +728,11 @@ def _glob_matches(
     *,
     basename_when_unqualified: bool = False,
 ) -> bool:
-    """Match POSIX paths with `**` consuming zero or more path segments."""
+    """Match POSIX paths with ``**`` consuming zero or more segments.
+
+    Search include filters treat an unqualified pattern as a basename match;
+    discovery globs always match the complete path relative to their root.
+    """
 
     path_parts = tuple(path.split("/"))
     if basename_when_unqualified and "/" not in pattern:
@@ -734,6 +767,8 @@ def _glob_matches(
 
 
 def _workspace_relative_path(requested_path: str) -> Path:
+    """Parse a tool path without allowing an absolute host path."""
+
     relative = Path(requested_path)
     if relative.is_absolute():
         raise ToolExecutionError(
@@ -746,7 +781,7 @@ def _resolve_existing_path(
     workspace_path: Path,
     requested_path: str,
 ) -> tuple[Path, Path]:
-    """Resolve links, then enforce containment beneath the canonical root."""
+    """Resolve a read path, allowing only links contained by the workspace."""
 
     relative = _workspace_relative_path(requested_path)
     root = workspace_path.resolve(strict=True)
@@ -764,7 +799,12 @@ def _resolve_mutation_path(
     *,
     must_exist: bool = False,
 ) -> tuple[Path, Path]:
-    """Resolve a mutation path while rejecting every symlink component."""
+    """Resolve a mutation path while rejecting every symlink component.
+
+    Containment is checked on the resolved path, then each unresolved component
+    is checked separately. The latter prevents a write from addressing a link
+    even when that link happens to point back inside the workspace.
+    """
 
     relative = _workspace_relative_path(requested_path)
     root = workspace_path.resolve(strict=True)
@@ -786,6 +826,13 @@ def _resolve_mutation_path(
 
 
 def _prepare_utf8_file(path: Path, content: str, max_bytes: int) -> Path:
+    """Write bounded UTF-8 content to a sibling temporary file.
+
+    A sibling keeps the later replacement on the target filesystem. Existing
+    permission bits are copied because replacing a path installs the temporary
+    file's metadata as well as its content.
+    """
+
     encoded = content.encode("utf-8")
     if len(encoded) > max_bytes:
         raise ToolExecutionError("write exceeds file size limit")
@@ -801,6 +848,8 @@ def _prepare_utf8_file(path: Path, content: str, max_bytes: int) -> Path:
 
 
 def _atomic_write_utf8(path: Path, content: str, max_bytes: int) -> None:
+    """Prepare then atomically replace one file, cleaning abandoned staging."""
+
     temporary = _prepare_utf8_file(path, content, max_bytes)
     try:
         temporary.replace(path)
@@ -809,6 +858,8 @@ def _atomic_write_utf8(path: Path, content: str, max_bytes: int) -> None:
 
 
 def _parse_patch(patch: str) -> tuple[_PatchOperation, ...]:
+    """Parse the supported patch envelope without accessing the filesystem."""
+
     lines = patch.splitlines()
     if len(lines) < 3 or lines[0] != "*** Begin Patch":
         raise ToolExecutionError("apply_patch has an invalid envelope")
@@ -858,10 +909,19 @@ def _parse_patch(patch: str) -> tuple[_PatchOperation, ...]:
 
 
 def _added_file_content(body: tuple[str, ...]) -> str:
+    """Strip add markers and give newly patched files a final newline."""
+
     return "\n".join(line[1:] for line in body) + "\n"
 
 
 def _apply_update(content: str, body: tuple[str, ...]) -> str:
+    """Apply ordered hunks whose old text has one exact remaining match.
+
+    The cursor prevents a later hunk from matching text before an earlier one.
+    Existing final-newline state is preserved unless the update empties the
+    file.
+    """
+
     lines = content.splitlines()
     ends_with_newline = content.endswith("\n")
     hunks: list[list[str]] = []
