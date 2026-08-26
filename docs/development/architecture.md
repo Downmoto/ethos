@@ -179,11 +179,15 @@ the model, and gives the resulting values to the context builder and mandatory
 tool executor. The runtime depends on the capability protocol rather than
 naming concrete capabilities.
 
-The first production capability exposes `list_files` and `read_file`.
-`list_files` returns at most 1,000 sorted, workspace-relative entries from one
-directory; `read_file` reads at most 100 KiB of UTF-8 text from one file.
-Absolute paths, incompatible path types, traversal outside the workspace, and
-symlinks resolving outside the workspace fail without exposing file contents.
+The filesystem capability exposes bounded reads (`list_files`, `find_files`,
+`search_files`, and `read_file`) and approval-gated mutations (`write_file`,
+`create_directory`, `move_path`, `delete_path`, and `apply_patch`). Discovery
+results are deterministic and bounded, ranged reads can inspect large UTF-8
+files incrementally, and file replacement uses sibling temporary files before
+an atomic rename. `apply_patch` validates every path and hunk before changing
+any target. Absolute paths, incompatible path types, traversal outside the
+workspace, mutation through symlinks, and symlinks resolving outside the
+workspace fail without exposing host paths or file contents.
 
 The skills capability implements Agent Skills through progressive disclosure.
 It adds only discovered names and descriptions to run-scoped context. The

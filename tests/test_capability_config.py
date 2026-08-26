@@ -25,7 +25,8 @@ def test_capability_configuration_loads_registered_defaults(
 
     assert config.global_settings.skills.enabled
     assert config.global_settings.skills.max_skills == 200
-    assert config.global_settings.read_only_file_system.enabled
+    assert config.global_settings.file_system.enabled
+    assert config.global_settings.file_system.max_patch_files == 20
     assert config.workspaces == {}
 
 
@@ -59,21 +60,19 @@ def test_workspace_configuration_can_clear_fields_and_reset(
     manager = _manager(tmp_path)
     manager.configure_workspace(
         "project",
-        "read_only_file_system",
+        "file_system",
         {"enabled": False, "max_read_file_bytes": 2048},
     )
 
     manager.configure_workspace(
         "project",
-        "read_only_file_system",
+        "file_system",
         {"max_read_file_bytes": None},
     )
 
-    assert manager.configured("read_only_file_system", "project") == {
-        "enabled": False
-    }
-    manager.reset_workspace("project", "read_only_file_system")
-    assert manager.configured("read_only_file_system", "project") == {}
+    assert manager.configured("file_system", "project") == {"enabled": False}
+    manager.reset_workspace("project", "file_system")
+    assert manager.configured("file_system", "project") == {}
     assert manager.load().workspaces == {}
 
 

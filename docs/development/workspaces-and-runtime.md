@@ -183,16 +183,24 @@ run-only instructions and tools. Their tools form a fresh registry for that
 turn, so duplicate names fail before model or tool execution and one session's
 tool instances cannot leak into another.
 
-The default read-only filesystem capability contributes `list_files` and
-`read_file`. Both resolve relative paths beneath the active workspace.
-`list_files` returns a sorted JSON array for one directory and rejects more
-than its configured entry limit; `read_file` reads UTF-8 text up to its
-configured byte limit. Set `global.read_only_file_system.enabled` or the active
-workspace override to `false` in `capabilities.yaml` to omit both tools.
-Absolute
-paths, incompatible path types, traversal, and symlinks resolving outside the
-workspace are rejected. All calls still pass through the standard tool
-executor and policy.
+The `file_system` capability contributes nine workspace-relative tools.
+`list_files`, `find_files`, `search_files`, and `read_file` are bounded reads;
+the latter supports one-based line ranges so large UTF-8 files can be read in
+chunks. `write_file`, `create_directory`, `move_path`, `delete_path`, and
+`apply_patch` are writes and therefore pause for approval under the default
+tool policy. Patch calls use `*** Begin Patch` syntax and validate all files
+and hunks before mutation. Writes and patches atomically replace individual
+files, moves do not overwrite, and non-empty directory deletion requires an
+explicit recursive argument.
+
+Set `global.file_system.enabled` or the active workspace override to `false`
+in `capabilities.yaml` to omit all nine tools. The configurable ceilings bound
+read and write bytes, listing and glob entries, search matches and result
+bytes, and patch bytes and affected files. Absolute paths, incompatible path
+types, traversal, mutation through symlinks, and symlinks resolving outside
+the workspace are rejected. Recursive discovery never follows directory
+symlinks. Every call still passes through the standard tool executor and
+policy.
 
 The skills capability follows the Agent Skills progressive-disclosure model.
 It scans direct children of the native and cross-client locations at both user

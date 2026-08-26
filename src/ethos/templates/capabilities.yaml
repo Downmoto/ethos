@@ -13,13 +13,23 @@ global:
     # Maximum bundled resource paths listed when a skill is activated.
     max_resources: 200
 
-  read_only_file_system:
-    # Enable workspace-bounded list_files and read_file tools.
+  file_system:
+    # Enable workspace-bounded filesystem tools.
     enabled: true
-    # Maximum bytes read from one UTF-8 workspace file.
+    # Maximum bytes returned by one UTF-8 file read.
     max_read_file_bytes: 102400
-    # Maximum entries returned when listing one workspace directory.
-    max_list_file_entries: 1000
+    # Maximum bytes written to one UTF-8 workspace file.
+    max_write_file_bytes: 102400
+    # Maximum paths returned by one listing or glob.
+    max_file_entries: 1000
+    # Maximum matches returned by one content search.
+    max_search_matches: 1000
+    # Maximum bytes returned by one content search.
+    max_search_result_bytes: 102400
+    # Maximum bytes accepted in one patch.
+    max_patch_bytes: 102400
+    # Maximum files affected by one patch.
+    max_patch_files: 20
 
 # Workspace entries are sparse overrides. Missing fields inherit globally.
 workspaces: {}

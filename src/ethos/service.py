@@ -9,7 +9,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from ethos.capabilities import Capability, RunContext
-from ethos.capabilities.filesystem import ReadOnlyFilesystemCapability
+from ethos.capabilities.filesystem import FilesystemCapability
 from ethos.capabilities.skills import SkillsCapability
 from ethos.capability_config import (
     CAPABILITIES_FILE,
@@ -281,12 +281,19 @@ class Ethos:
 
         settings = self.capabilities.effective(context.workspace_name)
         capabilities: list[Capability] = []
-        filesystem = settings.read_only_file_system
+        filesystem = settings.file_system
         if filesystem.enabled:
             capabilities.append(
-                ReadOnlyFilesystemCapability(
+                FilesystemCapability(
                     max_read_file_bytes=filesystem.max_read_file_bytes,
-                    max_list_file_entries=filesystem.max_list_file_entries,
+                    max_write_file_bytes=filesystem.max_write_file_bytes,
+                    max_file_entries=filesystem.max_file_entries,
+                    max_search_matches=filesystem.max_search_matches,
+                    max_search_result_bytes=(
+                        filesystem.max_search_result_bytes
+                    ),
+                    max_patch_bytes=filesystem.max_patch_bytes,
+                    max_patch_files=filesystem.max_patch_files,
                 )
             )
         skills = settings.skills
@@ -402,7 +409,7 @@ class Ethos:
         settings = (
             effective.skills
             if name is CapabilityName.SKILLS
-            else effective.read_only_file_system
+            else effective.file_system
         )
         return CapabilityView(
             name=name,
