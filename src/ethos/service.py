@@ -56,6 +56,8 @@ class WorkspaceView(BaseModel):
 
 
 class CapabilityView(BaseModel):
+    """Configured and effective values projected through public adapters."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: CapabilityName
@@ -154,6 +156,8 @@ class _SessionEventPayload(EventPayload):
 
 
 class _CapabilityEventPayload(EventPayload):
+    """Capability operation metadata that deliberately excludes values."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     owner_id: str
@@ -204,6 +208,8 @@ class Ethos:
     def _resolve_capabilities(
         self, context: RunContext
     ) -> tuple[Capability, ...]:
+        """Build enabled capabilities from fresh settings for one run."""
+
         settings = self.capabilities.effective(context.workspace_name)
         capabilities: list[Capability] = []
         filesystem = settings.read_only_file_system
@@ -234,6 +240,8 @@ class Ethos:
         context: RequestContext,
         workspace: str | None = None,
     ) -> tuple[CapabilityView, ...]:
+        """List capabilities at global or effective workspace scope."""
+
         if workspace is not None:
             self.workspaces.get(workspace)
         views = tuple(
@@ -253,6 +261,8 @@ class Ethos:
         context: RequestContext,
         workspace: str | None = None,
     ) -> CapabilityView:
+        """Show configured and effective values for one capability."""
+
         if workspace is not None:
             self.workspaces.get(workspace)
         name = parse_capability_name(capability)
@@ -272,6 +282,8 @@ class Ethos:
         context: RequestContext,
         workspace: str | None = None,
     ) -> CapabilityView:
+        """Validate and persist global changes or a workspace override."""
+
         if not changes:
             raise ValueError("capability changes must not be empty")
         name = parse_capability_name(capability)
@@ -296,6 +308,8 @@ class Ethos:
         capability: str,
         context: RequestContext,
     ) -> CapabilityView:
+        """Remove a workspace override so it inherits global settings."""
+
         self.workspaces.get(workspace)
         name = parse_capability_name(capability)
         self.capabilities.reset_workspace(workspace, name)
@@ -313,6 +327,8 @@ class Ethos:
         name: CapabilityName,
         workspace: str | None,
     ) -> CapabilityView:
+        """Project persistence models without exposing internal model types."""
+
         effective = self.capabilities.effective(workspace)
         settings = (
             effective.skills
@@ -554,6 +570,8 @@ class Ethos:
         workspace: str | None,
         changed_fields: tuple[str, ...] = (),
     ) -> None:
+        """Emit operation identity and changed field names, never values."""
+
         await _emit(
             self.events,
             event_type,

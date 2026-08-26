@@ -1,4 +1,9 @@
-"""Canonical capability configuration and persistence."""
+"""Typed capability settings, workspace overrides, and YAML persistence.
+
+The file model deliberately keeps complete global ceilings separate from
+sparse workspace overrides. Runtime callers ask the manager for effective
+settings rather than merging configuration themselves.
+"""
 
 from enum import StrEnum
 from pathlib import Path
@@ -12,11 +17,15 @@ CAPABILITIES_FILE: Final = "capabilities.yaml"
 
 
 class CapabilityName(StrEnum):
+    """Stable names accepted by configuration, CLI, and Vox boundaries."""
+
     SKILLS = "skills"
     READ_ONLY_FILE_SYSTEM = "read_only_file_system"
 
 
 class SkillsCapabilityConfig(BaseModel):
+    """Complete global settings for Agent Skills discovery and reads."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     enabled: bool = True
@@ -27,6 +36,8 @@ class SkillsCapabilityConfig(BaseModel):
 
 
 class ReadOnlyFilesystemCapabilityConfig(BaseModel):
+    """Complete global settings for workspace-bounded file reads."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     enabled: bool = True
@@ -35,6 +46,8 @@ class ReadOnlyFilesystemCapabilityConfig(BaseModel):
 
 
 class GlobalCapabilitiesConfig(BaseModel):
+    """Complete settings that bound every workspace."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     skills: SkillsCapabilityConfig = Field(
@@ -46,6 +59,8 @@ class GlobalCapabilitiesConfig(BaseModel):
 
 
 class SkillsCapabilityOverride(BaseModel):
+    """Optional workspace values that may only narrow skill settings."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     enabled: bool | None = None
@@ -56,6 +71,8 @@ class SkillsCapabilityOverride(BaseModel):
 
 
 class ReadOnlyFilesystemCapabilityOverride(BaseModel):
+    """Optional workspace values that may only narrow filesystem settings."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     enabled: bool | None = None
@@ -64,6 +81,8 @@ class ReadOnlyFilesystemCapabilityOverride(BaseModel):
 
 
 class WorkspaceCapabilityOverrides(BaseModel):
+    """Sparse capability overrides stored only for configured workspaces."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     skills: SkillsCapabilityOverride | None = None
@@ -97,6 +116,8 @@ type CapabilityOverride = (
 
 
 def parse_capability_name(value: str | CapabilityName) -> CapabilityName:
+    """Normalise public input and give unknown names a domain-level error."""
+
     if isinstance(value, CapabilityName):
         return value
     try:
@@ -112,6 +133,8 @@ class CapabilityManager:
         self.path = path
 
     def load(self) -> CapabilityConfiguration:
+        """Load and validate the complete file without caching it."""
+
         try:
             raw: object = cast(
                 object,
@@ -130,6 +153,8 @@ class CapabilityManager:
         capability: str | CapabilityName,
         workspace: str | None = None,
     ) -> dict[str, object]:
+        """Return complete global values or one sparse workspace override."""
+
         name = parse_capability_name(capability)
         config = self.load()
         if workspace is None:
@@ -144,6 +169,8 @@ class CapabilityManager:
     def effective(
         self, workspace: str | None = None
     ) -> GlobalCapabilitiesConfig:
+        """Resolve settings with global values as non-expandable ceilings."""
+
         config = self.load()
         if workspace is None:
             return config.global_settings
@@ -166,6 +193,8 @@ class CapabilityManager:
         capability: str | CapabilityName,
         changes: dict[str, object],
     ) -> CapabilityConfiguration:
+        """Validate and merge one global capability change atomically."""
+
         name = parse_capability_name(capability)
         config = self.load()
         current = _global_settings(config, name)
@@ -183,6 +212,8 @@ class CapabilityManager:
         capability: str | CapabilityName,
         changes: dict[str, object],
     ) -> CapabilityConfiguration:
+        """Validate and merge one sparse workspace override atomically."""
+
         name = parse_capability_name(capability)
         config = self.load()
         overrides = config.workspaces.get(
@@ -213,6 +244,8 @@ class CapabilityManager:
         workspace: str,
         capability: str | CapabilityName,
     ) -> CapabilityConfiguration:
+        """Remove one override, pruning an empty workspace entry."""
+
         name = parse_capability_name(capability)
         config = self.load()
         overrides = config.workspaces.get(workspace)
@@ -230,6 +263,8 @@ class CapabilityManager:
         return self._save(config.model_copy(update={"workspaces": workspaces}))
 
     def _save(self, config: CapabilityConfiguration) -> CapabilityConfiguration:
+        """Validate the whole model before atomically replacing its YAML."""
+
         validated = CapabilityConfiguration.model_validate(
             config.model_dump(by_alias=True, exclude_none=True)
         )
@@ -283,6 +318,8 @@ def _effective_settings[Settings: CapabilitySettings](
     global_settings: Settings,
     override: CapabilityOverride | None,
 ) -> Settings:
+    """Intersect enablement and choose the lower configured numeric limits."""
+
     if override is None:
         return global_settings
     values = global_settings.model_dump()

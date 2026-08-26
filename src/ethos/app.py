@@ -500,6 +500,8 @@ def capability_reset(capability_name: str, workspace: str) -> None:
 
 
 def _format_capability(view: CapabilityView) -> str:
+    """Render configured and effective values for terminal users."""
+
     scope = (
         "global" if view.workspace is None else f"workspace: {view.workspace}"
     )

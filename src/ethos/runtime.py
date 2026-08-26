@@ -962,7 +962,9 @@ class AgentRuntime:
         """Compose one run in registration order before contacting the model.
 
         Rebuilding the registry rejects duplicate names and keeps contributed
-        tool instances isolated to this workspace and session.
+        tool instances isolated to this workspace and session. The optional
+        resolver runs once here so configuration changes affect the next run,
+        never one already in progress.
         """
 
         context = RunContext(
