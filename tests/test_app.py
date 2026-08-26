@@ -16,16 +16,19 @@ from ethos import app
 from ethos.home import initialise_home
 from ethos.models import (
     Message,
+    ReasoningEffort,
     ReasoningPart,
     Role,
     ToolCallPart,
     ToolResultPart,
     Usage,
 )
+from ethos.provider import ProviderName
 from ethos.service import (
     ApprovalChunk,
     ChatChunk,
     Ethos,
+    ProviderView,
     RequestContext,
     SessionView,
 )
@@ -275,6 +278,57 @@ def test_cli_manages_global_and_workspace_capabilities(
     assert show_result.output == workspace_result.output
     assert reset_result.exit_code == 0
     assert "Configured:\n  (inherited)" in reset_result.output
+
+
+def test_cli_manages_provider_without_displaying_credential(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    monkeypatch.setattr(app, "HOME_PATH", home)
+    runner = CliRunner()
+
+    configured = runner.invoke(
+        app.main,
+        [
+            "config",
+            "provider",
+            "set",
+            '{"name":"openai","model_name":"gpt-5-mini",'
+            '"reasoning_effort":"low","api_key":"secret-key"}',
+        ],
+    )
+    shown = runner.invoke(app.main, ["config", "provider", "show"])
+
+    assert configured.exit_code == 0
+    assert shown.exit_code == 0
+    assert configured.output == shown.output
+    assert "Provider: openai" in shown.output
+    assert "Model: gpt-5-mini" in shown.output
+    assert "Reasoning effort: low" in shown.output
+    assert "Credential: configured" in shown.output
+    assert "secret-key" not in shown.output
+
+
+def test_provider_check_command_accepts_candidate_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app, "HOME_PATH", Path("."))
+    view = ProviderView(
+        name=ProviderName.OLLAMA,
+        model_name="qwen3",
+        reasoning_effort=ReasoningEffort.NONE,
+        credential_configured=False,
+        ollama_base_url="http://localhost:11434",
+    )
+    monkeypatch.setattr(app, "_run", lambda _operation: view)
+
+    result = CliRunner().invoke(
+        app.main,
+        ["config", "provider", "check", '{"model_name":"qwen3"}'],
+    )
+
+    assert result.exit_code == 0
+    assert result.output.startswith("provider check succeeded\n")
 
 
 @pytest.mark.parametrize(

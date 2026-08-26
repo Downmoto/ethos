@@ -100,6 +100,19 @@ DELETE /workspaces/{workspace}/capabilities/{capability}
 `PUT` accepts `{"settings": {...}}`. Workspace `DELETE` removes that
 capability's override and restores global inheritance.
 
+Provider management uses the same service path as onboarding:
+
+```text
+GET  /provider
+POST /provider/check
+PUT  /provider
+```
+
+`PUT` validates and atomically replaces the configuration. `POST /check`
+makes a minimal model request with candidate settings but does not save them.
+Responses expose whether the selected credential is configured, never its
+value.
+
 A bearer token is mandatory when Vox binds beyond loopback. The protocol does
 not own or implement the external consumer also named Vox.
 
@@ -124,6 +137,10 @@ management behaviour as Vox. `set` accepts a JSON object of changed fields.
 Passing `--workspace` writes a sparse workspace override; `reset` requires a
 workspace and removes that override.
 
+`ethos config provider show`, `check`, and `set` expose the provider service
+operations. Both mutation commands accept sparse JSON settings; `api_key`
+targets the selected provider and is always redacted from output.
+
 For a write-tool approval it prints the exact tool name and validated JSON
 arguments, then asks once with denial as the default. If stdin is not a
 terminal, it denies without prompting and resumes the model with an error tool
@@ -140,9 +157,10 @@ Foreground servers are deliberately not affected by `ethos stop`.
 
 A workspace identifies a user-owned project directory. A session belongs
 permanently to one workspace, stores one conversation's model messages, and
-lives in the Ethos home. For each turn, `AgentRuntime` resolves the global
-settings, streams model output, and atomically replaces history before emitting
-its completion chunk.
+lives in the Ethos home. For each turn, `AgentRuntime` reloads the selected
+provider and effective capability settings, streams model output, and
+atomically replaces history before emitting its completion chunk. Provider
+changes therefore apply to subsequent runs without rebuilding the service.
 
 The LiteLLM adapter builds complete and streamed final responses through the
 same normalisation path. In particular, a provider `stop` response containing

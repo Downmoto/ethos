@@ -20,6 +20,11 @@ class EventType(StrEnum):
     CAPABILITY_CONFIGURE = "capability.configure"
     CAPABILITY_RESET = "capability.reset"
 
+    # provider events
+    PROVIDER_SHOW = "provider.show"
+    PROVIDER_CHECK = "provider.check"
+    PROVIDER_CONFIGURE = "provider.configure"
+
     # session events
     SESSION_CREATE = "session.create"
     SESSION_LIST = "session.list"

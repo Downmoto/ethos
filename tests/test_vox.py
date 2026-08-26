@@ -12,13 +12,21 @@ from pydantic import SecretStr
 from ethos.capability_config import CapabilityName
 from ethos.config import VoxConfig
 from ethos.gateway.vox import VoxServer, _event_stream
-from ethos.models import Message, Role, ToolCallPart, ToolResultPart
+from ethos.models import (
+    Message,
+    ReasoningEffort,
+    Role,
+    ToolCallPart,
+    ToolResultPart,
+)
+from ethos.provider import ProviderName
 from ethos.service import (
     ApprovalChunk,
     CapabilityView,
     ChatChunk,
     ChatEvent,
     Ethos,
+    ProviderView,
     RequestContext,
     SessionView,
     WorkspaceView,
@@ -40,6 +48,12 @@ WORKSPACE_CAPABILITY = CAPABILITY.model_copy(
         "configured": {"enabled": False},
         "effective": {"enabled": False, "max_skills": 200},
     }
+)
+PROVIDER = ProviderView(
+    name=ProviderName.OPENAI,
+    model_name="gpt-5-mini",
+    reasoning_effort=ReasoningEffort.MEDIUM,
+    credential_configured=True,
 )
 SESSION = SessionView(
     id="session-id",
@@ -97,6 +111,22 @@ class FakeEthos:
     ) -> WorkspaceView:
         self.record("show_workspace", name, context)
         return WORKSPACE
+
+    async def show_provider(self, context: RequestContext) -> ProviderView:
+        self.record("show_provider", context)
+        return PROVIDER
+
+    async def check_provider(
+        self, changes: dict[str, object], context: RequestContext
+    ) -> ProviderView:
+        self.record("check_provider", changes, context)
+        return PROVIDER
+
+    async def configure_provider(
+        self, changes: dict[str, object], context: RequestContext
+    ) -> ProviderView:
+        self.record("configure_provider", changes, context)
+        return PROVIDER
 
     async def list_capabilities(
         self,
@@ -254,6 +284,30 @@ class FakeEthos:
             "show_workspace",
             200,
             WORKSPACE.model_dump(),
+        ),
+        (
+            "GET",
+            "/provider",
+            None,
+            "show_provider",
+            200,
+            PROVIDER.model_dump(mode="json"),
+        ),
+        (
+            "POST",
+            "/provider/check",
+            {"settings": {"model_name": "gpt-5-mini"}},
+            "check_provider",
+            200,
+            PROVIDER.model_dump(mode="json"),
+        ),
+        (
+            "PUT",
+            "/provider",
+            {"settings": {"model_name": "gpt-5-mini"}},
+            "configure_provider",
+            200,
+            PROVIDER.model_dump(mode="json"),
         ),
         (
             "GET",

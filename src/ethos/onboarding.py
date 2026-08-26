@@ -7,9 +7,10 @@ from typing import Any, Final, cast
 import click
 import yaml  # type: ignore[import-untyped]
 
-from ethos.config import CONFIG_FILE, EthosSettings
+from ethos.config import CONFIG_FILE
 from ethos.models import ReasoningEffort
 from ethos.provider import ProviderName
+from ethos.provider_config import ProviderManager
 
 type Config = dict[str, Any]
 type OnboardingStep = Callable[[Config], None]
@@ -85,12 +86,14 @@ ONBOARDING_STEPS: Final[tuple[OnboardingStep, ...]] = (
 def run_onboarding(home: Path) -> None:
     """Run the configured onboarding steps and save their settings."""
     config_path = home / CONFIG_FILE
-    config = yaml.safe_load(config_path.read_text()) or {}  # pyright: ignore[reportUnknownVariableType]
-    if not isinstance(config, dict):
+    parsed = cast(object, yaml.safe_load(config_path.read_text()))
+    if parsed is None:
+        parsed = {}
+    if not isinstance(parsed, dict):
         raise click.ClickException("config.yaml must contain a mapping")
+    config = cast(Config, parsed)
 
     for step in ONBOARDING_STEPS:
-        step(config)  # pyright: ignore[reportUnknownArgumentType]
+        step(config)
 
-    EthosSettings.model_validate(config)
-    config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+    ProviderManager(config_path).replace(config)

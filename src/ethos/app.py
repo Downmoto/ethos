@@ -38,6 +38,7 @@ from ethos.service import (
     CapabilityView,
     ChatEvent,
     Ethos,
+    ProviderView,
     RequestContext,
 )
 from ethos.workspaces import DEFAULT_WORKSPACE
@@ -453,15 +454,7 @@ def capability_set(
     CAPABILITY is a registered capability name shown by ``list``.
     SETTINGS_JSON must be a JSON object containing fields to change.
     """
-    try:
-        decoded = json.loads(settings)
-    except json.JSONDecodeError as error:
-        raise click.ClickException(
-            f"invalid settings JSON: {error.msg}"
-        ) from error
-    if not isinstance(decoded, dict):
-        raise click.ClickException("capability settings must be a JSON object")
-    changes = cast(dict[str, object], decoded)
+    changes = _decode_settings(settings, "capability")
     view = _run(
         lambda ethos, context: ethos.configure_capability(
             capability_name,
@@ -520,6 +513,70 @@ def _format_capability(view: CapabilityView) -> str:
             else ("  (inherited)",)
         )
     return "\n".join(lines)
+
+
+@config.group("provider")
+def provider_config() -> None:
+    """Manage the active model provider."""
+
+
+@provider_config.command("show")
+@requires_home
+def provider_show() -> None:
+    """Show the active provider with its credential redacted."""
+    view = _run(lambda ethos, context: ethos.show_provider(context))
+    click.echo(_format_provider(view))
+
+
+@provider_config.command("check")
+@click.argument("settings", metavar="SETTINGS_JSON", default="{}")
+@requires_home
+def provider_check(settings: str) -> None:
+    """Check the active provider or candidate SETTINGS_JSON without saving."""
+    changes = _decode_settings(settings, "provider")
+    view = _run(lambda ethos, context: ethos.check_provider(changes, context))
+    click.echo(f"provider check succeeded\n{_format_provider(view)}")
+
+
+@provider_config.command("set")
+@click.argument("settings", metavar="SETTINGS_JSON")
+@requires_home
+def provider_set(settings: str) -> None:
+    """Validate and save provider SETTINGS_JSON.
+
+    Use ``api_key`` to store the selected provider's credential. Its value is
+    never returned by show, check, or set.
+    """
+    changes = _decode_settings(settings, "provider")
+    view = _run(
+        lambda ethos, context: ethos.configure_provider(changes, context)
+    )
+    click.echo(_format_provider(view))
+
+
+def _format_provider(view: ProviderView) -> str:
+    lines = [
+        f"Provider: {view.name.value}",
+        f"Model: {view.model_name}",
+        f"Reasoning effort: {view.reasoning_effort.value}",
+        "Credential: "
+        + ("configured" if view.credential_configured else "not configured"),
+    ]
+    if view.ollama_base_url is not None:
+        lines.append(f"Ollama base URL: {view.ollama_base_url}")
+    return "\n".join(lines)
+
+
+def _decode_settings(value: str, subject: str) -> dict[str, object]:
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError as error:
+        raise click.ClickException(
+            f"invalid settings JSON: {error.msg}"
+        ) from error
+    if not isinstance(decoded, dict):
+        raise click.ClickException(f"{subject} settings must be a JSON object")
+    return cast(dict[str, object], decoded)
 
 
 @main.group()

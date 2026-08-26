@@ -21,6 +21,7 @@ from ethos.service import (
     CapabilityView,
     ChatEvent,
     Ethos,
+    ProviderView,
     RequestContext,
     SessionView,
     WorkspaceView,
@@ -51,6 +52,12 @@ class _CapabilityBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     settings: dict[str, object] = Field(min_length=1)
+
+
+class _ProviderBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    settings: dict[str, object]
 
 
 def _is_loopback(host: str) -> bool:
@@ -166,6 +173,24 @@ class VoxServer:
             workspace: str, request: Request
         ) -> WorkspaceView:
             return await ethos.show_workspace(workspace, context(request))
+
+        @app.get("/provider")
+        async def show_provider(request: Request) -> ProviderView:
+            return await ethos.show_provider(context(request))
+
+        @app.post("/provider/check")
+        async def check_provider(
+            body: _ProviderBody, request: Request
+        ) -> ProviderView:
+            return await ethos.check_provider(body.settings, context(request))
+
+        @app.put("/provider")
+        async def configure_provider(
+            body: _ProviderBody, request: Request
+        ) -> ProviderView:
+            return await ethos.configure_provider(
+                body.settings, context(request)
+            )
 
         @app.get("/capabilities")
         async def list_capabilities(

@@ -7,7 +7,6 @@ from uuid import uuid4
 import pytest
 
 from ethos.capabilities import RunContext
-from ethos.config import EthosSettings
 from ethos.events.models import EventEnvelope
 from ethos.events.types import EventType
 from ethos.home import initialise_home
@@ -20,6 +19,7 @@ from ethos.models import (
     ToolResultPart,
     Usage,
 )
+from ethos.provider import LiteLLMModel, ProviderName
 from ethos.runtime import AgentRuntime, ApprovalStreamEvent, PromptStreamEvent
 from ethos.service import (
     ApprovalChunk,
@@ -108,16 +108,11 @@ def test_service_recovers_session_through_runtime(
     asyncio.run(exercise())
 
 
-def test_service_omits_disabled_capabilities(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_service_omits_disabled_capabilities(tmp_path: Path) -> None:
     home = initialise_home(tmp_path / ".ethos")
-    settings = EthosSettings.model_validate(
-        {"provider": {"name": "ollama", "model_name": "qwen3"}}
-    )
-    monkeypatch.setattr("ethos.service.get_settings", lambda: settings)
 
     with Ethos(home) as ethos:
+        ethos.providers.configure({"name": "ollama", "model_name": "qwen3"})
         runtime = ethos._runtime()
         resolver = runtime._capability_resolver
         assert resolver is not None
@@ -194,6 +189,65 @@ def test_capability_change_event_excludes_setting_values(
             assert "false" not in event.payload.model_dump_json().lower()
 
     asyncio.run(exercise())
+
+
+def test_service_manages_provider_with_redacted_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+
+    async def exercise() -> None:
+        with Ethos(home) as ethos:
+            events: list[EventEnvelope] = []
+
+            async def capture(event: EventEnvelope) -> EventEnvelope:
+                events.append(event)
+                return event
+
+            monkeypatch.setattr(ethos.events, "emit", capture)
+            configured = await ethos.configure_provider(
+                {
+                    "name": "openai",
+                    "model_name": "gpt-5-mini",
+                    "reasoning_effort": "medium",
+                    "api_key": "secret-key",
+                },
+                context(),
+            )
+            shown = await ethos.show_provider(context())
+
+            assert configured == shown
+            assert shown.name is ProviderName.OPENAI
+            assert shown.model_name == "gpt-5-mini"
+            assert shown.credential_configured
+            assert shown.ollama_base_url is None
+            payload = events[0].payload.model_dump_json()
+            assert events[0].type is EventType.PROVIDER_CONFIGURE
+            assert "api_key" in payload
+            assert "secret-key" not in payload
+
+    asyncio.run(exercise())
+
+
+def test_existing_runtime_uses_new_provider_on_subsequent_runs(
+    tmp_path: Path,
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+
+    with Ethos(home) as ethos:
+        ethos.providers.configure(
+            {"name": "ollama", "model_name": "first-model"}
+        )
+        runtime = ethos._runtime()
+        first = runtime._model_factory()
+
+        ethos.providers.configure({"model_name": "second-model"})
+        second = runtime._model_factory()
+
+        assert isinstance(first, LiteLLMModel)
+        assert isinstance(second, LiteLLMModel)
+        assert first.model_name == "first-model"
+        assert second.model_name == "second-model"
 
 
 def test_service_projects_ethos_messages_into_history(tmp_path: Path) -> None:

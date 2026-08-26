@@ -17,13 +17,15 @@ from ethos.capability_config import (
     CapabilityName,
     parse_capability_name,
 )
-from ethos.config import get_settings
+from ethos.config import CONFIG_FILE, EthosSettings
 from ethos.events import create_event_emitter, event_factory
 from ethos.events.emitters import EnvelopeEventEmitter
 from ethos.events.models import EventPayload
 from ethos.events.types import EventType
 from ethos.home import DB_PATH, SKILLS_PATH
-from ethos.models import Message, Usage
+from ethos.models import Message, Model, ReasoningEffort, Usage
+from ethos.provider import AIProvider, ProviderName
+from ethos.provider_config import ProviderManager
 from ethos.runtime import (
     AgentRuntime,
     ApprovalStreamEvent,
@@ -65,6 +67,18 @@ class CapabilityView(BaseModel):
     workspace: str | None = None
     configured: dict[str, object]
     effective: dict[str, object]
+
+
+class ProviderView(BaseModel):
+    """The active provider configuration with its credential redacted."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: ProviderName
+    model_name: str
+    reasoning_effort: ReasoningEffort
+    ollama_base_url: str | None = None
+    credential_configured: bool
 
 
 class SessionView(BaseModel):
@@ -168,6 +182,18 @@ class _CapabilityEventPayload(EventPayload):
     changed_fields: tuple[str, ...] = ()
 
 
+class _ProviderEventPayload(EventPayload):
+    """Provider operation metadata that deliberately excludes values."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    owner_id: str
+    external_context: dict[str, str]
+    provider_name: ProviderName
+    model_name: str
+    changed_fields: tuple[str, ...] = ()
+
+
 class Ethos:
     """One application lifetime shared by local and HTTP callers."""
 
@@ -180,6 +206,7 @@ class Ethos:
         self.workspaces = WorkspaceManager(home / WORKSPACES_DIR)
         self.sessions = SessionManager(self.workspaces, home / SESSIONS_DIR)
         self.capabilities = CapabilityManager(home / CAPABILITIES_FILE)
+        self.providers = ProviderManager(home / CONFIG_FILE)
         self.events = create_event_emitter(self.storage)
         self._agent: AgentRuntime | None = None
 
@@ -194,9 +221,13 @@ class Ethos:
 
     def _runtime(self) -> AgentRuntime:
         if self._agent is None:
-            settings = get_settings()
+            settings = self.providers.load()
             self._agent = AgentRuntime(
                 self.sessions,
+                model_factory=lambda: self._provider_model(),
+                answer_model_factory=lambda: self._provider_model(
+                    answer_only=True
+                ),
                 capability_resolver=self._resolve_capabilities,
                 events=self.events,
                 answer_now_after_seconds=(
@@ -204,6 +235,44 @@ class Ethos:
                 ),
             )
         return self._agent
+
+    def _provider_model(self, *, answer_only: bool = False) -> Model:
+        settings = self.providers.load()
+        return AIProvider.from_settings(settings).model(
+            settings.provider.model_name,
+            ReasoningEffort.NONE
+            if answer_only
+            else settings.provider.reasoning_effort,
+        )
+
+    async def show_provider(self, context: RequestContext) -> ProviderView:
+        settings = self.providers.load()
+        view = _provider_view(settings)
+        await self._emit_provider(context, EventType.PROVIDER_SHOW, view)
+        return view
+
+    async def check_provider(
+        self, changes: dict[str, object], context: RequestContext
+    ) -> ProviderView:
+        settings = await self.providers.check(changes)
+        view = _provider_view(settings)
+        await self._emit_provider(context, EventType.PROVIDER_CHECK, view)
+        return view
+
+    async def configure_provider(
+        self, changes: dict[str, object], context: RequestContext
+    ) -> ProviderView:
+        if not changes:
+            raise ValueError("provider changes must not be empty")
+        settings = self.providers.configure(changes)
+        view = _provider_view(settings)
+        await self._emit_provider(
+            context,
+            EventType.PROVIDER_CONFIGURE,
+            view,
+            tuple(sorted(changes)),
+        )
+        return view
 
     def _resolve_capabilities(
         self, context: RunContext
@@ -587,6 +656,27 @@ class Ethos:
             ),
         )
 
+    async def _emit_provider(
+        self,
+        context: RequestContext,
+        event_type: EventType,
+        view: ProviderView,
+        changed_fields: tuple[str, ...] = (),
+    ) -> None:
+        await _emit(
+            self.events,
+            event_type,
+            context,
+            _ProviderEventPayload(
+                schema_name="provider.operation",
+                owner_id=context.owner_id,
+                external_context=context.external_context,
+                provider_name=view.name,
+                model_name=view.model_name,
+                changed_fields=changed_fields,
+            ),
+        )
+
 
 async def _emit(
     emitter: EnvelopeEventEmitter,
@@ -600,4 +690,26 @@ async def _emit(
             location=context.source,
             payload=payload,
         )
+    )
+
+
+def _provider_view(settings: EthosSettings) -> ProviderView:
+    """Project validated settings without serialising any secret value."""
+
+    provider = settings.provider
+    key = {
+        ProviderName.OPENAI: settings.keys.openai_api_key,
+        ProviderName.GOOGLE: settings.keys.google_api_key,
+        ProviderName.OLLAMA: settings.keys.ollama_api_key,
+    }[provider.name]
+    return ProviderView(
+        name=provider.name,
+        model_name=provider.model_name,
+        reasoning_effort=provider.reasoning_effort,
+        ollama_base_url=(
+            provider.ollama_base_url
+            if provider.name is ProviderName.OLLAMA
+            else None
+        ),
+        credential_configured=key is not None,
     )
