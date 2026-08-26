@@ -37,8 +37,8 @@ uv run ethos ask "Hello"
 ```
 
 `ask` starts a fresh session and prints its ID with the response. Run
-`uv run ethos --help` to see the available workspace, capability, session, and
-server commands.
+`uv run ethos --help` to see the available workspace, provider, capability,
+session, and server commands.
 
 To run the Vox API:
 
@@ -61,6 +61,20 @@ uv run ethos config capability set skills '{"max_skills": 50}'
 uv run ethos config capability set skills '{"enabled": false}' \
   --workspace my-project
 ```
+
+Provider configuration can be inspected, checked without saving, and updated
+through the same CLI:
+
+```sh
+uv run ethos config provider show
+uv run ethos config provider check '{"model_name": "gpt-5-mini"}'
+uv run ethos config provider set \
+  '{"name": "openai", "model_name": "gpt-5-mini", "api_key": "..."}'
+```
+
+Provider output reports only whether a credential is configured. Credentials
+may instead be referenced through variables such as
+`ETHOS_KEYS__OPENAI_API_KEY`.
 
 Application state is stored locally, but model requests are sent to the
 provider you select. Session history can contain reasoning, tool arguments,
