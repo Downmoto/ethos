@@ -20,7 +20,7 @@ class CapabilityName(StrEnum):
     """Stable names accepted by configuration, CLI, and Vox boundaries."""
 
     SKILLS = "skills"
-    READ_ONLY_FILE_SYSTEM = "read_only_file_system"
+    FILE_SYSTEM = "file_system"
 
 
 class SkillsCapabilityConfig(BaseModel):
@@ -35,14 +35,19 @@ class SkillsCapabilityConfig(BaseModel):
     max_resources: int = Field(default=200, ge=1)
 
 
-class ReadOnlyFilesystemCapabilityConfig(BaseModel):
-    """Complete global settings for workspace-bounded file reads."""
+class FilesystemCapabilityConfig(BaseModel):
+    """Complete global settings for workspace-bounded filesystem tools."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     enabled: bool = True
     max_read_file_bytes: int = Field(default=100 * 1024, ge=1)
-    max_list_file_entries: int = Field(default=1_000, ge=1)
+    max_write_file_bytes: int = Field(default=100 * 1024, ge=1)
+    max_file_entries: int = Field(default=1_000, ge=1)
+    max_search_matches: int = Field(default=1_000, ge=1)
+    max_search_result_bytes: int = Field(default=100 * 1024, ge=1)
+    max_patch_bytes: int = Field(default=100 * 1024, ge=1)
+    max_patch_files: int = Field(default=20, ge=1)
 
 
 class GlobalCapabilitiesConfig(BaseModel):
@@ -53,8 +58,8 @@ class GlobalCapabilitiesConfig(BaseModel):
     skills: SkillsCapabilityConfig = Field(
         default_factory=SkillsCapabilityConfig
     )
-    read_only_file_system: ReadOnlyFilesystemCapabilityConfig = Field(
-        default_factory=ReadOnlyFilesystemCapabilityConfig
+    file_system: FilesystemCapabilityConfig = Field(
+        default_factory=FilesystemCapabilityConfig
     )
 
 
@@ -70,14 +75,19 @@ class SkillsCapabilityOverride(BaseModel):
     max_resources: int | None = Field(default=None, ge=1)
 
 
-class ReadOnlyFilesystemCapabilityOverride(BaseModel):
+class FilesystemCapabilityOverride(BaseModel):
     """Optional workspace values that may only narrow filesystem settings."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     enabled: bool | None = None
     max_read_file_bytes: int | None = Field(default=None, ge=1)
-    max_list_file_entries: int | None = Field(default=None, ge=1)
+    max_write_file_bytes: int | None = Field(default=None, ge=1)
+    max_file_entries: int | None = Field(default=None, ge=1)
+    max_search_matches: int | None = Field(default=None, ge=1)
+    max_search_result_bytes: int | None = Field(default=None, ge=1)
+    max_patch_bytes: int | None = Field(default=None, ge=1)
+    max_patch_files: int | None = Field(default=None, ge=1)
 
 
 class WorkspaceCapabilityOverrides(BaseModel):
@@ -86,7 +96,7 @@ class WorkspaceCapabilityOverrides(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     skills: SkillsCapabilityOverride | None = None
-    read_only_file_system: ReadOnlyFilesystemCapabilityOverride | None = None
+    file_system: FilesystemCapabilityOverride | None = None
 
 
 class CapabilityConfiguration(BaseModel):
@@ -107,11 +117,9 @@ class CapabilityConfiguration(BaseModel):
     )
 
 
-type CapabilitySettings = (
-    SkillsCapabilityConfig | ReadOnlyFilesystemCapabilityConfig
-)
+type CapabilitySettings = SkillsCapabilityConfig | FilesystemCapabilityConfig
 type CapabilityOverride = (
-    SkillsCapabilityOverride | ReadOnlyFilesystemCapabilityOverride
+    SkillsCapabilityOverride | FilesystemCapabilityOverride
 )
 
 
@@ -182,9 +190,9 @@ class CapabilityManager:
                 config.global_settings.skills,
                 overrides.skills,
             ),
-            read_only_file_system=_effective_settings(
-                config.global_settings.read_only_file_system,
-                overrides.read_only_file_system,
+            file_system=_effective_settings(
+                config.global_settings.file_system,
+                overrides.file_system,
             ),
         )
 
@@ -290,7 +298,7 @@ def _global_settings(
 ) -> CapabilitySettings:
     if name is CapabilityName.SKILLS:
         return config.global_settings.skills
-    return config.global_settings.read_only_file_system
+    return config.global_settings.file_system
 
 
 def _workspace_override(
@@ -303,7 +311,7 @@ def _workspace_override(
         return None
     if name is CapabilityName.SKILLS:
         return overrides.skills
-    return overrides.read_only_file_system
+    return overrides.file_system
 
 
 def _override_type(
@@ -311,7 +319,7 @@ def _override_type(
 ) -> type[CapabilityOverride]:
     if name is CapabilityName.SKILLS:
         return SkillsCapabilityOverride
-    return ReadOnlyFilesystemCapabilityOverride
+    return FilesystemCapabilityOverride
 
 
 def _effective_settings[Settings: CapabilitySettings](

@@ -122,9 +122,7 @@ def test_service_omits_disabled_capabilities(tmp_path: Path) -> None:
         assert len(tuple(resolver(run_context))) == 2
 
         ethos.capabilities.configure_global("skills", {"enabled": False})
-        ethos.capabilities.configure_global(
-            "read_only_file_system", {"enabled": False}
-        )
+        ethos.capabilities.configure_global("file_system", {"enabled": False})
 
         assert tuple(resolver(run_context)) == ()
         assert ethos._runtime() is runtime
@@ -139,12 +137,12 @@ def test_service_manages_sparse_workspace_capability_overrides(
         with Ethos(home) as ethos:
             ethos.workspaces.create("health")
             await ethos.configure_capability(
-                "read_only_file_system",
+                "file_system",
                 {"max_read_file_bytes": 2048},
                 context(),
             )
             workspace = await ethos.configure_capability(
-                "read_only_file_system",
+                "file_system",
                 {"enabled": False, "max_read_file_bytes": 4096},
                 context(),
                 "health",
@@ -157,7 +155,7 @@ def test_service_manages_sparse_workspace_capability_overrides(
             assert workspace.effective["enabled"] is False
             assert workspace.effective["max_read_file_bytes"] == 2048
             reset = await ethos.reset_capability_override(
-                "health", "read_only_file_system", context()
+                "health", "file_system", context()
             )
             assert reset.configured == {}
             assert reset.effective["enabled"] is True

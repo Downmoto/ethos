@@ -273,7 +273,7 @@ def test_cli_manages_global_and_workspace_capabilities(
     assert "max_skills: 10" in workspace_result.output
     assert list_result.exit_code == 0
     assert "skills (global)" in list_result.output
-    assert "read_only_file_system (global)" in list_result.output
+    assert "file_system (global)" in list_result.output
     assert show_result.exit_code == 0
     assert show_result.output == workspace_result.output
     assert reset_result.exit_code == 0
