@@ -6,7 +6,7 @@ and runtime concurrency compose.
 
 import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Annotated, Final, Literal, cast
@@ -375,14 +375,16 @@ class AgentRuntime:
         """Consume one pending approval and resume its interrupted turn."""
         async with self._session_lock(workspace_name, session_id):
             with self._sessions.runtime_lock(workspace_name, session_id):
-                async for event in self._resolve_approval_locked(
+                stream = self._resolve_approval_locked(
                     workspace_name,
                     session_id,
                     approval_id,
                     approved=approved,
                     event_location=event_location,
-                ):
-                    yield event
+                )
+                async with aclosing(stream):
+                    async for event in stream:
+                        yield event
 
     async def recover(
         self,
@@ -456,7 +458,7 @@ class AgentRuntime:
         *,
         approved: bool,
         event_location: str,
-    ) -> AsyncIterator[RuntimeStreamEvent]:
+    ) -> AsyncGenerator[RuntimeStreamEvent, None]:
         session = await self._recover_executing_approvals(
             workspace_name,
             session_id,
