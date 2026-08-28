@@ -31,8 +31,9 @@ from ethos.service import (
     ProviderView,
     RequestContext,
     SessionView,
+    ToolOutputChunk,
 )
-from ethos.tools import ToolEffect
+from ethos.tools import ToolEffect, ToolOutputStream
 
 
 def test_otel_detach_context_error_is_suppressed(
@@ -466,6 +467,36 @@ def approval_chunk() -> ApprovalChunk:
         created_at=datetime(2026, 8, 21, tzinfo=UTC),
         workspace="default",
         session_id="session-1",
+    )
+
+
+def test_cli_prints_live_tool_streams_to_stderr(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    async def chunks() -> AsyncIterator[ToolOutputChunk]:
+        yield ToolOutputChunk(
+            call_id="call-1",
+            tool_name="run_command",
+            stream=ToolOutputStream.STDOUT,
+            text="hello\n",
+            workspace="default",
+            session_id="session-1",
+        )
+        yield ToolOutputChunk(
+            call_id="call-1",
+            tool_name="run_command",
+            stream=ToolOutputStream.STDERR,
+            text="warning",
+            workspace="default",
+            session_id="session-1",
+        )
+
+    asyncio.run(app._print_response(chunks()))
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "[run_command stdout] hello\n[run_command stderr] warning\n"
     )
 
 

@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncGenerator, AsyncIterator, Iterable
 from pathlib import Path
 from typing import cast
 
@@ -33,6 +33,8 @@ from ethos.runtime import (
     AgentRuntime,
     ApprovalStreamEvent,
     PromptStreamEvent,
+    RuntimeStreamEvent,
+    ToolOutputStreamEvent,
 )
 from ethos.sessions import (
     ApprovalNotFoundError,
@@ -43,7 +45,13 @@ from ethos.sessions import (
 from ethos.tools import (
     ApprovalState,
     ToolEffect,
+    ToolExecution,
+    ToolExecutionCompleted,
     ToolExecutionError,
+    ToolExecutionEvent,
+    ToolExecutionIndeterminateError,
+    ToolOutput,
+    ToolOutputStream,
     ToolRegistry,
 )
 from ethos.workspaces import WorkspaceManager
@@ -82,6 +90,68 @@ class RuntimeTool:
         if self.failure is not None:
             raise self.failure
         return f"echo: {arguments.value}"
+
+
+class StreamingRuntimeExecution:
+    def __init__(
+        self,
+        call: ToolCallPart,
+        *,
+        blocks: bool = False,
+        indeterminate_cancel: bool = False,
+    ) -> None:
+        self.call = call
+        self.blocks = blocks
+        self.indeterminate_cancel = indeterminate_cancel
+        self.cancel_calls = 0
+
+    async def events(self) -> AsyncIterator[ToolExecutionEvent]:
+        yield ToolOutput(ToolOutputStream.STDOUT, "live\n")
+        if self.blocks:
+            await asyncio.Event().wait()
+        yield ToolExecutionCompleted(
+            ToolResultPart(
+                call_id=self.call.call_id,
+                name=self.call.name,
+                content="completed result",
+            )
+        )
+
+    async def cancel(self) -> ToolResultPart:
+        self.cancel_calls += 1
+        if self.indeterminate_cancel:
+            raise ToolExecutionIndeterminateError("unknown")
+        return ToolResultPart(
+            call_id=self.call.call_id,
+            name=self.call.name,
+            content="cancelled result",
+            is_error=True,
+        )
+
+
+class StreamingRuntimeTool(RuntimeTool):
+    def __init__(
+        self,
+        *,
+        blocks: bool = False,
+        indeterminate_cancel: bool = False,
+    ) -> None:
+        super().__init__(effect=ToolEffect.WRITE)
+        self.blocks = blocks
+        self.indeterminate_cancel = indeterminate_cancel
+        self.execution: StreamingRuntimeExecution | None = None
+
+    async def start(
+        self, arguments: BaseModel, call: ToolCallPart
+    ) -> ToolExecution:
+        assert isinstance(arguments, Arguments)
+        self.values.append(arguments.value)
+        self.execution = StreamingRuntimeExecution(
+            call,
+            blocks=self.blocks,
+            indeterminate_cancel=self.indeterminate_cancel,
+        )
+        return self.execution
 
 
 def tool_call(
@@ -387,6 +457,148 @@ def test_write_tool_waits_for_durable_approval(tmp_path: Path) -> None:
             )
         )
     assert tool.values == ["one"]
+
+
+def test_runtime_forwards_streaming_output_before_durable_result(
+    tmp_path: Path,
+) -> None:
+    model = FakeModel(
+        (call_response(tool_call()), text_response()),
+        stream_chunks=((), ("done",)),
+        features=ModelFeatures(tools=True),
+    )
+    tool = StreamingRuntimeTool()
+    sessions, session, runtime, _registered = setup_runtime(
+        tmp_path, model, tool
+    )
+
+    async def scenario() -> list[RuntimeStreamEvent]:
+        pending = [
+            event
+            async for event in runtime.run(
+                "hello", "my-project", str(session.id)
+            )
+        ]
+        approval_event = pending[0]
+        assert isinstance(approval_event, ApprovalStreamEvent)
+        return [
+            event
+            async for event in runtime.resolve_approval(
+                "my-project",
+                str(session.id),
+                approval_event.approval.id,
+                approved=True,
+            )
+        ]
+
+    events = asyncio.run(scenario())
+
+    assert events[0] == ToolOutputStreamEvent(
+        call_id="call-1",
+        tool_name="echo",
+        stream=ToolOutputStream.STDOUT,
+        text="live\n",
+    )
+    assert events[-1] == PromptStreamEvent(
+        usage=Usage(input_tokens=5, output_tokens=3), done=True
+    )
+    stored = sessions.get("my-project", str(session.id))
+    assert stored.approvals[0].state is ApprovalState.COMPLETED
+    assert stored.approvals[0].result == ToolResultPart(
+        call_id="call-1",
+        name="echo",
+        content="completed result",
+    )
+    assert all(
+        "live" not in part.model_dump_json()
+        for message in stored.messages
+        for part in message.parts
+    )
+
+
+def test_closing_approved_stream_persists_definitive_cancellation(
+    tmp_path: Path,
+) -> None:
+    model = FakeModel(
+        (call_response(tool_call()),),
+        features=ModelFeatures(tools=True),
+    )
+    tool = StreamingRuntimeTool(blocks=True)
+    sessions, session, runtime, _registered = setup_runtime(
+        tmp_path, model, tool
+    )
+
+    async def scenario() -> None:
+        pending = [
+            event
+            async for event in runtime.run(
+                "hello", "my-project", str(session.id)
+            )
+        ]
+        approval_event = pending[0]
+        assert isinstance(approval_event, ApprovalStreamEvent)
+        stream = cast(
+            AsyncGenerator[RuntimeStreamEvent, None],
+            runtime.resolve_approval(
+                "my-project",
+                str(session.id),
+                approval_event.approval.id,
+                approved=True,
+            ),
+        )
+        assert isinstance(await anext(stream), ToolOutputStreamEvent)
+        await stream.aclose()
+
+    asyncio.run(scenario())
+
+    assert tool.execution is not None
+    assert tool.execution.cancel_calls == 1
+    stored = sessions.get("my-project", str(session.id))
+    assert stored.approvals[0].state is ApprovalState.COMPLETED
+    assert stored.approvals[0].result is not None
+    assert stored.approvals[0].result.content == "cancelled result"
+    assert stored.messages[-1].role is Role.TOOL
+
+
+def test_closing_approved_stream_marks_uncertain_cancellation_indeterminate(
+    tmp_path: Path,
+) -> None:
+    model = FakeModel(
+        (call_response(tool_call()),),
+        features=ModelFeatures(tools=True),
+    )
+    tool = StreamingRuntimeTool(blocks=True, indeterminate_cancel=True)
+    sessions, session, runtime, _registered = setup_runtime(
+        tmp_path, model, tool
+    )
+
+    async def scenario() -> None:
+        pending = [
+            event
+            async for event in runtime.run(
+                "hello", "my-project", str(session.id)
+            )
+        ]
+        approval_event = pending[0]
+        assert isinstance(approval_event, ApprovalStreamEvent)
+        stream = cast(
+            AsyncGenerator[RuntimeStreamEvent, None],
+            runtime.resolve_approval(
+                "my-project",
+                str(session.id),
+                approval_event.approval.id,
+                approved=True,
+            ),
+        )
+        assert isinstance(await anext(stream), ToolOutputStreamEvent)
+        await stream.aclose()
+
+    asyncio.run(scenario())
+
+    stored = sessions.get("my-project", str(session.id))
+    assert stored.approvals[0].state is ApprovalState.INDETERMINATE
+    assert stored.approvals[0].result is None
+    assert stored.messages[-1].role is Role.ASSISTANT
 
 
 def test_recovery_denies_pending_approval(tmp_path: Path) -> None:
@@ -732,9 +944,14 @@ def test_session_rejects_invalid_approval_transitions(tmp_path: Path) -> None:
 
 
 async def _collect_runtime(
-    events: AsyncIterator[PromptStreamEvent | ApprovalStreamEvent],
+    events: AsyncIterator[RuntimeStreamEvent],
 ) -> list[PromptStreamEvent | ApprovalStreamEvent]:
-    return [event async for event in events]
+    collected: list[PromptStreamEvent | ApprovalStreamEvent] = []
+    async for event in events:
+        if isinstance(event, ToolOutputStreamEvent):
+            continue
+        collected.append(event)
+    return collected
 
 
 def test_runtime_executes_several_calls_sequentially(tmp_path: Path) -> None:

@@ -202,6 +202,25 @@ the workspace are rejected. Recursive discovery never follows directory
 symlinks. Every call still passes through the standard tool executor and
 policy.
 
+The `shell` capability contributes one approval-gated `run_command` tool. It
+runs the exact command through `/bin/sh -c` in an existing, canonicalised
+workspace-relative directory. The native sandbox makes the workspace and a
+private per-command temporary directory writable while denying network and
+unrelated host access. Commands have no stdin or terminal and receive a small
+controlled environment and fixed executable path rather than Ethos credentials
+or developer-shell shims. Configuration bounds
+command UTF-8 bytes, wall-clock seconds, and combined stdout/stderr bytes. If
+the platform sandbox cannot enforce this policy, the capability fails closed
+during run resolution before the model request.
+
+`run_command` implements the optional streaming-tool protocol. The executor's
+`start()` method returns one handle whose ordered events contain zero or more
+non-empty stdout/stderr text fragments and one final `ToolResultPart`.
+Incremental decoders preserve split UTF-8 code points. `run()` remains the
+compatibility path for ordinary callers: it drains transient fragments and
+returns only the final result. Contributors adding ordinary tools should keep
+implementing `execute()`; streaming is not a second general registration path.
+
 The skills capability follows the Agent Skills progressive-disclosure model.
 It scans direct children of the native and cross-client locations at both user
 and project scope:
@@ -283,6 +302,14 @@ persistence failure. Streamed output therefore does not by itself prove that
 the turn was committed. The final `done=True` event is emitted only after the
 history replacement succeeds.
 
+Streaming tool output follows the same rule. It is sent through runtime,
+service, CLI, and Vox stream values but never added to messages or lifecycle
+events. After approval, closing the consumer cancels the active execution
+under cleanup shielding. A definitive cancelled result is atomically stored
+and completes the approval; uncertain process cleanup makes the approval
+`indeterminate` with no synthetic result or replay. The stream still has no
+final `done=True` event because its consumer has gone away.
+
 Reasoning has a configurable answer-now deadline. It starts on the first
 reasoning delta and is removed when answer text begins. On expiry, the runtime
 cancels that request and retries once with reasoning disabled and a temporary
@@ -345,4 +372,6 @@ and documenting them:
 - A final runtime completion event follows successful history persistence.
 - Answer-now fallback is attempted at most once per run.
 - Interrupted tool recovery never executes or replays a tool.
+- Transient tool output is never canonical session or lifecycle-event data.
+- Shell commands never run without durable approval and native isolation.
 - Atomic file replacement is not represented as a cross-process transaction.

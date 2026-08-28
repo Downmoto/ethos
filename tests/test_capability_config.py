@@ -27,6 +27,10 @@ def test_capability_configuration_loads_registered_defaults(
     assert config.global_settings.skills.max_skills == 200
     assert config.global_settings.file_system.enabled
     assert config.global_settings.file_system.max_patch_files == 20
+    assert config.global_settings.shell.enabled
+    assert config.global_settings.shell.max_command_bytes == 16 * 1024
+    assert config.global_settings.shell.max_command_seconds == 120
+    assert config.global_settings.shell.max_output_bytes == 100 * 1024
     assert config.workspaces == {}
 
 
@@ -91,9 +95,28 @@ def test_unknown_capability_and_configuration_fail_closed(
 ) -> None:
     manager = _manager(tmp_path)
 
-    with pytest.raises(ValueError, match="unknown capability: shell"):
-        manager.configured("shell")
+    with pytest.raises(ValueError, match="unknown capability: terminal"):
+        manager.configured("terminal")
 
     manager.path.write_text("unknown: true\n")
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         manager.load()
+
+
+def test_shell_workspace_limits_can_only_narrow_global_ceilings(
+    tmp_path: Path,
+) -> None:
+    manager = _manager(tmp_path)
+    manager.configure_global(
+        "shell",
+        {"max_command_seconds": 60, "max_output_bytes": 4096},
+    )
+    manager.configure_workspace(
+        "project",
+        "shell",
+        {"max_command_seconds": 90, "max_output_bytes": 1024},
+    )
+
+    effective = manager.effective("project").shell
+    assert effective.max_command_seconds == 60
+    assert effective.max_output_bytes == 1024

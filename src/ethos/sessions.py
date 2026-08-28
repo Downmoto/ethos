@@ -203,6 +203,7 @@ class SessionManager:
             (ApprovalState.PENDING, ApprovalState.EXECUTING),
             (ApprovalState.PENDING, ApprovalState.DENIED),
             (ApprovalState.EXECUTING, ApprovalState.COMPLETED),
+            (ApprovalState.EXECUTING, ApprovalState.INDETERMINATE),
         ):
             raise ApprovalStateError(
                 "invalid approval transition: "

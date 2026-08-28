@@ -42,6 +42,11 @@ def test_context_builder_always_includes_system_instruction() -> None:
     assert request.tools == ()
 
 
+def test_system_instruction_forbids_unexecuted_tool_intentions() -> None:
+    assert "call it before responding" in SYSTEM_INSTRUCTION
+    assert "never describe a tool call you intend to make" in SYSTEM_INSTRUCTION
+
+
 def test_context_builder_prepends_instructions_and_preserves_tool_order() -> (
     None
 ):

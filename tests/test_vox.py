@@ -29,10 +29,11 @@ from ethos.service import (
     ProviderView,
     RequestContext,
     SessionView,
+    ToolOutputChunk,
     WorkspaceView,
 )
 from ethos.sessions import ApprovalNotFoundError, ApprovalStateError
-from ethos.tools import ToolEffect
+from ethos.tools import ToolEffect, ToolOutputStream
 
 WORKSPACE = WorkspaceView(name="my-project", path="/workspaces/my-project")
 CAPABILITY = CapabilityView(
@@ -509,6 +510,49 @@ def test_vox_frames_approval_event() -> None:
     assert event["approval_id"] == "approval-1"
     assert event["tool_name"] == "write_file"
     assert event["arguments"] == {"path": "README.md"}
+
+
+def test_vox_frames_tool_output_event() -> None:
+    class ToolOutputEthos(FakeEthos):
+        async def chat(
+            self,
+            workspace: str,
+            session_id: str,
+            prompt: str,
+            context: RequestContext,
+        ) -> AsyncIterator[ChatEvent]:
+            self.record("chat", workspace, session_id, prompt, context)
+            yield ToolOutputChunk(
+                call_id="call-1",
+                tool_name="run_command",
+                stream=ToolOutputStream.STDERR,
+                text="building\n",
+                workspace=workspace,
+                session_id=session_id,
+            )
+
+    app = VoxServer(VoxConfig()).create_app(cast(Ethos, ToolOutputEthos()))
+
+    with TestClient(app).stream(
+        "POST",
+        "/workspaces/my-project/sessions/session-id/messages",
+        json={"prompt": "hi"},
+    ) as response:
+        event = next(
+            json.loads(line.removeprefix("data: "))
+            for line in response.iter_lines()
+            if line.startswith("data: ")
+        )
+
+    assert event == {
+        "kind": "tool_output",
+        "call_id": "call-1",
+        "tool_name": "run_command",
+        "stream": "stderr",
+        "text": "building\n",
+        "workspace": "my-project",
+        "session_id": "session-id",
+    }
 
 
 def test_vox_event_stream_closes_source_when_consumer_stops() -> None:

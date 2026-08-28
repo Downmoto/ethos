@@ -14,7 +14,12 @@ from ethos.models import (
     TextDelta,
     TextPart,
 )
-from ethos.sandbox import SandboxExecution, SandboxRequest
+from ethos.sandbox import (
+    SandboxEvent,
+    SandboxExecution,
+    SandboxRequest,
+    SandboxResult,
+)
 
 
 class FakeModel:
@@ -103,3 +108,31 @@ class FakeSandboxProvider:
         if not self._executions:
             raise AssertionError("fake sandbox has no queued execution")
         return self._executions.popleft()
+
+
+class FakeSandboxExecution:
+    """Replay raw events with an independently configurable cancellation."""
+
+    def __init__(
+        self,
+        events: Sequence[SandboxEvent | Exception],
+        *,
+        cancel_result: SandboxResult,
+    ) -> None:
+        self._events = events
+        self._cancel_result = cancel_result
+        self.cancel_calls = 0
+        self.close_calls = 0
+
+    async def events(self) -> AsyncIterator[SandboxEvent]:
+        for event in self._events:
+            if isinstance(event, Exception):
+                raise event
+            yield event
+
+    async def cancel(self) -> SandboxResult:
+        self.cancel_calls += 1
+        return self._cancel_result
+
+    async def aclose(self) -> None:
+        self.close_calls += 1

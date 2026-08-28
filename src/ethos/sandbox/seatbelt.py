@@ -45,6 +45,9 @@ _SYSTEM_READ_FILES = (
     Path("/dev/null"),
     Path("/dev/random"),
     Path("/dev/urandom"),
+    # macOS /bin/sh consults this root-owned selector before choosing its
+    # implementation. The selected executable remains under readable /bin.
+    Path("/private/var/select/sh"),
 )
 
 
@@ -223,6 +226,9 @@ def _seatbelt_profile(
         "(allow mach-lookup",
         '  (global-name "com.apple.system.opendirectoryd.libinfo"))',
         _path_rule("file-read*", read_roots, _SYSTEM_READ_FILES),
+        # Homebrew launchers canonicalise their own path through /opt. Permit
+        # ancestor metadata without making sibling package roots readable.
+        _path_rule("file-read-metadata", (), (Path("/opt"),)),
         _path_rule(
             "file-write*", (request.workspace_path, request.temporary_path), ()
         ),

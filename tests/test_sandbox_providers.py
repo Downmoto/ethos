@@ -54,6 +54,8 @@ def test_seatbelt_profile_escapes_paths_and_denies_by_default(
     assert "(allow network" not in profile
     assert json.dumps(str(sandbox_request.workspace_path)) in profile
     assert json.dumps(str(sandbox_request.temporary_path)) in profile
+    assert json.dumps("/private/var/select/sh") in profile
+    assert '(allow file-read-metadata\n  (literal "/opt")\n)' in profile
 
 
 def test_bubblewrap_invocation_has_fixed_isolation_contract(

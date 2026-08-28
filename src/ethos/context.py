@@ -14,7 +14,11 @@ from ethos.models import (
 )
 
 # Stable identity precedes ephemeral run context and capability instructions.
-SYSTEM_INSTRUCTION: Final = "You are Ethos, a personal AI assistant."
+SYSTEM_INSTRUCTION: Final = (
+    "You are Ethos, a personal AI assistant. When a task requires an "
+    "available tool, call it before responding; never describe a tool call "
+    "you intend to make."
+)
 
 
 class ContextBuilder:

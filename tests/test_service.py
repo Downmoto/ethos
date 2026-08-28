@@ -20,15 +20,21 @@ from ethos.models import (
     Usage,
 )
 from ethos.provider import LiteLLMModel, ProviderName
-from ethos.runtime import AgentRuntime, ApprovalStreamEvent, PromptStreamEvent
+from ethos.runtime import (
+    AgentRuntime,
+    ApprovalStreamEvent,
+    PromptStreamEvent,
+    ToolOutputStreamEvent,
+)
 from ethos.service import (
     ApprovalChunk,
     ChatChunk,
     Ethos,
     RequestContext,
+    ToolOutputChunk,
 )
 from ethos.sessions import Session
-from ethos.tools import ToolApproval, ToolEffect
+from ethos.tools import ToolApproval, ToolEffect, ToolOutputStream
 
 
 def context() -> RequestContext:
@@ -119,13 +125,56 @@ def test_service_omits_disabled_capabilities(tmp_path: Path) -> None:
         run_context = RunContext(
             "default", ethos.workspaces.get("default").path, "id"
         )
-        assert len(tuple(resolver(run_context))) == 2
+        assert len(tuple(resolver(run_context))) == 3
 
         ethos.capabilities.configure_global("skills", {"enabled": False})
         ethos.capabilities.configure_global("file_system", {"enabled": False})
+        ethos.capabilities.configure_global("shell", {"enabled": False})
 
         assert tuple(resolver(run_context)) == ()
         assert ethos._runtime() is runtime
+
+
+def test_service_forwards_transient_tool_output_without_storing_it(
+    tmp_path: Path,
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+
+    async def exercise() -> None:
+        with Ethos(home) as ethos:
+            session = ethos.sessions.create("default")
+
+            async def events() -> AsyncIterator[ToolOutputStreamEvent]:
+                yield ToolOutputStreamEvent(
+                    call_id="call-1",
+                    tool_name="run_command",
+                    stream=ToolOutputStream.STDERR,
+                    text="building\n",
+                )
+
+            chunks = [
+                event
+                async for event in ethos._chat_events(
+                    events(),
+                    "default",
+                    str(session.id),
+                    context(),
+                )
+            ]
+
+            assert chunks == [
+                ToolOutputChunk(
+                    call_id="call-1",
+                    tool_name="run_command",
+                    stream=ToolOutputStream.STDERR,
+                    text="building\n",
+                    workspace="default",
+                    session_id=str(session.id),
+                )
+            ]
+            assert ethos.sessions.get("default", str(session.id)).messages == ()
+
+    asyncio.run(exercise())
 
 
 def test_service_manages_sparse_workspace_capability_overrides(
