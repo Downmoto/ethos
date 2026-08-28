@@ -23,7 +23,7 @@ from ethos.events import create_event_emitter, event_factory
 from ethos.events.emitters import EnvelopeEventEmitter
 from ethos.events.models import EventPayload
 from ethos.events.types import EventType
-from ethos.home import DB_PATH, SKILLS_PATH
+from ethos.home import DB_PATH, LOGS_PATH, SKILLS_PATH
 from ethos.models import Message, Model, ReasoningEffort, Usage
 from ethos.provider import AIProvider, ProviderName
 from ethos.provider_config import ProviderManager
@@ -256,6 +256,11 @@ class Ethos:
                 events=self.events,
                 answer_now_after_seconds=(
                     settings.runtime.answer_now_after_seconds
+                ),
+                context_diagnostic_path=(
+                    self.home / LOGS_PATH / "context.json"
+                    if settings.runtime.context_diagnostics
+                    else None
                 ),
             )
         return self._agent

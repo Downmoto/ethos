@@ -83,6 +83,7 @@ class RuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     answer_now_after_seconds: float = Field(default=60.0, gt=0)
+    context_diagnostics: bool = False
 
 
 class EthosSettings(BaseSettings):

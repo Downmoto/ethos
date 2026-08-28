@@ -113,6 +113,26 @@ def test_runtime_returns_model_output(tmp_path: Path) -> None:
     )
 
 
+def test_runtime_dumps_context_before_inference(tmp_path: Path) -> None:
+    diagnostic = tmp_path / "logs" / "context.json"
+    model = FakeModel([response()], stream_chunks=[("response",)])
+    sessions, session, _runtime = setup_runtime(tmp_path, model)
+    runtime = AgentRuntime(
+        sessions,
+        lambda: model,
+        events=EnvelopeEventEmitter(),
+        context_diagnostic_path=diagnostic,
+    )
+
+    asyncio.run(collect(runtime, session, "show me the context"))
+
+    assert (
+        ModelRequest.model_validate_json(diagnostic.read_text())
+        == (model.requests[0])
+    )
+    assert diagnostic.stat().st_mode & 0o777 == 0o600
+
+
 def test_runtime_streams_and_persists_reasoning_separately(
     tmp_path: Path,
 ) -> None:
