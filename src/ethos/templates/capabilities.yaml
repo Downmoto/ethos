@@ -31,5 +31,15 @@ global:
     # Maximum files affected by one patch.
     max_patch_files: 20
 
+  shell:
+    # Enable native-sandboxed shell commands.
+    enabled: true
+    # Maximum UTF-8 bytes accepted in one command.
+    max_command_bytes: 16384
+    # Maximum wall-clock seconds for one command.
+    max_command_seconds: 120
+    # Maximum combined bytes streamed from stdout and stderr.
+    max_output_bytes: 102400
+
 # Workspace entries are sparse overrides. Missing fields inherit globally.
 workspaces: {}

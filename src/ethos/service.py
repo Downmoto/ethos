@@ -1,6 +1,6 @@
 """Shared Ethos application behaviour for the CLI and Vox protocol."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ethos.capabilities import Capability, RunContext
 from ethos.capabilities.filesystem import FilesystemCapability
+from ethos.capabilities.shell import ShellCapability
 from ethos.capabilities.skills import SkillsCapability
 from ethos.capability_config import (
     CAPABILITIES_FILE,
@@ -30,10 +31,12 @@ from ethos.runtime import (
     AgentRuntime,
     ApprovalStreamEvent,
     RuntimeStreamEvent,
+    ToolOutputStreamEvent,
 )
+from ethos.sandbox import SandboxProvider, resolve_sandbox_provider
 from ethos.sessions import SESSIONS_DIR, Session, SessionManager
 from ethos.storage import Storage
-from ethos.tools import ToolEffect
+from ethos.tools import ToolEffect, ToolOutputStream
 from ethos.workspaces import WORKSPACES_DIR, Workspace, WorkspaceManager
 
 
@@ -132,8 +135,20 @@ class ApprovalChunk(BaseModel):
     session_id: str
 
 
+class ToolOutputChunk(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["tool_output"] = "tool_output"
+    call_id: str
+    tool_name: str
+    stream: ToolOutputStream
+    text: str = Field(min_length=1)
+    workspace: str
+    session_id: str
+
+
 type ChatEvent = Annotated[
-    ChatChunk | ApprovalChunk,
+    ChatChunk | ApprovalChunk | ToolOutputChunk,
     Field(discriminator="kind"),
 ]
 
@@ -200,6 +215,10 @@ class Ethos:
     def __init__(
         self,
         home: Path,
+        *,
+        sandbox_provider_factory: (
+            Callable[[], Awaitable[SandboxProvider]] | None
+        ) = None,
     ) -> None:
         self.home = home
         self.storage = Storage(home / DB_PATH)
@@ -208,6 +227,11 @@ class Ethos:
         self.capabilities = CapabilityManager(home / CAPABILITIES_FILE)
         self.providers = ProviderManager(home / CONFIG_FILE)
         self.events = create_event_emitter(self.storage)
+        self._sandbox_provider_factory = (
+            sandbox_provider_factory
+            if sandbox_provider_factory is not None
+            else resolve_sandbox_provider
+        )
         self._agent: AgentRuntime | None = None
 
     def close(self) -> None:
@@ -307,6 +331,16 @@ class Ethos:
                     max_skills=skills.max_skills,
                     max_resource_file_bytes=skills.max_resource_file_bytes,
                     max_resources=skills.max_resources,
+                )
+            )
+        shell = settings.shell
+        if shell.enabled:
+            capabilities.append(
+                ShellCapability(
+                    self._sandbox_provider_factory,
+                    max_command_bytes=shell.max_command_bytes,
+                    max_command_seconds=shell.max_command_seconds,
+                    max_output_bytes=shell.max_output_bytes,
                 )
             )
         return tuple(capabilities)
@@ -558,6 +592,16 @@ class Ethos:
 
         emitted = False
         async for event in events:
+            if isinstance(event, ToolOutputStreamEvent):
+                yield ToolOutputChunk(
+                    call_id=event.call_id,
+                    tool_name=event.tool_name,
+                    stream=event.stream,
+                    text=event.text,
+                    workspace=workspace,
+                    session_id=session_id,
+                )
+                continue
             if isinstance(event, ApprovalStreamEvent):
                 approval = event.approval
                 yield ApprovalChunk(

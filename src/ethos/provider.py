@@ -260,7 +260,14 @@ class LiteLLMModel:
                     else:
                         order.append(_TextAssembly(chunks=[content]))
                     yield TextDelta(text=content)
-                _add_tool_call_deltas(delta, tool_calls, order)
+                _add_tool_call_deltas(
+                    delta,
+                    tool_calls,
+                    order,
+                    allow_reused_index=(
+                        self.provider.name is ProviderName.OLLAMA
+                    ),
+                )
                 if choice.finish_reason is not None:
                     finish_reason = _finish_reason(choice.finish_reason)
                     finished = True
@@ -519,6 +526,8 @@ def _add_tool_call_deltas(
     value: object,
     calls: dict[int, _ToolCallAssembly],
     order: list[_TextAssembly | _ReasoningAssembly | _ToolCallAssembly],
+    *,
+    allow_reused_index: bool = False,
 ) -> None:
     fragments = getattr(value, "tool_calls", None)
     if fragments is None:
@@ -535,12 +544,21 @@ def _add_tool_call_deltas(
         ):
             raise ModelProtocolError("provider returned invalid tool calls")
         call = calls.get(index)
+        call_id = getattr(fragment, "id", None)
+        if (
+            allow_reused_index
+            and call is not None
+            and isinstance(call_id, str)
+            and call.call_id not in (None, call_id)
+        ):
+            # Ollama streams each complete native call with index zero. A new
+            # LiteLLM-generated ID therefore starts a new call, not a fragment.
+            call = None
         if call is None:
             call = _ToolCallAssembly(index=index)
             calls[index] = call
             order.append(call)
 
-        call_id = getattr(fragment, "id", None)
         if call_id is not None:
             if (
                 not isinstance(call_id, str)

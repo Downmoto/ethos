@@ -6,7 +6,7 @@ and runtime concurrency compose.
 
 import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Annotated, Final, Literal, cast
@@ -47,7 +47,10 @@ from ethos.tools import (
     RequireApproval,
     ToolApproval,
     ToolEffect,
+    ToolExecutionIndeterminateError,
     ToolExecutor,
+    ToolOutput,
+    ToolOutputStream,
     ToolPolicyError,
     ToolPreparationOutcome,
     ToolRegistry,
@@ -170,12 +173,24 @@ class ApprovalStreamEvent:
     approval: ToolApproval
 
 
+@dataclass(frozen=True)
+class ToolOutputStreamEvent:
+    """Transient output from one executing tool call."""
+
+    call_id: str
+    tool_name: str
+    stream: ToolOutputStream
+    text: str
+
+
 @dataclass
 class _RunProgress:
     round_number: int
 
 
-type RuntimeStreamEvent = PromptStreamEvent | ApprovalStreamEvent
+type RuntimeStreamEvent = (
+    PromptStreamEvent | ApprovalStreamEvent | ToolOutputStreamEvent
+)
 
 
 class AgentRuntime:
@@ -360,14 +375,16 @@ class AgentRuntime:
         """Consume one pending approval and resume its interrupted turn."""
         async with self._session_lock(workspace_name, session_id):
             with self._sessions.runtime_lock(workspace_name, session_id):
-                async for event in self._resolve_approval_locked(
+                stream = self._resolve_approval_locked(
                     workspace_name,
                     session_id,
                     approval_id,
                     approved=approved,
                     event_location=event_location,
-                ):
-                    yield event
+                )
+                async with aclosing(stream):
+                    async for event in stream:
+                        yield event
 
     async def recover(
         self,
@@ -441,7 +458,7 @@ class AgentRuntime:
         *,
         approved: bool,
         event_location: str,
-    ) -> AsyncIterator[RuntimeStreamEvent]:
+    ) -> AsyncGenerator[RuntimeStreamEvent, None]:
         session = await self._recover_executing_approvals(
             workspace_name,
             session_id,
@@ -501,7 +518,65 @@ class AgentRuntime:
                     ),
                     event_location,
                 )
-                result = await executor.run(prepared)
+                execution = await executor.start(prepared)
+                result: ToolResultPart | None = None
+                try:
+                    async for execution_event in execution.events():
+                        if isinstance(execution_event, ToolOutput):
+                            yield ToolOutputStreamEvent(
+                                call_id=call.call_id,
+                                tool_name=call.name,
+                                stream=execution_event.stream,
+                                text=execution_event.text,
+                            )
+                        else:
+                            result = execution_event.result
+                except BaseException:
+                    try:
+                        cancelled = await asyncio.shield(execution.cancel())
+                    except ToolExecutionIndeterminateError:
+                        self._sessions.transition_approval(
+                            workspace_name,
+                            session_id,
+                            approval_id,
+                            expected=ApprovalState.EXECUTING,
+                            state=ApprovalState.INDETERMINATE,
+                        )
+                        await self._emit(
+                            EventType.TOOL_APPROVAL_INDETERMINATE,
+                            _approval_payload(
+                                approval, workspace_name, session_id
+                            ),
+                            event_location,
+                        )
+                    else:
+                        cancelled_messages = messages + (
+                            Message(role=Role.TOOL, parts=(cancelled,)),
+                        )
+                        self._sessions.transition_approval(
+                            workspace_name,
+                            session_id,
+                            approval_id,
+                            expected=ApprovalState.EXECUTING,
+                            state=ApprovalState.COMPLETED,
+                            result=cancelled,
+                            messages=cancelled_messages,
+                        )
+                        await self._emit(
+                            EventType.TOOL_EXECUTION_COMPLETED,
+                            ToolCompletedEventPayload(
+                                **_tool_execution_payload(
+                                    approval, workspace_name, session_id
+                                ).model_dump(),
+                                is_error=cancelled.is_error,
+                            ),
+                            event_location,
+                        )
+                    raise
+                if result is None:
+                    raise ToolExecutionIndeterminateError(
+                        "tool execution ended without a result"
+                    )
                 state = ApprovalState.COMPLETED
             else:
                 result = ToolResultPart(
@@ -719,7 +794,27 @@ class AgentRuntime:
                             ),
                             event_location,
                         )
-                        result = await executor.run(prepared)
+                        execution = await executor.start(prepared)
+                        streaming_result: ToolResultPart | None = None
+                        try:
+                            async for execution_event in execution.events():
+                                if isinstance(execution_event, ToolOutput):
+                                    yield ToolOutputStreamEvent(
+                                        call_id=call.call_id,
+                                        tool_name=call.name,
+                                        stream=execution_event.stream,
+                                        text=execution_event.text,
+                                    )
+                                else:
+                                    streaming_result = execution_event.result
+                        except BaseException:
+                            await asyncio.shield(execution.cancel())
+                            raise
+                        if streaming_result is None:
+                            raise ToolExecutionIndeterminateError(
+                                "tool execution ended without a result"
+                            )
+                        result = streaming_result
                     messages = messages + (
                         Message(role=Role.TOOL, parts=(result,)),
                     )

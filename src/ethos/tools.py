@@ -8,11 +8,11 @@ propagate without exposing exception or argument details.
 
 import asyncio
 import json
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Final, Protocol, Self, cast
+from typing import Final, Protocol, Self, cast, runtime_checkable
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from pydantic import (
@@ -47,6 +47,53 @@ class Tool(Protocol):
     arguments_type: type[BaseModel]
 
     async def execute(self, arguments: BaseModel) -> str: ...
+
+
+class ToolOutputStream(StrEnum):
+    """The child stream that produced a live tool fragment."""
+
+    STDOUT = "stdout"
+    STDERR = "stderr"
+
+
+@dataclass(frozen=True)
+class ToolOutput:
+    """One non-empty transient fragment from a streaming tool."""
+
+    stream: ToolOutputStream
+    text: str
+
+    def __post_init__(self) -> None:
+        if not self.text:
+            raise ValueError("tool output must not be empty")
+
+
+@dataclass(frozen=True)
+class ToolExecutionCompleted:
+    """The single final, durable result from a tool execution."""
+
+    result: ToolResultPart
+
+
+type ToolExecutionEvent = ToolOutput | ToolExecutionCompleted
+
+
+@runtime_checkable
+class ToolExecution(Protocol):
+    """A started tool call with output and caller-controlled cancellation."""
+
+    def events(self) -> AsyncIterator[ToolExecutionEvent]: ...
+
+    async def cancel(self) -> ToolResultPart: ...
+
+
+@runtime_checkable
+class StreamingTool(Tool, Protocol):
+    """Optional extension for tools that produce output before completion."""
+
+    async def start(
+        self, arguments: BaseModel, call: ToolCallPart
+    ) -> ToolExecution: ...
 
 
 @dataclass(frozen=True)
@@ -272,47 +319,154 @@ class ToolExecutor:
         return PreparedToolCall(call, tool, arguments, decision)
 
     async def run(self, prepared: PreparedToolCall) -> ToolResultPart:
-        """Execute a prepared call while preserving side-effect certainty.
+        """Execute a prepared call, discarding any transient output."""
 
-        Read calls have a deadline and can safely become error results. Write
-        calls are not cancelled by an executor deadline because interruption
-        cannot prove whether their side effect occurred; unexpected write
-        failures are therefore reported as indeterminate.
-        """
+        execution = await self.start(prepared)
+        result: ToolResultPart | None = None
+        async for event in execution.events():
+            if isinstance(event, ToolExecutionCompleted):
+                result = event.result
+        if result is None:
+            raise ToolExecutionIndeterminateError(
+                "tool execution ended without a result"
+            )
+        return result
 
-        try:
-            if prepared.tool.effect is ToolEffect.WRITE:
+    async def start(self, prepared: PreparedToolCall) -> ToolExecution:
+        """Start a prepared call and return its generic execution handle."""
+
+        if isinstance(prepared.tool, StreamingTool):
+            try:
+                execution = await prepared.tool.start(
+                    prepared.arguments, prepared.call
+                )
+            except ToolExecutionError as error:
+                return _CompletedExecution(_error(prepared.call, str(error)))
+            except Exception as error:
+                if prepared.tool.effect is ToolEffect.WRITE:
+                    raise ToolExecutionIndeterminateError(
+                        "write tool execution outcome is unknown"
+                    ) from error
+                return _CompletedExecution(
+                    _error(prepared.call, "tool execution failed")
+                )
+            return _GuardedStreamingExecution(prepared, execution)
+        return _OrdinaryToolExecution(prepared)
+
+
+async def _execute_ordinary(prepared: PreparedToolCall) -> ToolResultPart:
+    """Run the original one-shot tool contract with certainty-aware errors."""
+
+    try:
+        if prepared.tool.effect is ToolEffect.WRITE:
+            content = cast(
+                object,
+                await prepared.tool.execute(prepared.arguments),
+            )
+        else:
+            async with asyncio.timeout(TOOL_TIMEOUT_SECONDS):
                 content = cast(
                     object,
                     await prepared.tool.execute(prepared.arguments),
                 )
-            else:
-                async with asyncio.timeout(TOOL_TIMEOUT_SECONDS):
-                    content = cast(
-                        object,
-                        await prepared.tool.execute(prepared.arguments),
-                    )
-            if not isinstance(content, str):
-                return _error(prepared.call, "tool execution failed")
-        except TimeoutError as error:
-            if prepared.tool.effect is ToolEffect.WRITE:
-                raise ToolExecutionIndeterminateError(
-                    "write tool execution outcome is unknown"
-                ) from error
-            return _error(prepared.call, "tool execution timed out")
-        except ToolExecutionError as error:
-            return _error(prepared.call, str(error))
-        except Exception as error:
-            if prepared.tool.effect is ToolEffect.WRITE:
-                raise ToolExecutionIndeterminateError(
-                    "write tool execution outcome is unknown"
-                ) from error
+        if not isinstance(content, str):
             return _error(prepared.call, "tool execution failed")
-        return ToolResultPart(
-            call_id=prepared.call.call_id,
-            name=prepared.call.name,
-            content=content,
-        )
+    except TimeoutError as error:
+        if prepared.tool.effect is ToolEffect.WRITE:
+            raise ToolExecutionIndeterminateError(
+                "write tool execution outcome is unknown"
+            ) from error
+        return _error(prepared.call, "tool execution timed out")
+    except ToolExecutionError as error:
+        return _error(prepared.call, str(error))
+    except Exception as error:
+        if prepared.tool.effect is ToolEffect.WRITE:
+            raise ToolExecutionIndeterminateError(
+                "write tool execution outcome is unknown"
+            ) from error
+        return _error(prepared.call, "tool execution failed")
+    return ToolResultPart(
+        call_id=prepared.call.call_id,
+        name=prepared.call.name,
+        content=content,
+    )
+
+
+class _CompletedExecution:
+    def __init__(self, result: ToolResultPart) -> None:
+        self._result = result
+
+    async def events(self) -> AsyncIterator[ToolExecutionEvent]:
+        yield ToolExecutionCompleted(self._result)
+
+    async def cancel(self) -> ToolResultPart:
+        return self._result
+
+
+class _OrdinaryToolExecution:
+    def __init__(self, prepared: PreparedToolCall) -> None:
+        self._prepared = prepared
+        self._task = asyncio.create_task(_execute_ordinary(prepared))
+
+    async def events(self) -> AsyncIterator[ToolExecutionEvent]:
+        yield ToolExecutionCompleted(await self._task)
+
+    async def cancel(self) -> ToolResultPart:
+        if self._task.done():
+            return await self._task
+        self._task.cancel()
+        await asyncio.gather(self._task, return_exceptions=True)
+        if self._prepared.tool.effect is ToolEffect.WRITE:
+            raise ToolExecutionIndeterminateError(
+                "write tool execution outcome is unknown"
+            )
+        return _error(self._prepared.call, "tool execution cancelled")
+
+
+class _GuardedStreamingExecution:
+    def __init__(
+        self,
+        prepared: PreparedToolCall,
+        execution: ToolExecution,
+    ) -> None:
+        self._prepared = prepared
+        self._execution = execution
+
+    async def events(self) -> AsyncIterator[ToolExecutionEvent]:
+        try:
+            async for event in self._execution.events():
+                yield event
+                # Completion is terminal by contract. Returning here also
+                # prevents an implementation bug from exposing two results.
+                if isinstance(event, ToolExecutionCompleted):
+                    return
+            raise RuntimeError("streaming tool ended without a result")
+        except ToolExecutionError as error:
+            yield ToolExecutionCompleted(
+                _error(self._prepared.call, str(error))
+            )
+        except ToolExecutionIndeterminateError:
+            raise
+        except Exception as error:
+            if self._prepared.tool.effect is ToolEffect.WRITE:
+                raise ToolExecutionIndeterminateError(
+                    "write tool execution outcome is unknown"
+                ) from error
+            yield ToolExecutionCompleted(
+                _error(self._prepared.call, "tool execution failed")
+            )
+
+    async def cancel(self) -> ToolResultPart:
+        try:
+            return await self._execution.cancel()
+        except ToolExecutionIndeterminateError:
+            raise
+        except Exception as error:
+            if self._prepared.tool.effect is ToolEffect.WRITE:
+                raise ToolExecutionIndeterminateError(
+                    "write tool execution outcome is unknown"
+                ) from error
+            return _error(self._prepared.call, "tool execution failed")
 
 
 def _error(call: ToolCallPart, content: str) -> ToolResultPart:

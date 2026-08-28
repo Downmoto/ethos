@@ -19,7 +19,13 @@ from ethos.models import (
     ToolCallPart,
     ToolDefinition,
 )
-from ethos.runtime import AgentRuntime, ApprovalStreamEvent, PromptStreamEvent
+from ethos.runtime import (
+    AgentRuntime,
+    ApprovalStreamEvent,
+    PromptStreamEvent,
+    RuntimeStreamEvent,
+    ToolOutputStreamEvent,
+)
 from ethos.sessions import SessionManager
 from ethos.tools import (
     PreparedToolCall,
@@ -315,9 +321,14 @@ def test_filesystem_write_resumes_through_durable_runtime_approval(
     )
 
     async def collect_events(
-        events: AsyncIterator[PromptStreamEvent | ApprovalStreamEvent],
+        events: AsyncIterator[RuntimeStreamEvent],
     ) -> list[PromptStreamEvent | ApprovalStreamEvent]:
-        return [event async for event in events]
+        collected: list[PromptStreamEvent | ApprovalStreamEvent] = []
+        async for event in events:
+            if isinstance(event, ToolOutputStreamEvent):
+                continue
+            collected.append(event)
+        return collected
 
     pending = asyncio.run(
         collect_events(runtime.run("hello", "project", session_id))

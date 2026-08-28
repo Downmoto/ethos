@@ -21,6 +21,7 @@ class CapabilityName(StrEnum):
 
     SKILLS = "skills"
     FILE_SYSTEM = "file_system"
+    SHELL = "shell"
 
 
 class SkillsCapabilityConfig(BaseModel):
@@ -50,6 +51,17 @@ class FilesystemCapabilityConfig(BaseModel):
     max_patch_files: int = Field(default=20, ge=1)
 
 
+class ShellCapabilityConfig(BaseModel):
+    """Complete global settings for sandboxed shell commands."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = True
+    max_command_bytes: int = Field(default=16 * 1024, ge=1)
+    max_command_seconds: int = Field(default=120, ge=1)
+    max_output_bytes: int = Field(default=100 * 1024, ge=1)
+
+
 class GlobalCapabilitiesConfig(BaseModel):
     """Complete settings that bound every workspace."""
 
@@ -61,6 +73,7 @@ class GlobalCapabilitiesConfig(BaseModel):
     file_system: FilesystemCapabilityConfig = Field(
         default_factory=FilesystemCapabilityConfig
     )
+    shell: ShellCapabilityConfig = Field(default_factory=ShellCapabilityConfig)
 
 
 class SkillsCapabilityOverride(BaseModel):
@@ -90,6 +103,17 @@ class FilesystemCapabilityOverride(BaseModel):
     max_patch_files: int | None = Field(default=None, ge=1)
 
 
+class ShellCapabilityOverride(BaseModel):
+    """Optional workspace values that may only narrow shell settings."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool | None = None
+    max_command_bytes: int | None = Field(default=None, ge=1)
+    max_command_seconds: int | None = Field(default=None, ge=1)
+    max_output_bytes: int | None = Field(default=None, ge=1)
+
+
 class WorkspaceCapabilityOverrides(BaseModel):
     """Sparse capability overrides stored only for configured workspaces."""
 
@@ -97,6 +121,7 @@ class WorkspaceCapabilityOverrides(BaseModel):
 
     skills: SkillsCapabilityOverride | None = None
     file_system: FilesystemCapabilityOverride | None = None
+    shell: ShellCapabilityOverride | None = None
 
 
 class CapabilityConfiguration(BaseModel):
@@ -117,9 +142,13 @@ class CapabilityConfiguration(BaseModel):
     )
 
 
-type CapabilitySettings = SkillsCapabilityConfig | FilesystemCapabilityConfig
+type CapabilitySettings = (
+    SkillsCapabilityConfig | FilesystemCapabilityConfig | ShellCapabilityConfig
+)
 type CapabilityOverride = (
-    SkillsCapabilityOverride | FilesystemCapabilityOverride
+    SkillsCapabilityOverride
+    | FilesystemCapabilityOverride
+    | ShellCapabilityOverride
 )
 
 
@@ -193,6 +222,10 @@ class CapabilityManager:
             file_system=_effective_settings(
                 config.global_settings.file_system,
                 overrides.file_system,
+            ),
+            shell=_effective_settings(
+                config.global_settings.shell,
+                overrides.shell,
             ),
         )
 
@@ -298,7 +331,9 @@ def _global_settings(
 ) -> CapabilitySettings:
     if name is CapabilityName.SKILLS:
         return config.global_settings.skills
-    return config.global_settings.file_system
+    if name is CapabilityName.FILE_SYSTEM:
+        return config.global_settings.file_system
+    return config.global_settings.shell
 
 
 def _workspace_override(
@@ -311,7 +346,9 @@ def _workspace_override(
         return None
     if name is CapabilityName.SKILLS:
         return overrides.skills
-    return overrides.file_system
+    if name is CapabilityName.FILE_SYSTEM:
+        return overrides.file_system
+    return overrides.shell
 
 
 def _override_type(
@@ -319,7 +356,9 @@ def _override_type(
 ) -> type[CapabilityOverride]:
     if name is CapabilityName.SKILLS:
         return SkillsCapabilityOverride
-    return FilesystemCapabilityOverride
+    if name is CapabilityName.FILE_SYSTEM:
+        return FilesystemCapabilityOverride
+    return ShellCapabilityOverride
 
 
 def _effective_settings[Settings: CapabilitySettings](

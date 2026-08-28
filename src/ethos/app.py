@@ -40,6 +40,7 @@ from ethos.service import (
     Ethos,
     ProviderView,
     RequestContext,
+    ToolOutputChunk,
 )
 from ethos.workspaces import DEFAULT_WORKSPACE
 
@@ -67,11 +68,22 @@ async def _print_response(
 ) -> None:
     wrote_output = False
     wrote_reasoning = False
+    wrote_tool_output = False
+    tool_output_ended_newline = True
     usage = None
     session_id = None
     try:
         async for chunk in chunks:
             if isinstance(chunk, ApprovalChunk):
+                continue
+            if isinstance(chunk, ToolOutputChunk):
+                click.echo(
+                    f"[{chunk.tool_name} {chunk.stream.value}] {chunk.text}",
+                    nl=False,
+                    err=True,
+                )
+                wrote_tool_output = True
+                tool_output_ended_newline = chunk.text.endswith("\n")
                 continue
             if chunk.usage is not None:
                 usage = chunk.usage
@@ -88,6 +100,8 @@ async def _print_response(
                 click.echo(chunk.text, nl=False)
                 wrote_output = True
     finally:
+        if wrote_tool_output and not tool_output_ended_newline:
+            click.echo(err=True)
         if wrote_output:
             click.echo()
         elif wrote_reasoning:

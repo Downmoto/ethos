@@ -52,6 +52,10 @@ Chat streams are a backwards-incompatible discriminated protocol. Every SSE
 payload has `kind: "chunk"` for answer/reasoning text, usage, and completion,
 or `kind: "approval"` with `approval_id`, `call_id`, `tool_name`, validated
 `arguments`, `effect`, `reason`, `created_at`, `workspace`, and `session_id`.
+While a streaming tool runs, `kind: "tool_output"` carries `call_id`,
+`tool_name`, `stream` (`stdout` or `stderr`), non-empty `text`, `workspace`,
+and `session_id`. Tool-output frames are transient: session history exposes
+only the final bounded tool result.
 
 Session history is available through:
 
@@ -144,7 +148,9 @@ targets the selected provider and is always redacted from output.
 For a write-tool approval it prints the exact tool name and validated JSON
 arguments, then asks once with denial as the default. If stdin is not a
 terminal, it denies without prompting and resumes the model with an error tool
-result.
+result. Live tool stdout and stderr are written to the CLI's stderr with the
+tool name and original child-stream identity, leaving assistant answers on the
+CLI's stdout.
 
 ### Server lifecycle
 
@@ -205,6 +211,48 @@ about its location without adding operational context to persisted history.
 Lifecycle events are always emitted and stored before in-process listeners
 run. Domain mutations and event writes are not one transaction, so an event
 failure can follow a successful filesystem mutation.
+
+### Sandbox execution substrate
+
+`ethos.sandbox` is the provider-independent boundary for one bounded,
+non-interactive process. Callers supply exact arguments, canonical workspace
+and private temporary directories, a complete child environment, a deadline,
+and a combined output limit. They receive raw stdout/stderr byte events and
+one terminal result; they do not construct native sandbox policy.
+
+The policy is fixed: only the workspace and execution-specific temporary
+directory are writable, runtime files are read-only, stdin is closed, no PTY
+is allocated, and network, host IPC, unrelated user data, and privilege gain
+are unavailable. Shared process supervision owns concurrent pipe draining,
+byte accounting, timeout and cancellation races, process-group termination,
+and bounded reaping. If it cannot prove cleanup, it reports an indeterminate
+result rather than claiming success.
+
+macOS uses the built-in `/usr/bin/sandbox-exec` Seatbelt mechanism. Linux uses
+Bubblewrap 0.8.0 or newer with user namespaces enabled, the required namespace
+and AppArmor permissions, and seccomp support. Provider availability is probed
+before use and fails closed; there is no unsandboxed fallback. Production
+selection branches on the platform only in `resolve_sandbox_provider()`, while
+callers and tests may inject any `SandboxProvider` implementation.
+
+The `shell` capability is the only model-facing consumer of this substrate. It
+contributes one `run_command` write tool, so every command requires the normal
+durable approval regardless of its text. Argument validation preserves the
+exact command, canonicalises an existing workspace-relative working directory,
+and binds both values into the approval. The command is invoked as
+`/bin/sh -c` with no login shell, stdin, PTY, or caller-supplied environment.
+Only locale compatibility variables are copied; Ethos supplies a fixed system
+and package-manager `PATH`, a private `HOME` and `TMPDIR` outside the workspace,
+plus `TERM=dumb` and `CI=1`.
+
+Sandbox byte fragments are decoded incrementally and forwarded through the
+generic `ToolExecution` handle. The runtime emits these fragments without
+persisting them, then stores exactly one JSON result containing the outcome,
+optional exit code, stdout, and stderr. Closing a client stream cancels the
+same execution handle. A proven cancellation is stored as a completed error
+result; uncertain cleanup marks the durable approval `indeterminate` and can
+never be replayed. If native isolation is unavailable, capability resolution
+fails before the model is contacted rather than running unsandboxed.
 
 The event database assigns every stored envelope a monotonic integer sequence.
 That sequence is the durable ordering authority; UUIDs identify events and
