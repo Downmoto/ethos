@@ -1039,6 +1039,62 @@ def test_ollama_complete_and_streamed_tool_responses_match() -> None:
     assert complete.finish_reason is FinishReason.TOOL_CALL
 
 
+def test_ollama_stream_accepts_sequential_calls_that_reuse_index_zero() -> None:
+    chunks = stream(
+        chunk(
+            tool_calls=[
+                tool_call_delta(
+                    0,
+                    call_id="call-1",
+                    name="create_directory",
+                    arguments='{"path":"scripts"}',
+                )
+            ]
+        ),
+        chunk(
+            tool_calls=[
+                tool_call_delta(
+                    0,
+                    call_id="call-2",
+                    name="write_file",
+                    arguments=('{"path":"scripts/name","content":"print(1)"}'),
+                )
+            ]
+        ),
+        chunk(finish_reason="tool_calls"),
+    )
+
+    async def completion(**_kwargs: object) -> object:
+        return chunks
+
+    model = LiteLLMModel(
+        AIProvider(ProviderName.OLLAMA, None),
+        "model",
+        completion,
+    )
+
+    async def collect() -> list[ModelEvent]:
+        return [
+            event async for event in model.stream(ModelRequest(messages=()))
+        ]
+
+    completed = asyncio.run(collect())[-1]
+
+    assert isinstance(completed, ResponseCompleted)
+    assert completed.response.parts == (
+        ToolCallPart(
+            call_id="call-1",
+            name="create_directory",
+            arguments_json='{"path":"scripts"}',
+        ),
+        ToolCallPart(
+            call_id="call-2",
+            name="write_file",
+            arguments_json='{"path":"scripts/name","content":"print(1)"}',
+        ),
+    )
+
+
 @pytest.mark.parametrize("arguments", ["", "not JSON", "[]"])
 def test_litellm_model_preserves_streamed_raw_tool_arguments(
     arguments: str,
