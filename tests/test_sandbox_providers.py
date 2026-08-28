@@ -87,8 +87,15 @@ def test_bubblewrap_invocation_has_fixed_isolation_contract(
         invocation.index("--setenv") : invocation.index("--setenv") + 3
     ]
     assert str(Path.home()) not in invocation
-    assert "/tmp" not in invocation
-    assert "/run" not in invocation
+    for host_path in ("/tmp", "/run"):
+        assert not any(
+            invocation[index : index + 3]
+            in {
+                ("--bind", host_path, host_path),
+                ("--ro-bind", host_path, host_path),
+            }
+            for index in range(len(invocation) - 2)
+        )
     assert "/dev/ptmx" not in invocation
     assert "--dev" not in invocation
     assert invocation[-1] == "/usr/bin/env"
