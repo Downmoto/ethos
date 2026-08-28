@@ -9,6 +9,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import Annotated, Final, Literal, cast
 from uuid import UUID, uuid4
 
@@ -25,6 +26,7 @@ from ethos.models import (
     FinishReason,
     Message,
     Model,
+    ModelRequest,
     ModelResponse,
     ReasoningDelta,
     ReasoningEffort,
@@ -70,6 +72,14 @@ ANSWER_NOW_INSTRUCTION: Final = (
 INTERRUPTED_TOOL_RESULT: Final = (
     "interrupted tool call was not replayed; execution outcome is unknown"
 )
+
+
+def _write_context_diagnostic(path: Path | None, request: ModelRequest) -> None:
+    if path is None:
+        return
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.write_text(request.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    path.chmod(0o600)
 
 
 class AgentLimitError(RuntimeError):
@@ -214,6 +224,7 @@ class AgentRuntime:
         max_tool_calls_per_response: int = MAX_TOOL_CALLS_PER_RESPONSE,
         answer_model_factory: ModelFactory | None = None,
         answer_now_after_seconds: float = 60.0,
+        context_diagnostic_path: Path | None = None,
     ) -> None:
         if max_model_rounds < 1:
             raise ValueError("max_model_rounds must be positive")
@@ -249,6 +260,7 @@ class AgentRuntime:
         self._max_model_rounds = max_model_rounds
         self._max_tool_calls_per_response = max_tool_calls_per_response
         self._answer_now_after_seconds = answer_now_after_seconds
+        self._context_diagnostic_path = context_diagnostic_path
         self._locks: dict[tuple[str, str], tuple[asyncio.Lock, int]] = {}
 
     @asynccontextmanager
@@ -857,6 +869,7 @@ class AgentRuntime:
                 tool_definitions=tools,
                 run_context=run_context,
             )
+            _write_context_diagnostic(self._context_diagnostic_path, request)
             streamed_text = ""
             streamed_reasoning = ""
             completed: ModelResponse | None = None

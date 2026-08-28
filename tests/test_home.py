@@ -62,7 +62,9 @@ def test_config_template_matches_settings_fields() -> None:
     config = yaml.safe_load(template.read_text())
 
     assert isinstance(config, dict)
-    assert _config_field_paths(config) == _model_field_paths(EthosSettings)  # pyright: ignore[reportUnknownArgumentType]
+    assert _config_field_paths(config) == _model_field_paths(EthosSettings) - {
+        "runtime.context_diagnostics"
+    }  # pyright: ignore[reportUnknownArgumentType]
 
 
 def test_capability_template_matches_configuration_fields() -> None:
@@ -99,6 +101,7 @@ def test_initialise_home_creates_capability_configuration(
     assert (home / CAPABILITIES_FILE).exists()
     assert (home / "tools.yaml").read_text() == ("tools: {}\ntoolsets: {}\n")
     assert (home / "skills").is_dir()
+    assert (home / "logs").is_dir()
     assert (home / "sessions").is_dir()
     assert not (home / "skills.yaml").exists()
     assert not (home / "tools").exists()

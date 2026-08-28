@@ -17,6 +17,7 @@ TOOLS_CONFIG_FILE: Final = "tools.yaml"
 DB_PATH: Final = Path("data/ethos.db")
 WORKFLOWS_PATH: Final = Path("workflows")
 SKILLS_PATH: Final = Path("skills")
+LOGS_PATH: Final = Path("logs")
 
 
 def _read_config_template() -> str:
@@ -40,6 +41,7 @@ _FILES: Final[tuple[tuple[Path, Callable[[], str]], ...]] = (
 _EMPTY_DIRS: Final[tuple[Path, ...]] = (
     WORKFLOWS_PATH,
     SKILLS_PATH,
+    LOGS_PATH,
     Path(SESSIONS_DIR),
 )
 
