@@ -17,8 +17,12 @@ Milestone 1 — Core capabilities:
         Provider management:
             Configure, validate, and select providers and models without editing files manually.
 
-Post-Milestone 1 security hardening:
-    Run adversarial sandbox-escape testing with capable paid models before starting Milestone 2.
+Post-Milestone 1:
+    Security hardening:
+        Run adversarial sandbox-escape testing with capable paid models before starting Milestone 2.
+
+    Testing hardening:
+        Implement real llm prompt evals with expected outcomes.
 
 Milestone 2 — Personalisation:
     Details: milestone-2-personalisation.md
