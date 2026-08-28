@@ -206,6 +206,29 @@ Lifecycle events are always emitted and stored before in-process listeners
 run. Domain mutations and event writes are not one transaction, so an event
 failure can follow a successful filesystem mutation.
 
+### Sandbox execution substrate
+
+`ethos.sandbox` is the provider-independent boundary for one bounded,
+non-interactive process. Callers supply exact arguments, canonical workspace
+and private temporary directories, a complete child environment, a deadline,
+and a combined output limit. They receive raw stdout/stderr byte events and
+one terminal result; they do not construct native sandbox policy.
+
+The policy is fixed: only the workspace and execution-specific temporary
+directory are writable, runtime files are read-only, stdin is closed, no PTY
+is allocated, and network, host IPC, unrelated user data, and privilege gain
+are unavailable. Shared process supervision owns concurrent pipe draining,
+byte accounting, timeout and cancellation races, process-group termination,
+and bounded reaping. If it cannot prove cleanup, it reports an indeterminate
+result rather than claiming success.
+
+macOS uses the built-in `/usr/bin/sandbox-exec` Seatbelt mechanism. Linux uses
+Bubblewrap 0.8.0 or newer with user namespaces enabled, the required namespace
+and AppArmor permissions, and seccomp support. Provider availability is probed
+before use and fails closed; there is no unsandboxed fallback. Production
+selection branches on the platform only in `resolve_sandbox_provider()`, while
+callers and tests may inject any `SandboxProvider` implementation.
+
 The event database assigns every stored envelope a monotonic integer sequence.
 That sequence is the durable ordering authority; UUIDs identify events and
 timestamps record observation time. Sources contain only the emitting adapter

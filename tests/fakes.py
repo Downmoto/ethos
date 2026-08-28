@@ -14,6 +14,7 @@ from ethos.models import (
     TextDelta,
     TextPart,
 )
+from ethos.sandbox import SandboxExecution, SandboxRequest
 
 
 class FakeModel:
@@ -88,3 +89,17 @@ class FakeModel:
         if not self._outcomes:
             raise AssertionError("fake model has no queued outcomes")
         return self._outcomes.popleft()
+
+
+class FakeSandboxProvider:
+    """Return queued sandbox executions while recording requests."""
+
+    def __init__(self, executions: Sequence[SandboxExecution]) -> None:
+        self._executions = deque(executions)
+        self.requests: list[SandboxRequest] = []
+
+    async def start(self, request: SandboxRequest) -> SandboxExecution:
+        self.requests.append(request)
+        if not self._executions:
+            raise AssertionError("fake sandbox has no queued execution")
+        return self._executions.popleft()
