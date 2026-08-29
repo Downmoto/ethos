@@ -53,13 +53,13 @@ data under `~/.ethos`. Provider and runtime settings live in
 `~/.ethos/config.yaml`; global capability settings and sparse workspace
 overrides live in `~/.ethos/capabilities.yaml`.
 
-For example, these commands lower the global skill limit and disable skills in
-one workspace:
+For example, these commands lower the global skill limit, then disable skills
+and lower the resource limit in one workspace:
 
 ```sh
-uv run ethos config capability set skills '{"max_skills": 50}'
-uv run ethos config capability set skills '{"enabled": false}' \
-  --workspace my-project
+uv run ethos config capability set skills max_skills 50
+uv run ethos config capability set skills enabled false \
+  -f max_resources 100 --workspace my-project
 ```
 
 Provider configuration can be inspected, checked without saving, and updated
@@ -67,9 +67,9 @@ through the same CLI:
 
 ```sh
 uv run ethos config provider show
-uv run ethos config provider check '{"model_name": "gpt-5-mini"}'
-uv run ethos config provider set \
-  '{"name": "openai", "model_name": "gpt-5-mini", "api_key": "..."}'
+uv run ethos config provider check model_name gpt-5-mini
+uv run ethos config provider set name openai \
+  -f model_name gpt-5-mini -f api_key ...
 ```
 
 Provider output reports only whether a credential is configured. Credentials

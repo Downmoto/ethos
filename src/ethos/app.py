@@ -11,7 +11,7 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from functools import wraps
 from pathlib import Path
-from typing import TypeGuard, cast
+from typing import TypeGuard
 
 import click
 from pydantic import ValidationError
@@ -451,7 +451,17 @@ def capability_show(capability_name: str, workspace: str | None) -> None:
     metavar="CAPABILITY",
     type=click.Choice([name.value for name in CapabilityName]),
 )
-@click.argument("settings", metavar="SETTINGS_JSON")
+@click.argument("field", metavar="FIELD")
+@click.argument("value", metavar="VALUE")
+@click.option(
+    "-f",
+    "--field",
+    "additional_fields",
+    nargs=2,
+    multiple=True,
+    metavar="FIELD VALUE",
+    help="Apply an additional configuration field.",
+)
 @click.option(
     "--workspace",
     metavar="NAME",
@@ -460,15 +470,17 @@ def capability_show(capability_name: str, workspace: str | None) -> None:
 @requires_home
 def capability_set(
     capability_name: str,
-    settings: str,
+    field: str,
+    value: str,
+    additional_fields: tuple[tuple[str, str], ...],
     workspace: str | None,
 ) -> None:
-    """Apply SETTINGS_JSON changes to CAPABILITY.
+    """Apply FIELD VALUE changes to CAPABILITY.
 
     CAPABILITY is a registered capability name shown by ``list``.
-    SETTINGS_JSON must be a JSON object containing fields to change.
+    Repeat ``--field FIELD VALUE`` to change additional fields.
     """
-    changes = _decode_settings(settings, "capability")
+    changes = _decode_fields((field, value), *additional_fields)
     view = _run(
         lambda ethos, context: ethos.configure_capability(
             capability_name,
@@ -543,25 +555,62 @@ def provider_show() -> None:
 
 
 @provider_config.command("check")
-@click.argument("settings", metavar="SETTINGS_JSON", default="{}")
+@click.argument("field", metavar="FIELD", required=False)
+@click.argument("value", metavar="VALUE", required=False)
+@click.option(
+    "-f",
+    "--field",
+    "additional_fields",
+    nargs=2,
+    multiple=True,
+    metavar="FIELD VALUE",
+    help="Apply an additional candidate configuration field.",
+)
 @requires_home
-def provider_check(settings: str) -> None:
-    """Check the active provider or candidate SETTINGS_JSON without saving."""
-    changes = _decode_settings(settings, "provider")
+def provider_check(
+    field: str | None,
+    value: str | None,
+    additional_fields: tuple[tuple[str, str], ...],
+) -> None:
+    """Check the active provider or candidate FIELD VALUE without saving."""
+    if field is None:
+        if additional_fields:
+            raise click.ClickException(
+                "an initial FIELD VALUE is required before --field"
+            )
+        changes = {}
+    elif value is None:
+        raise click.ClickException(f"value is required for field: {field}")
+    else:
+        changes = _decode_fields((field, value), *additional_fields)
     view = _run(lambda ethos, context: ethos.check_provider(changes, context))
     click.echo(f"provider check succeeded\n{_format_provider(view)}")
 
 
 @provider_config.command("set")
-@click.argument("settings", metavar="SETTINGS_JSON")
+@click.argument("field", metavar="FIELD")
+@click.argument("value", metavar="VALUE")
+@click.option(
+    "-f",
+    "--field",
+    "additional_fields",
+    nargs=2,
+    multiple=True,
+    metavar="FIELD VALUE",
+    help="Apply an additional configuration field.",
+)
 @requires_home
-def provider_set(settings: str) -> None:
-    """Validate and save provider SETTINGS_JSON.
+def provider_set(
+    field: str,
+    value: str,
+    additional_fields: tuple[tuple[str, str], ...],
+) -> None:
+    """Validate and save provider FIELD VALUE changes.
 
     Use ``api_key`` to store the selected provider's credential. Its value is
     never returned by show, check, or set.
     """
-    changes = _decode_settings(settings, "provider")
+    changes = _decode_fields((field, value), *additional_fields)
     view = _run(
         lambda ethos, context: ethos.configure_provider(changes, context)
     )
@@ -581,16 +630,16 @@ def _format_provider(view: ProviderView) -> str:
     return "\n".join(lines)
 
 
-def _decode_settings(value: str, subject: str) -> dict[str, object]:
-    try:
-        decoded = json.loads(value)
-    except json.JSONDecodeError as error:
-        raise click.ClickException(
-            f"invalid settings JSON: {error.msg}"
-        ) from error
-    if not isinstance(decoded, dict):
-        raise click.ClickException(f"{subject} settings must be a JSON object")
-    return cast(dict[str, object], decoded)
+def _decode_fields(*fields: tuple[str, str]) -> dict[str, object]:
+    changes: dict[str, object] = {}
+    for name, value in fields:
+        if name in changes:
+            raise click.ClickException(f"duplicate configuration field: {name}")
+        try:
+            changes[name] = json.loads(value)
+        except json.JSONDecodeError:
+            changes[name] = value
+    return changes
 
 
 @main.group()

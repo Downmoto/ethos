@@ -224,7 +224,7 @@ def test_cli_manages_global_and_workspace_capabilities(
 
     global_result = runner.invoke(
         app.main,
-        ["config", "capability", "set", "skills", '{"max_skills": 10}'],
+        ["config", "capability", "set", "skills", "max_skills", "10"],
     )
     workspace_result = runner.invoke(
         app.main,
@@ -233,7 +233,11 @@ def test_cli_manages_global_and_workspace_capabilities(
             "capability",
             "set",
             "skills",
-            '{"enabled": false, "max_skills": 20}',
+            "enabled",
+            "false",
+            "-f",
+            "max_skills",
+            "20",
             "--workspace",
             "health",
         ],
@@ -281,6 +285,31 @@ def test_cli_manages_global_and_workspace_capabilities(
     assert "Configured:\n  (inherited)" in reset_result.output
 
 
+def test_cli_rejects_duplicate_capability_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    monkeypatch.setattr(app, "HOME_PATH", home)
+
+    result = CliRunner().invoke(
+        app.main,
+        [
+            "config",
+            "capability",
+            "set",
+            "skills",
+            "max_skills",
+            "10",
+            "-f",
+            "max_skills",
+            "20",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "duplicate configuration field: max_skills" in result.output
+
+
 def test_cli_manages_provider_without_displaying_credential(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -294,8 +323,17 @@ def test_cli_manages_provider_without_displaying_credential(
             "config",
             "provider",
             "set",
-            '{"name":"openai","model_name":"gpt-5-mini",'
-            '"reasoning_effort":"low","api_key":"secret-key"}',
+            "name",
+            "openai",
+            "-f",
+            "model_name",
+            "gpt-5-mini",
+            "-f",
+            "reasoning_effort",
+            "low",
+            "-f",
+            "api_key",
+            "secret-key",
         ],
     )
     shown = runner.invoke(app.main, ["config", "provider", "show"])
@@ -310,7 +348,7 @@ def test_cli_manages_provider_without_displaying_credential(
     assert "secret-key" not in shown.output
 
 
-def test_provider_check_command_accepts_candidate_settings(
+def test_provider_check_command_accepts_active_or_candidate_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(app, "HOME_PATH", Path("."))
@@ -323,13 +361,16 @@ def test_provider_check_command_accepts_candidate_settings(
     )
     monkeypatch.setattr(app, "_run", lambda _operation: view)
 
-    result = CliRunner().invoke(
+    candidate = CliRunner().invoke(
         app.main,
-        ["config", "provider", "check", '{"model_name":"qwen3"}'],
+        ["config", "provider", "check", "model_name", "qwen3"],
     )
+    active = CliRunner().invoke(app.main, ["config", "provider", "check"])
 
-    assert result.exit_code == 0
-    assert result.output.startswith("provider check succeeded\n")
+    assert candidate.exit_code == 0
+    assert candidate.output.startswith("provider check succeeded\n")
+    assert active.exit_code == 0
+    assert active.output.startswith("provider check succeeded\n")
 
 
 @pytest.mark.parametrize(
@@ -347,7 +388,8 @@ def test_provider_check_command_accepts_candidate_settings(
             ["config", "capability", "set", "--help"],
             (
                 "CAPABILITY is a registered capability name",
-                "must be a JSON object containing fields to change",
+                "-f, --field FIELD VALUE",
+                "Apply an additional configuration field",
                 "--workspace NAME",
             ),
         ),
