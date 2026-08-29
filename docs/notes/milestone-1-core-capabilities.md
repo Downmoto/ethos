@@ -6,9 +6,8 @@ the final implementation design.
 
 ## Goal
 
-Give Ethos the core capabilities needed to work safely inside a workspace,
-retrieve outside information, and let users configure the models and tools
-available to each run.
+Give Ethos the core capabilities needed to work safely inside a workspace and
+let users configure the models and tools available to each run.
 
 ## Delivery order
 
@@ -16,11 +15,6 @@ available to each run.
 2. Provider management
 3. Full filesystem
 4. Shell
-5. Web
-6. MCP
-
-MCP remains last so its external tools can reuse stable capability,
-configuration, and tool-policy boundaries.
 
 ## Capability management
 
@@ -142,78 +136,8 @@ reliably report their output and exit status.
   secrets.
 - Behaviour is consistent through CLI and Vox sessions.
 
-## Web
-
-### Outcome
-
-The agent can find and retrieve public web information with enough source
-context for the user to verify it.
-
-### Scope
-
-- Search the public web.
-- Retrieve content from a specific URL.
-- Extract readable text and basic source metadata.
-- Preserve source URLs with returned information.
-- Bound response size, redirects, and request duration.
-- Report unsupported or inaccessible content clearly.
-
-### Safety boundaries
-
-- Network access follows explicit capability configuration.
-- Requests cannot target private, loopback, or otherwise restricted networks.
-- Credentials and private session data are not added to requests implicitly.
-- Browser automation, authenticated browsing, and file downloads are outside
-  this milestone.
-
-### Complete when
-
-- Search and retrieval work through the standard capability and tool paths.
-- Results include source identity and are bounded before entering history.
-- Redirects, malformed URLs, timeouts, and restricted targets fail safely.
-- Provider or transport failures produce useful model-facing errors without
-  leaking internal exception details.
-- Network activity emits lifecycle events without storing retrieved content.
-
-## MCP
-
-### Outcome
-
-Users can connect configured MCP servers and make their tools and resources
-available to Ethos runs under the same controls as native capabilities.
-
-### Scope
-
-- Add, update, enable, disable, and remove MCP server definitions.
-- Establish connections using explicitly supported transports.
-- Discover server tools and resources for each run.
-- Adapt discovered tools to Ethos tool definitions and validated arguments.
-- Read bounded MCP resources.
-- Surface connection and discovery diagnostics.
-
-### Safety boundaries
-
-- MCP tools pass through the same validation, policy, approval, and event path
-  as native tools.
-- Tool-name collisions fail before a model request.
-- Server credentials are never included in model context, results, or events.
-- Resource contents and tool results are bounded before entering history.
-- A failing server does not prevent unrelated capabilities from being used
-  unless it is explicitly required by the workspace.
-
-### Complete when
-
-- Configured servers can contribute tools and resources to a run.
-- Connection, discovery, invocation, timeout, and shutdown behaviour is
-  deterministic and tested.
-- Read and write effects receive the correct policy decision, and unclassified
-  tools require approval.
-- Server failures are isolated and reported without exposing sensitive data.
-- MCP configuration is manageable through the same service, CLI, and Vox
-  boundaries as native capabilities.
-
 ## Milestone completion
 
-Milestone 1 is complete when all six features meet their completion criteria,
+Milestone 1 is complete when all four features meet their completion criteria,
 the overview and developer documentation reflect the shipped behaviour, and
 the full verification suite passes.
