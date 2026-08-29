@@ -137,12 +137,14 @@ an interrupted tool checkpoint. It records non-replayable error results so the
 session can continue without risking a repeated side effect.
 
 `ethos config capability list`, `show`, `set`, and `reset` expose the same
-management behaviour as Vox. `set` accepts a JSON object of changed fields.
-Passing `--workspace` writes a sparse workspace override; `reset` requires a
-workspace and removes that override.
+management behaviour as Vox. `set` accepts a field and value, with repeatable
+`--field FIELD VALUE` pairs for additional changes. Values accept JSON scalar
+syntax and otherwise remain strings. Passing `--workspace` writes a sparse
+workspace override; `reset` requires a workspace and removes that override.
 
 `ethos config provider show`, `check`, and `set` expose the provider service
-operations. Both mutation commands accept sparse JSON settings; `api_key`
+operations. `set` and candidate `check` use the same field-value syntax as
+capabilities; `check` without fields checks the active provider. `api_key`
 targets the selected provider and is always redacted from output.
 
 For a write-tool approval it prints the exact tool name and validated JSON
