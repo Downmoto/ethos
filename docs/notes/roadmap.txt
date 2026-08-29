@@ -7,10 +7,6 @@ Milestone 1 — Core capabilities:
             Create, update, move, and delete files within workspace boundaries.
         Shell:
             Run workspace-scoped commands with approvals, timeouts, and streamed output.
-        Web:
-            Search, browse, and retrieve web content for use during a run.
-        MCP (deferred for last in this milestone):
-            Connect to MCP servers and expose their tools and resources to the runtime.
     Ethos app:
         Capability management:
             Configure capability availability and permissions globally and per workspace.
@@ -49,3 +45,12 @@ Milestone 3 — Orchestration:
             Trigger configured actions from Ethos lifecycle events.
         Scheduling:
             Run workflows once or on a recurring schedule and retain their execution history.
+
+Beta features:
+    These are candidates for development during beta and are not required for beta v0.1.0.
+    Web:
+        Search, browse, and retrieve web content for use during a run.
+        Deferred because its product and dependency choices will directly shape how Ethos functions.
+    MCP:
+        Connect to MCP servers and expose their tools and resources to the runtime.
+        Deferred until the specification and a practical development test server can be evaluated.
