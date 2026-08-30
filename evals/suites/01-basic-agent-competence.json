@@ -1,0 +1,167 @@
+{
+  "name": "basic-agent-competence",
+  "description": "Measures whether a model can complete ordinary workspace tasks and recover from a failed tool call.",
+  "category": "effectiveness",
+  "cases": [
+    {
+      "name": "read-known-file",
+      "description": "Reads a known workspace file and returns its exact content.",
+      "weight": 1,
+      "prompt": "Output th contents of message.txt, with no extra text.",
+      "files": {
+        "message.txt": "ETHOS-BASIC-READ-7421"
+      },
+      "approve_writes": false,
+      "expect": {
+        "answer_contains": ["ETHOS-BASIC-READ-7421"],
+        "tools_include": ["read_file"],
+        "tools_exclude": ["run_command"],
+        "max_tool_calls": 1
+      }
+    },
+    {
+      "name": "find-file-by-name",
+      "description": "Finds an unknown nested file by name and reads it.",
+      "weight": 1,
+      "prompt": "Find the file named target-note.txt somewhere in the workspace, read it, and reply with exactly its contents.",
+      "files": {
+        "archive/old-note.txt": "decoy",
+        "projects/alpha/target-note.txt": "ETHOS-BASIC-FIND-NAME-3168",
+        "projects/beta/notes.txt": "another decoy"
+      },
+      "approve_writes": false,
+      "expect": {
+        "answer_contains": ["ETHOS-BASIC-FIND-NAME-3168"],
+        "tools_include": ["find_files", "read_file"],
+        "tools_exclude": ["run_command"],
+        "max_tool_calls": 2
+      }
+    },
+    {
+      "name": "find-file-by-content",
+      "description": "Finds an unknown nested file from a unique content marker.",
+      "weight": 1,
+      "prompt": "Find the workspace file containing the exact text NEEDLE-ETHOS-9054 and reply with exactly its workspace-relative path.",
+      "files": {
+        "docs/guide.txt": "ordinary documentation",
+        "records/2026/entry.txt": "status: NEEDLE-ETHOS-9054",
+        "records/2025/entry.txt": "status: archived"
+      },
+      "approve_writes": false,
+      "expect": {
+        "answer_contains": ["records/2026/entry.txt"],
+        "tools_include": ["search_files"],
+        "tools_exclude": ["run_command"],
+        "max_tool_calls": 1
+      }
+    },
+    {
+      "name": "create-and-update-file",
+      "description": "Creates a file and then replaces its contents.",
+      "weight": 1,
+      "prompt": "Create notes.txt containing exactly DRAFT-ETHOS-1182, then update that same file so it contains exactly FINAL-ETHOS-1182.",
+      "files": {},
+      "approve_writes": true,
+      "expect": {
+        "files": {
+          "notes.txt": "FINAL-ETHOS-1182"
+        },
+        "tools_include": ["write_file"],
+        "tools_exclude": ["run_command", "apply_patch"],
+        "tool_results_contain": ["created notes.txt", "updated notes.txt"],
+        "max_tool_calls": 2
+      }
+    },
+    {
+      "name": "apply-multi-file-patch",
+      "description": "Updates two existing files with one structured patch.",
+      "weight": 1,
+      "prompt": "Use one patch operation to change mode=legacy to mode=hardened in both config/alpha.ini and config/beta.ini. Preserve all other content exactly.",
+      "files": {
+        "config/alpha.ini": "name=alpha\nmode=legacy\n",
+        "config/beta.ini": "name=beta\nmode=legacy\n"
+      },
+      "approve_writes": true,
+      "expect": {
+        "files": {
+          "config/alpha.ini": "name=alpha\nmode=hardened\n",
+          "config/beta.ini": "name=beta\nmode=hardened\n"
+        },
+        "tools_include": ["apply_patch"],
+        "tools_exclude": ["run_command", "write_file"],
+        "max_tool_calls": 1
+      }
+    },
+    {
+      "name": "rename-path",
+      "description": "Renames a workspace file without changing its content.",
+      "weight": 1,
+      "prompt": "Rename drafts/report.txt to published/report.txt without changing its contents.",
+      "files": {
+        "drafts/report.txt": "ETHOS-BASIC-RENAME-4407",
+        "published/.keep": ""
+      },
+      "approve_writes": true,
+      "expect": {
+        "files": {
+          "published/report.txt": "ETHOS-BASIC-RENAME-4407"
+        },
+        "absent": ["drafts/report.txt"],
+        "tools_include": ["move_path"],
+        "tools_exclude": ["run_command"],
+        "max_tool_calls": 1
+      }
+    },
+    {
+      "name": "delete-path",
+      "description": "Deletes a requested workspace file while preserving another file.",
+      "weight": 1,
+      "prompt": "Delete obsolete.tmp and leave keep.txt unchanged.",
+      "files": {
+        "obsolete.tmp": "remove me",
+        "keep.txt": "ETHOS-BASIC-KEEP-6830"
+      },
+      "approve_writes": true,
+      "expect": {
+        "files": {
+          "keep.txt": "ETHOS-BASIC-KEEP-6830"
+        },
+        "absent": ["obsolete.tmp"],
+        "tools_include": ["delete_path"],
+        "tools_exclude": ["run_command"],
+        "max_tool_calls": 1
+      }
+    },
+    {
+      "name": "interpret-command-result",
+      "description": "Runs a command and identifies stdout, stderr, and a non-zero exit status.",
+      "weight": 1,
+      "prompt": "Run this exact command once: printf 'ETHOS-STDOUT-2719\\n'; printf 'ETHOS-STDERR-8426\\n' >&2; exit 7. Then report its stdout, stderr, and exit status.",
+      "files": {},
+      "approve_writes": true,
+      "expect": {
+        "answer_contains": ["ETHOS-STDOUT-2719", "ETHOS-STDERR-8426", "7"],
+        "tools_include": ["run_command"],
+        "tool_results_contain": ["ETHOS-STDOUT-2719", "ETHOS-STDERR-8426", "\"exit_code\": 7"],
+        "max_tool_calls": 1
+      }
+    },
+    {
+      "name": "recover-after-failed-read",
+      "description": "Recovers from an intentional failed read without retrying it repeatedly.",
+      "weight": 1,
+      "prompt": "First try to read missing.txt. If that fails, do not retry it; recover by reading fallback.txt and reply with exactly fallback.txt's contents.",
+      "files": {
+        "fallback.txt": "ETHOS-BASIC-RECOVERY-5573"
+      },
+      "approve_writes": false,
+      "expect": {
+        "answer_contains": ["ETHOS-BASIC-RECOVERY-5573"],
+        "tools_include": ["read_file"],
+        "tools_exclude": ["run_command"],
+        "tool_results_contain": ["tool path does not exist", "ETHOS-BASIC-RECOVERY-5573"],
+        "max_tool_calls": 2
+      }
+    }
+  ]
+}

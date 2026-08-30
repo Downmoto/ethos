@@ -1,0 +1,141 @@
+{
+  "name": "tool-selection-quality",
+  "description": "Measures whether a model chooses valid, direct, and efficient tools for ordinary workspace operations.",
+  "category": "effectiveness",
+  "cases": [
+    {
+      "name": "read-with-filesystem-tool",
+      "description": "Uses the dedicated reader instead of shelling out for a known file.",
+      "weight": 1,
+      "prompt": "Read status.txt and reply with exactly its contents.",
+      "files": {
+        "status.txt": "ETHOS-SELECTION-READ-1048"
+      },
+      "approve_writes": false,
+      "expect": {
+        "answer_contains": ["ETHOS-SELECTION-READ-1048"],
+        "tools_include": ["read_file"],
+        "tools_exclude": ["run_command"],
+        "max_tool_calls": 1
+      }
+    },
+    {
+      "name": "list-known-directory",
+      "description": "Uses a direct directory listing without a recursive search or shell command.",
+      "weight": 1,
+      "prompt": "List the immediate entries in assets and reply with the entry names.",
+      "files": {
+        "assets/banner.txt": "banner",
+        "assets/icon.txt": "icon",
+        "assets/nested/hidden.txt": "not an immediate file"
+      },
+      "approve_writes": false,
+      "expect": {
+        "answer_contains": ["banner.txt", "icon.txt"],
+        "tools_include": ["list_files"],
+        "tools_exclude": ["find_files", "search_files", "run_command"],
+        "max_tool_calls": 1
+      }
+    },
+    {
+      "name": "find-then-read",
+      "description": "Uses recursive discovery followed by one targeted read.",
+      "weight": 1,
+      "prompt": "Find the file named release-token.txt, read it, and reply with exactly its contents.",
+      "files": {
+        "archive/2024/release-token.txt": "ETHOS-SELECTION-FIND-2265",
+        "archive/2025/notes.txt": "decoy"
+      },
+      "approve_writes": false,
+      "expect": {
+        "answer_contains": ["ETHOS-SELECTION-FIND-2265"],
+        "tools_include": ["find_files", "read_file"],
+        "tools_exclude": ["search_files", "run_command"],
+        "max_tool_calls": 2
+      }
+    },
+    {
+      "name": "search-content-directly",
+      "description": "Uses one content search without unnecessary reads or repeated searches.",
+      "weight": 1,
+      "prompt": "Find the workspace file containing UNIQUE-SELECTION-7713 and reply with exactly its workspace-relative path.",
+      "files": {
+        "docs/alpha.txt": "ordinary text",
+        "docs/reference.txt": "marker: UNIQUE-SELECTION-7713",
+        "notes/reference.txt": "different marker"
+      },
+      "approve_writes": false,
+      "expect": {
+        "answer_contains": ["docs/reference.txt"],
+        "tools_include": ["search_files"],
+        "tools_exclude": ["read_file", "find_files", "run_command"],
+        "max_tool_calls": 1
+      }
+    },
+    {
+      "name": "create-with-write-tool",
+      "description": "Uses the structured writer for a simple file creation.",
+      "weight": 1,
+      "prompt": "Create result.txt containing exactly ETHOS-SELECTION-WRITE-3901.",
+      "files": {},
+      "approve_writes": true,
+      "expect": {
+        "files": {
+          "result.txt": "ETHOS-SELECTION-WRITE-3901"
+        },
+        "tools_include": ["write_file"],
+        "tools_exclude": ["apply_patch", "run_command"],
+        "max_tool_calls": 1
+      }
+    },
+    {
+      "name": "patch-without-unavailable-tool",
+      "description": "Uses one available structured patch instead of inventing a text-replacement tool.",
+      "weight": 1,
+      "prompt": "In one tool call, replace enabled=false with enabled=true in feature.ini while preserving every other line.",
+      "files": {
+        "feature.ini": "name=search\nenabled=false\nowner=ethos\n"
+      },
+      "approve_writes": true,
+      "expect": {
+        "files": {
+          "feature.ini": "name=search\nenabled=true\nowner=ethos\n"
+        },
+        "tools_include": ["apply_patch"],
+        "tools_exclude": ["write_file", "run_command", "replace_text"],
+        "max_tool_calls": 1
+      }
+    },
+    {
+      "name": "use-shell-when-required",
+      "description": "Uses the shell when the requested outcome depends on actual command execution.",
+      "weight": 1,
+      "prompt": "Run this exact command once and report its exit status: printf 'ETHOS-SELECTION-SHELL-6642\\n'; exit 4",
+      "files": {},
+      "approve_writes": true,
+      "expect": {
+        "answer_contains": ["ETHOS-SELECTION-SHELL-6642", "4"],
+        "tools_include": ["run_command"],
+        "tool_results_contain": ["ETHOS-SELECTION-SHELL-6642", "\"exit_code\": 4"],
+        "max_tool_calls": 1
+      }
+    },
+    {
+      "name": "valid-bounded-read-arguments",
+      "description": "Makes one valid bounded read with no corrective retry.",
+      "weight": 1,
+      "prompt": "Read only lines 2 through 3 of numbered.txt and reply with exactly those two lines.",
+      "files": {
+        "numbered.txt": "LINE-ONE\nLINE-TWO-5187\nLINE-THREE-9026\nLINE-FOUR\n"
+      },
+      "approve_writes": false,
+      "expect": {
+        "answer_contains": ["LINE-TWO-5187", "LINE-THREE-9026"],
+        "answer_excludes": ["LINE-ONE", "LINE-FOUR"],
+        "tools_include": ["read_file"],
+        "tools_exclude": ["run_command"],
+        "max_tool_calls": 1
+      }
+    }
+  ]
+}

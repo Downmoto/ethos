@@ -1,0 +1,18 @@
+{
+  "repetitions": 3,
+  "providers": [
+    {
+      "name": "ollama",
+      "models": [
+        {
+          "name": "qwen3:8b",
+          "reasoning_effort": "none"
+        },
+        {
+          "name": "gemma4:e4b",
+          "reasoning_effort": "none"
+        }
+      ]
+    }
+  ]
+}

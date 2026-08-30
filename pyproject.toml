@@ -32,7 +32,7 @@ select = ["B", "E", "F", "I", "UP"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src", "tests"]
+files = ["src", "tests", "evals"]
 no_implicit_reexport = true
 
 [tool.pytest.ini_options]
@@ -49,7 +49,7 @@ build-backend = "uv_build"
 [tool.pyright]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
-include = ["src"]
+include = ["src", "evals"]
 
 [dependency-groups]
 dev = [
