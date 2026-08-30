@@ -9,14 +9,6 @@
           "reasoning_effort": "none"
         },
         {
-          "name": "llama3.1:8b",
-          "reasoning_effort": "none"
-        },
-        {
-          "name": "gemma4:e2b",
-          "reasoning_effort": "none"
-        },
-        {
           "name": "gemma4:e4b",
           "reasoning_effort": "none"
         }

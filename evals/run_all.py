@@ -3,6 +3,7 @@
 import argparse
 import json
 import re
+import shutil
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -13,6 +14,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 EVAL_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = EVAL_ROOT.parent
+MAX_RESULT_RUNS = 5
+RUN_DIRECTORY_PATTERN = re.compile(r"\d{8}T\d{12}Z")
 
 
 class ModelEntry(BaseModel):
@@ -66,6 +69,20 @@ def _slug(*values: str) -> str:
     return "-".join(
         re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-") for value in values
     )
+
+
+def cull_old_results(root: Path) -> None:
+    if not root.is_dir():
+        return
+    runs = sorted(
+        path
+        for path in root.iterdir()
+        if path.is_dir()
+        and not path.is_symlink()
+        and RUN_DIRECTORY_PATTERN.fullmatch(path.name)
+    )
+    for path in runs[:-MAX_RESULT_RUNS]:
+        shutil.rmtree(path)
 
 
 def main() -> int:
@@ -144,6 +161,7 @@ def main() -> int:
         print("\nFailed configurations:", file=sys.stderr)
         for failure in failures:
             print(f"- {failure}", file=sys.stderr)
+    cull_old_results(args.results)
     return int(bool(failures))
 
 

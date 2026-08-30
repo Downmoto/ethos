@@ -30,18 +30,24 @@ Provider credentials stay in their existing Ethos environment variables and
 are never stored in this file. Then run the complete matrix:
 
 ```sh
-ETHOS_KEYS__GOOGLE_API_KEY=... uv run python -m evals.run_all
+ETHOS_KEYS__[PROVIDER]_API_KEY=... uv run python -m evals.run_all
 ```
 
 The runner discovers every JSON file under `evals/cases`, runs each configured
 model, stores raw results in a new timestamped directory, and rebuilds
 `LEADERBOARD.md` inside that same result directory. A failed model does not
 prevent successful models from appearing on the leaderboard, but the command
-exits non-zero.
+exits non-zero. After each matrix, the runner keeps the five newest timestamped
+result directories and removes older ones.
+
+Agent-limit and malformed-model-response errors fail only the affected case,
+remain in its raw `failures`, and do not stop the rest of the matrix. Provider
+connection, authentication, and other harness errors still stop that model.
 
 Each model may include optional `input_cost_per_million` and
 `output_cost_per_million` fields. Results also include latency, tokens, model
-rounds, tool calls, the Ethos commit, and whether the worktree was dirty.
+rounds, ordered tool calls with their arguments, the Ethos commit, and whether
+the worktree was dirty.
 
 To run a single model or selected suite files directly, use the lower-level
 engine:
@@ -52,7 +58,7 @@ uv run python -m evals.engine \
   --model gemini-3.5-flash-lite \
   --repetitions 1 \
   --output evals/results/google-dummy.json \
-  evals/cases/dummy.json
+  evals/suites/01-basic-agent-competence.json
 ```
 
 Generate a consumer-facing leaderboard manually from selected result files:
@@ -95,6 +101,7 @@ isolated paths. Write approvals default to denial unless
         "absent": ["forbidden.txt"],
         "tools_include": ["read_file"],
         "tools_exclude": ["run_command"],
+        "tool_results_contain": ["expected tool output"],
         "max_tool_calls": 2
       }
     }

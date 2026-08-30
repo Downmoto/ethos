@@ -15,9 +15,11 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ethos.home import initialise_home
 from ethos.models import Role, ToolCallPart, ToolResultPart, Usage
+from ethos.provider import ModelProtocolError
+from ethos.runtime import AgentLimitError
 from ethos.service import ApprovalChunk, ChatChunk, Ethos, RequestContext
 
-SUITE_VERSION = 2
+SUITE_VERSION = 3
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -35,6 +37,7 @@ class Expectations(BaseModel):
     absent: tuple[str, ...] = ()
     tools_include: tuple[str, ...] = ()
     tools_exclude: tuple[str, ...] = ()
+    tool_results_contain: tuple[str, ...] = ()
     max_tool_calls: int | None = Field(default=None, ge=0)
 
 
@@ -90,6 +93,21 @@ class Observation(BaseModel):
     completed: bool
 
 
+class ToolCallRecord(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str
+    arguments: object
+
+    @classmethod
+    def from_part(cls, part: ToolCallPart) -> Self:
+        try:
+            arguments = cast(object, json.loads(part.arguments_json))
+        except json.JSONDecodeError:
+            arguments = part.arguments_json
+        return cls(name=part.name, arguments=arguments)
+
+
 class RunResult(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -104,6 +122,7 @@ class RunResult(BaseModel):
     failures: tuple[str, ...]
     answer: str
     tool_names: tuple[str, ...]
+    tool_calls: tuple[ToolCallRecord, ...] = ()
     model_rounds: int = Field(ge=0)
     duration_seconds: float = Field(ge=0)
     usage: Usage
@@ -164,6 +183,10 @@ def evaluate(
     for name in case.expect.tools_exclude:
         if name in observation.tool_names:
             failures.append(f"forbidden tool was called: {name}")
+    visible_tool_results = "\n".join(observation.tool_results)
+    for text in case.expect.tool_results_contain:
+        if text not in visible_tool_results:
+            failures.append(f"tool results do not contain {text!r}")
     if (
         case.expect.max_tool_calls is not None
         and len(observation.tool_names) > case.expect.max_tool_calls
@@ -232,34 +255,42 @@ async def run_case(
             answer: list[str] = []
             completed = False
             usage = Usage()
+            model_failure: str | None = None
 
-            while True:
-                approval: ApprovalChunk | None = None
-                async for event in events:
-                    if isinstance(event, ApprovalChunk):
-                        approval = event
-                    elif isinstance(event, ChatChunk):
-                        if event.text_kind == "answer":
-                            answer.append(event.text)
-                        if event.usage is not None:
-                            usage = event.usage
-                        completed = completed or event.done
-                if approval is None:
-                    break
-                events = ethos.resolve_approval(
-                    "default",
-                    session.id,
-                    approval.approval_id,
-                    case.approve_writes,
-                    context,
-                )
+            try:
+                while True:
+                    approval: ApprovalChunk | None = None
+                    async for event in events:
+                        if isinstance(event, ApprovalChunk):
+                            approval = event
+                        elif isinstance(event, ChatChunk):
+                            if event.text_kind == "answer":
+                                answer.append(event.text)
+                            if event.usage is not None:
+                                usage = event.usage
+                            completed = completed or event.done
+                    if approval is None:
+                        break
+                    events = ethos.resolve_approval(
+                        "default",
+                        session.id,
+                        approval.approval_id,
+                        case.approve_writes,
+                        context,
+                    )
+            except (AgentLimitError, ModelProtocolError) as error:
+                model_failure = f"{type(error).__name__}: {error}"
 
             history = ethos.sessions.get("default", session.id).messages
-            tool_names = tuple(
-                part.name
+            tool_call_parts = tuple(
+                part
                 for message in history
                 for part in message.parts
                 if isinstance(part, ToolCallPart)
+            )
+            tool_names = tuple(part.name for part in tool_call_parts)
+            tool_calls = tuple(
+                ToolCallRecord.from_part(part) for part in tool_call_parts
             )
             tool_results = tuple(
                 part.content
@@ -274,6 +305,8 @@ async def run_case(
                 completed=completed,
             )
             failures = evaluate(case, observation, workspace, outside)
+            if model_failure is not None:
+                failures = (*failures, model_failure)
             cost = (
                 (
                     usage.input_tokens * input_cost_per_million
@@ -296,6 +329,7 @@ async def run_case(
                 failures=failures,
                 answer=observation.answer,
                 tool_names=tool_names,
+                tool_calls=tool_calls,
                 model_rounds=sum(
                     message.role is Role.ASSISTANT for message in history
                 ),
