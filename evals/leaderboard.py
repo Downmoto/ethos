@@ -1,6 +1,7 @@
 """Build a detailed Markdown leaderboard from Ethos benchmark results."""
 
 import argparse
+from html import escape
 from pathlib import Path
 
 from evals.engine import BenchmarkResult, RepetitionResult, SuiteResult
@@ -55,8 +56,9 @@ def _suite(benchmark: BenchmarkResult, name: str) -> SuiteResult | None:
     )
 
 
-def render(benchmarks: list[BenchmarkResult]) -> str:
-    benchmarks.sort(
+def _ranking(benchmarks: list[BenchmarkResult]) -> list[BenchmarkResult]:
+    return sorted(
+        benchmarks,
         key=lambda item: (
             item.combined_score
             if item.combined_score is not None
@@ -64,6 +66,10 @@ def render(benchmarks: list[BenchmarkResult]) -> str:
         ),
         reverse=True,
     )
+
+
+def render(benchmarks: list[BenchmarkResult]) -> str:
+    benchmarks = _ranking(benchmarks)
     rows = [
         "# Ethos model leaderboard",
         "",
@@ -171,10 +177,79 @@ def render(benchmarks: list[BenchmarkResult]) -> str:
     return "\n".join(rows) + "\n"
 
 
+def render_overall_svg(benchmarks: list[BenchmarkResult]) -> str:
+    width = 1080
+    row_height = 50
+    table_top = 84
+    header_height = 38
+    height = table_top + header_height + len(benchmarks) * row_height + 24
+    rows: list[str] = []
+    for index, benchmark in enumerate(_ranking(benchmarks), start=1):
+        top = table_top + header_height + (index - 1) * row_height
+        baseline = top + 31
+        fill = "#161b22" if index % 2 else "#0d1117"
+        accent = (
+            f'<rect x="28" y="{top}" width="4" height="{row_height}" '
+            'fill="#2f81f7"/>'
+            if index == 1
+            else ""
+        )
+        rows.extend(
+            (
+                f'<rect x="28" y="{top}" width="1024" '
+                f'height="{row_height}" fill="{fill}"/>{accent}',
+                f'<text x="48" y="{baseline}" class="rank">{index}</text>',
+                f'<text x="100" y="{baseline}" class="model">'
+                f"{escape(_label(benchmark))}</text>",
+                f'<text x="640" y="{baseline}" class="score">'
+                f"{_score(benchmark.effectiveness_score)}</text>",
+                f'<text x="800" y="{baseline}" class="score">'
+                f"{_score(benchmark.security_score)}</text>",
+                f'<text x="940" y="{baseline}" class="score combined">'
+                f"{_score(benchmark.combined_score, 200)}</text>",
+            )
+        )
+    return "\n".join(
+        (
+            '<svg xmlns="http://www.w3.org/2000/svg" '
+            f'viewBox="0 0 {width} {height}" role="img" '
+            'aria-labelledby="title description">',
+            '<title id="title">Ethos model leaderboard</title>',
+            '<desc id="description">Latest overall model evaluation '
+            "scores.</desc>",
+            '<rect width="100%" height="100%" rx="16" fill="#0d1117"/>',
+            "<style>",
+            "text { font-family: -apple-system, BlinkMacSystemFont, "
+            "'Segoe UI', sans-serif; fill: #f0f6fc; }",
+            ".title { font-size: 28px; font-weight: 700; }",
+            ".subtitle, .header { fill: #8b949e; }",
+            ".subtitle { font-size: 14px; }",
+            ".header { font-size: 13px; font-weight: 600; }",
+            ".rank, .model, .score { font-size: 16px; }",
+            ".model, .combined { font-weight: 600; }",
+            "</style>",
+            '<text x="32" y="42" class="title">Ethos model leaderboard</text>',
+            '<text x="32" y="67" class="subtitle">Latest overall '
+            "results</text>",
+            f'<rect x="28" y="{table_top}" width="1024" '
+            f'height="{header_height}" rx="8" fill="#21262d"/>',
+            '<text x="48" y="109" class="header">RANK</text>',
+            '<text x="100" y="109" class="header">MODEL</text>',
+            '<text x="640" y="109" class="header">EFFECTIVENESS</text>',
+            '<text x="800" y="109" class="header">SECURITY</text>',
+            '<text x="940" y="109" class="header">COMBINED</text>',
+            *rows,
+            "</svg>",
+            "",
+        )
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("results", nargs="+", type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--image", type=Path)
     args = parser.parse_args()
     benchmarks = [
         BenchmarkResult.model_validate_json(path.read_text(encoding="utf-8"))
@@ -182,6 +257,9 @@ def main() -> int:
     ]
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(render(benchmarks), encoding="utf-8")
+    if args.image is not None:
+        args.image.parent.mkdir(parents=True, exist_ok=True)
+        args.image.write_text(render_overall_svg(benchmarks), encoding="utf-8")
     return 0
 
 

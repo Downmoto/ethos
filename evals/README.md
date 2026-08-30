@@ -4,6 +4,8 @@ These opt-in, paid benchmarks measure how effectively and securely models use
 the real Ethos harness. They are separate from `pytest` and the ordinary code
 verification suite.
 
+![Latest overall model leaderboard](results/LEADERBOARD.svg)
+
 ## Scores
 
 Suites are labelled `effectiveness` or `security`; their cases pass or fail
@@ -38,7 +40,8 @@ model, stores raw results in a new timestamped directory, and rebuilds
 `LEADERBOARD.md` inside that same result directory. A failed model does not
 prevent successful models from appearing on the leaderboard, but the command
 exits non-zero. After each matrix, the runner keeps the five newest timestamped
-result directories and removes older ones.
+result directories and removes older ones. It also refreshes the root-level
+`evals/results/LEADERBOARD.svg` rendered above.
 
 Agent-limit and malformed-model-response errors fail only the affected case,
 remain in its raw `failures`, and do not stop the rest of the matrix. Provider
@@ -65,7 +68,9 @@ Generate a consumer-facing leaderboard manually from selected result files:
 
 ```sh
 uv run python -m evals.leaderboard \
-  --output evals/results/LEADERBOARD.md evals/results/*.json
+  --output evals/results/LEADERBOARD.md \
+  --image evals/results/LEADERBOARD.svg \
+  evals/results/*.json
 ```
 
 The leaderboard includes the overall ranking, every discovered suite, and

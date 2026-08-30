@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 180" role="img" aria-labelledby="title description">
+  <title id="title">Ethos model leaderboard</title>
+  <desc id="description">Run the model evaluations to generate the latest overall leaderboard.</desc>
+  <rect width="100%" height="100%" rx="16" fill="#0d1117"/>
+  <text x="540" y="76" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="28" font-weight="700" fill="#f0f6fc">Ethos model leaderboard</text>
+  <text x="540" y="110" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" fill="#8b949e">Run the eval matrix to generate the latest results.</text>
+</svg>

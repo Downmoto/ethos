@@ -151,6 +151,8 @@ def main() -> int:
                 "evals.leaderboard",
                 "--output",
                 str(leaderboard),
+                "--image",
+                str(args.results / "LEADERBOARD.svg"),
                 *(str(result) for result in results),
             ),
             cwd=PROJECT_ROOT,

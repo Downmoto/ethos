@@ -24,7 +24,7 @@ from evals.engine import (
     load_suites,
     suite_score,
 )
-from evals.leaderboard import render
+from evals.leaderboard import render, render_overall_svg
 from evals.run_all import cull_old_results, load_config
 
 
@@ -184,10 +184,14 @@ def main() -> int:
         assert "suite" not in raw_run
         assert "case" not in raw_run
         leaderboard = render([benchmark])
+        image = render_overall_svg([benchmark])
         assert "## Suite: check-suite" in leaderboard
         assert "### Case: check" in leaderboard
         assert "RAW-ANSWER-CANARY" not in leaderboard
         assert "| Failures |" not in leaderboard
+        assert image.startswith("<svg")
+        assert "provider/model (none)" in image
+        assert "RAW-ANSWER-CANARY" not in image
         assert load_suites(
             [
                 Path("evals/suites/01-basic-agent-competence.json"),
