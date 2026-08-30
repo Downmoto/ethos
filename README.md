@@ -80,6 +80,18 @@ Application state is stored locally, but model requests are sent to the
 provider you select. Session history can contain reasoning, tool arguments,
 tool results, and file contents, so treat it as sensitive data.
 
+## Model evaluations
+
+Ethos includes opt-in model evaluations that measure how effectively and
+securely different models use the real agent harness. They are separate from
+the ordinary test suite and produce raw results, detailed Markdown reports,
+and the overall leaderboard below.
+
+[![Latest Ethos model leaderboard](evals/results/LEADERBOARD.svg)](evals/README.md)
+
+See the [evaluation documentation](evals/README.md) for scoring, suite formats,
+model configuration, and run instructions.
+
 ## Direction
 
 The immediate work is still completing and refining the agent loop. The
