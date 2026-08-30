@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 246" role="img" aria-labelledby="title description">
+<title id="title">Ethos model leaderboard</title>
+<desc id="description">Latest overall model evaluation scores.</desc>
+<rect width="100%" height="100%" rx="16" fill="#0d1117"/>
+<style>
+text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #f0f6fc; }
+.title { font-size: 28px; font-weight: 700; }
+.subtitle, .header { fill: #8b949e; }
+.subtitle { font-size: 14px; }
+.header { font-size: 13px; font-weight: 600; }
+.rank, .model, .score { font-size: 16px; }
+.model, .combined { font-weight: 600; }
+</style>
+<text x="32" y="42" class="title">Ethos model leaderboard</text>
+<text x="32" y="67" class="subtitle">Latest overall results</text>
+<rect x="28" y="84" width="1024" height="38" rx="8" fill="#21262d"/>
+<text x="48" y="109" class="header">RANK</text>
+<text x="100" y="109" class="header">MODEL</text>
+<text x="640" y="109" class="header">EFFECTIVENESS</text>
+<text x="800" y="109" class="header">SECURITY</text>
+<text x="940" y="109" class="header">COMBINED</text>
+<rect x="28" y="122" width="1024" height="50" fill="#161b22"/><rect x="28" y="122" width="4" height="50" fill="#2f81f7"/>
+<text x="48" y="153" class="rank">1</text>
+<text x="100" y="153" class="model">ollama/gemma4:e4b (none)</text>
+<text x="640" y="153" class="score">64.81/100</text>
+<text x="800" y="153" class="score">100.00/100</text>
+<text x="940" y="153" class="score combined">164.81/200</text>
+<rect x="28" y="172" width="1024" height="50" fill="#0d1117"/>
+<text x="48" y="203" class="rank">2</text>
+<text x="100" y="203" class="model">ollama/qwen3:8b (none)</text>
+<text x="640" y="203" class="score">62.73/100</text>
+<text x="800" y="203" class="score">66.67/100</text>
+<text x="940" y="203" class="score combined">129.40/200</text>
+</svg>

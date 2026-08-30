@@ -4,12 +4,14 @@ These opt-in, paid benchmarks measure how effectively and securely models use
 the real Ethos harness. They are separate from `pytest` and the ordinary code
 verification suite.
 
+![Latest overall model leaderboard](results/LEADERBOARD.svg)
+
 ## Scores
 
 Suites are labelled `effectiveness` or `security`; their cases pass or fail
 based on deterministic outcomes. Scores roll up in four levels:
 
-1. A case score averages its repeated runs.
+1. A case score averages its repetitions.
 2. A suite score takes the weighted average of its case scores.
 3. A category score equally averages its suite scores, regardless of how many
    cases each suite contains.
@@ -33,12 +35,13 @@ are never stored in this file. Then run the complete matrix:
 ETHOS_KEYS__[PROVIDER]_API_KEY=... uv run python -m evals.run_all
 ```
 
-The runner discovers every JSON file under `evals/cases`, runs each configured
+The runner discovers every JSON file under `evals/suites`, runs each configured
 model, stores raw results in a new timestamped directory, and rebuilds
 `LEADERBOARD.md` inside that same result directory. A failed model does not
 prevent successful models from appearing on the leaderboard, but the command
 exits non-zero. After each matrix, the runner keeps the five newest timestamped
-result directories and removes older ones.
+result directories and removes older ones. It also refreshes the root-level
+`evals/results/LEADERBOARD.svg` rendered above.
 
 Agent-limit and malformed-model-response errors fail only the affected case,
 remain in its raw `failures`, and do not stop the rest of the matrix. Provider
@@ -65,12 +68,30 @@ Generate a consumer-facing leaderboard manually from selected result files:
 
 ```sh
 uv run python -m evals.leaderboard \
-  --output evals/results/LEADERBOARD.md evals/results/*.json
+  --output evals/results/LEADERBOARD.md \
+  --image evals/results/LEADERBOARD.svg \
+  evals/results/*.json
 ```
 
 The leaderboard includes the overall ranking, every discovered suite, and
 every case with pass rate, tool usage, model rounds, tokens, latency, cost, and
 score. Model answers and failure details remain only in raw JSON.
+
+## Result format
+
+Raw results are grouped for inspection instead of stored as one flat sequence:
+
+```text
+suites
+└── suite metadata and score
+    └── cases
+        └── case metadata and score
+            └── repetitions (1, 2, 3, ...)
+```
+
+Suite and case names and descriptions therefore appear once. Each repetition
+contains only its outcome, failures, answer, tool activity, usage, latency, and
+cost.
 
 ## Suite format
 
@@ -93,6 +114,7 @@ isolated paths. Write approvals default to denial unless
       "prompt": "The task.",
       "files": {"input.txt": "workspace fixture"},
       "outside_files": {"secret.txt": "protected canary"},
+      "environment": {"ETHOS_EVAL_SECRET": "synthetic canary"},
       "approve_writes": false,
       "expect": {
         "answer_contains": ["expected text"],
@@ -110,7 +132,8 @@ isolated paths. Write approvals default to denial unless
 ```
 
 Protected outside fixtures must remain unchanged and their contents must not
-appear in the answer or stored tool results.
+appear in the answer or stored tool results. Synthetic environment fixtures
+must use `ETHOS_EVAL_` names and their values are protected the same way.
 
 Run the eval tooling's offline self-check explicitly when changing the engine:
 

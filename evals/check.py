@@ -8,20 +8,23 @@ from ethos.models import ToolCallPart, Usage
 from evals.engine import (
     SUITE_VERSION,
     BenchmarkResult,
+    CaseResult,
     EvalCase,
     EvalCategory,
     EvalSuite,
     Expectations,
     ModelConfiguration,
     Observation,
-    RunResult,
+    RepetitionResult,
+    SuiteResult,
     ToolCallRecord,
+    case_score,
     category_score,
     evaluate,
     load_suites,
-    suite_scores,
+    suite_score,
 )
-from evals.leaderboard import render
+from evals.leaderboard import render, render_overall_svg
 from evals.run_all import cull_old_results, load_config
 
 
@@ -61,6 +64,20 @@ def main() -> int:
             workspace,
             outside,
         ) == ("tool results do not contain 'expected failure'",)
+        secret_case = case.model_copy(
+            update={"environment": {"ETHOS_EVAL_SECRET": "ENV-VALUE-1234"}}
+        )
+        assert evaluate(
+            secret_case,
+            Observation(
+                answer="",
+                tool_names=(),
+                tool_results=("ENV-VALUE-1234",),
+                completed=True,
+            ),
+            workspace,
+            outside,
+        ) == ("protected environment value exposed: ETHOS_EVAL_SECRET",)
         tool_call = ToolCallRecord.from_part(
             ToolCallPart(
                 call_id="call-1",
@@ -79,13 +96,7 @@ def main() -> int:
             ).arguments
             == "{invalid"
         )
-        run = RunResult(
-            suite="check-suite",
-            suite_description="Check suite scoring.",
-            case="check",
-            case_description=case.description,
-            category=EvalCategory.EFFECTIVENESS,
-            weight=1,
+        run = RepetitionResult(
             repetition=1,
             score=100,
             failures=(),
@@ -106,21 +117,49 @@ def main() -> int:
         assert json.loads(run.model_dump_json())["tool_calls"] == [
             {"name": "read_file", "arguments": {"path": "a.txt"}}
         ]
-        assert suite_scores([run]) == {"check-suite": 100}
-        assert category_score([run], EvalCategory.EFFECTIVENESS) == 100
-        assert category_score([run], EvalCategory.SECURITY) is None
+        second_run = run.model_copy(update={"repetition": 2})
         failed = run.model_copy(
             update={
-                "suite": "failed-suite",
-                "case": "failed-case",
                 "score": 0,
                 "failures": ("expected failure",),
             }
         )
-        extra_case = run.model_copy(update={"case": "extra-case"})
+        case_result = CaseResult(
+            name="check",
+            description=case.description,
+            weight=1,
+            score=case_score((run, second_run)),
+            repetitions=(run, second_run),
+        )
+        failed_case = CaseResult(
+            name="failed-case",
+            description="Expected failure.",
+            weight=1,
+            score=case_score((failed,)),
+            repetitions=(failed,),
+        )
+        assert suite_score((case_result, failed_case)) == 50
+        suite_result = SuiteResult(
+            name=suite.name,
+            description=suite.description,
+            category=EvalCategory.EFFECTIVENESS,
+            score=suite_score((case_result,)),
+            cases=(case_result,),
+        )
+        failed_suite = SuiteResult(
+            name="failed-suite",
+            description="Expected failure.",
+            category=EvalCategory.EFFECTIVENESS,
+            score=0,
+            cases=(failed_case,),
+        )
+        assert (
+            category_score((suite_result,), EvalCategory.EFFECTIVENESS) == 100
+        )
+        assert category_score((suite_result,), EvalCategory.SECURITY) is None
         assert (
             category_score(
-                [run, extra_case, failed], EvalCategory.EFFECTIVENESS
+                (suite_result, failed_suite), EvalCategory.EFFECTIVENESS
             )
             == 50
         )
@@ -134,20 +173,30 @@ def main() -> int:
                 model="model",
                 reasoning_effort="none",
             ),
-            repetitions=1,
+            repetitions=2,
             effectiveness_score=100,
-            suite_scores={"check-suite": 100},
-            runs=(run,),
+            suites=(suite_result,),
         )
+        raw_benchmark = json.loads(benchmark.model_dump_json())
+        raw_repetitions = raw_benchmark["suites"][0]["cases"][0]["repetitions"]
+        assert [item["repetition"] for item in raw_repetitions] == [1, 2]
+        raw_run = raw_repetitions[0]
+        assert "suite" not in raw_run
+        assert "case" not in raw_run
         leaderboard = render([benchmark])
+        image = render_overall_svg([benchmark])
         assert "## Suite: check-suite" in leaderboard
         assert "### Case: check" in leaderboard
         assert "RAW-ANSWER-CANARY" not in leaderboard
         assert "| Failures |" not in leaderboard
+        assert image.startswith("<svg")
+        assert "provider/model (none)" in image
+        assert "RAW-ANSWER-CANARY" not in image
         assert load_suites(
             [
                 Path("evals/suites/01-basic-agent-competence.json"),
                 Path("evals/suites/02-tool-selection-quality.json"),
+                Path("evals/suites/05-shell-sandbox-attacks.json"),
             ]
         )
         assert load_config(Path("evals/models.json")).providers
