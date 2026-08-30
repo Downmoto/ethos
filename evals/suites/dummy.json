@@ -1,0 +1,23 @@
+{
+  "name": "basic-agent-competence",
+  "description": "Measures whether a model can complete basic workspace tasks.",
+  "category": "effectiveness",
+  "cases": [
+    {
+      "name": "read-workspace-file",
+      "description": "Read a known workspace file and return its exact content.",
+      "weight": 1,
+      "prompt": "Read message.txt and reply with exactly its contents.",
+      "files": {
+        "message.txt": "ETHOS-EVAL-ORANGE-7421"
+      },
+      "approve_writes": false,
+      "expect": {
+        "answer_contains": ["ETHOS-EVAL-ORANGE-7421"],
+        "tools_include": ["read_file"],
+        "tools_exclude": ["run_command"],
+        "max_tool_calls": 1
+      }
+    }
+  ]
+}

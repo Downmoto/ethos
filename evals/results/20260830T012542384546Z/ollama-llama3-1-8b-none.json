@@ -1,0 +1,98 @@
+{
+  "suite_version": 2,
+  "generated_at": "2026-08-30T01:26:54.513153+00:00",
+  "ethos_commit": "9ece05bf71354009aeb749d0e24ba59e2d6d7d3d",
+  "ethos_dirty": true,
+  "configuration": {
+    "provider": "ollama",
+    "model": "llama3.1:8b",
+    "reasoning_effort": "none"
+  },
+  "repetitions": 3,
+  "effectiveness_score": 0.0,
+  "security_score": null,
+  "combined_score": null,
+  "suite_scores": {
+    "basic-agent-competence": 0.0
+  },
+  "runs": [
+    {
+      "suite": "basic-agent-competence",
+      "suite_description": "Measures whether a model can complete basic workspace tasks.",
+      "case": "read-workspace-file",
+      "case_description": "Read a known workspace file and return its exact content.",
+      "category": "effectiveness",
+      "weight": 1.0,
+      "repetition": 1,
+      "score": 0.0,
+      "failures": [
+        "answer does not contain 'ETHOS-EVAL-ORANGE-7421'"
+      ],
+      "answer": "The contents of message.txt are:\n\nHello, how are you? This is a test message.",
+      "tool_names": [
+        "read_file"
+      ],
+      "model_rounds": 2,
+      "duration_seconds": 13.677786375163123,
+      "usage": {
+        "input_tokens": 1570,
+        "output_tokens": 51,
+        "reasoning_tokens": 0,
+        "reasoning_tokens_estimated": true
+      },
+      "estimated_cost_usd": null
+    },
+    {
+      "suite": "basic-agent-competence",
+      "suite_description": "Measures whether a model can complete basic workspace tasks.",
+      "case": "read-workspace-file",
+      "case_description": "Read a known workspace file and return its exact content.",
+      "category": "effectiveness",
+      "weight": 1.0,
+      "repetition": 2,
+      "score": 0.0,
+      "failures": [
+        "answer does not contain 'ETHOS-EVAL-ORANGE-7421'"
+      ],
+      "answer": "The contents of message.txt are:\n\nHello from Ethos!",
+      "tool_names": [
+        "read_file"
+      ],
+      "model_rounds": 2,
+      "duration_seconds": 9.380984042072669,
+      "usage": {
+        "input_tokens": 1570,
+        "output_tokens": 43,
+        "reasoning_tokens": 0,
+        "reasoning_tokens_estimated": true
+      },
+      "estimated_cost_usd": null
+    },
+    {
+      "suite": "basic-agent-competence",
+      "suite_description": "Measures whether a model can complete basic workspace tasks.",
+      "case": "read-workspace-file",
+      "case_description": "Read a known workspace file and return its exact content.",
+      "category": "effectiveness",
+      "weight": 1.0,
+      "repetition": 3,
+      "score": 0.0,
+      "failures": [
+        "answer does not contain 'ETHOS-EVAL-ORANGE-7421'"
+      ],
+      "answer": "Hello World",
+      "tool_names": [
+        "read_file"
+      ],
+      "model_rounds": 2,
+      "duration_seconds": 8.27250083303079,
+      "usage": {
+        "input_tokens": 1562,
+        "output_tokens": 21,
+        "reasoning_tokens": 0,
+        "reasoning_tokens_estimated": true
+      },
+      "estimated_cost_usd": null
+    }
+  ]
+}
