@@ -3,7 +3,7 @@
 import argparse
 from pathlib import Path
 
-from evals.engine import BenchmarkResult, RunResult
+from evals.engine import BenchmarkResult, RepetitionResult, SuiteResult
 
 
 def _score(value: float | None, maximum: int = 100) -> str:
@@ -21,7 +21,7 @@ def _label(benchmark: BenchmarkResult) -> str:
 
 def _comparison_row(
     benchmark: BenchmarkResult,
-    runs: list[RunResult],
+    runs: list[RepetitionResult],
     score: float | None,
 ) -> str:
     costs = [
@@ -37,6 +37,21 @@ def _comparison_row(
         f"| {_average([float(run.usage.total_tokens) for run in runs])} "
         f"| {_average([run.duration_seconds for run in runs])} "
         f"| {_average(costs, 6)} |"
+    )
+
+
+def _all_repetitions(benchmark: BenchmarkResult) -> list[RepetitionResult]:
+    return [
+        repetition
+        for suite in benchmark.suites
+        for case in suite.cases
+        for repetition in case.repetitions
+    ]
+
+
+def _suite(benchmark: BenchmarkResult, name: str) -> SuiteResult | None:
+    return next(
+        (suite for suite in benchmark.suites if suite.name == name), None
     )
 
 
@@ -57,13 +72,14 @@ def render(benchmarks: list[BenchmarkResult]) -> str:
         "## Overall",
         "",
         "| Model configuration | Effectiveness | Security | Combined "
-        "| Runs | Avg seconds | Avg cost (USD) |",
+        "| Repetitions | Avg seconds | Avg cost (USD) |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for item in benchmarks:
+        repetitions = _all_repetitions(item)
         costs = [
             run.estimated_cost_usd
-            for run in item.runs
+            for run in repetitions
             if run.estimated_cost_usd is not None
         ]
         rows.append(
@@ -71,72 +87,87 @@ def render(benchmarks: list[BenchmarkResult]) -> str:
             f"| {_score(item.effectiveness_score)} "
             f"| {_score(item.security_score)} "
             f"| {_score(item.combined_score, 200)} "
-            f"| {len(item.runs)} "
-            f"| {_average([run.duration_seconds for run in item.runs])} "
+            f"| {len(repetitions)} "
+            f"| {_average([run.duration_seconds for run in repetitions])} "
             f"| {_average(costs, 6)} |"
         )
 
-    suite_metadata: dict[str, tuple[str, str]] = {}
+    suite_metadata: dict[str, SuiteResult] = {}
     for benchmark in benchmarks:
-        for run in benchmark.runs:
-            suite_metadata.setdefault(
-                run.suite,
-                (run.suite_description, run.category.value),
-            )
-    for suite, (description, category) in suite_metadata.items():
+        for suite_result in benchmark.suites:
+            suite_metadata.setdefault(suite_result.name, suite_result)
+    for suite_name, metadata in suite_metadata.items():
         rows.extend(
             (
                 "",
-                f"## Suite: {suite}",
+                f"## Suite: {suite_name}",
                 "",
-                description,
+                metadata.description,
                 "",
-                f"Category: **{category.title()}**",
+                f"Category: **{metadata.category.value.title()}**",
                 "",
-                "| Model configuration | Score | Passed runs | Avg tool calls "
+                "| Model configuration | Score | Passed repetitions "
+                "| Avg tool calls "
                 "| Avg rounds | Avg tokens | Avg seconds | Avg cost (USD) |",
                 "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
             )
         )
         for benchmark in benchmarks:
-            suite_runs = [run for run in benchmark.runs if run.suite == suite]
-            if suite_runs:
+            benchmark_suite = _suite(benchmark, suite_name)
+            if benchmark_suite is not None:
+                suite_runs = [
+                    repetition
+                    for suite_case in benchmark_suite.cases
+                    for repetition in suite_case.repetitions
+                ]
                 rows.append(
                     _comparison_row(
-                        benchmark,
-                        suite_runs,
-                        benchmark.suite_scores[suite],
+                        benchmark, suite_runs, benchmark_suite.score
                     )
                 )
 
         case_metadata: dict[str, str] = {}
         for benchmark in benchmarks:
-            for run in benchmark.runs:
-                if run.suite == suite:
-                    case_metadata.setdefault(run.case, run.case_description)
-        for case, case_description in case_metadata.items():
+            benchmark_suite = _suite(benchmark, suite_name)
+            if benchmark_suite is not None:
+                for suite_case in benchmark_suite.cases:
+                    case_metadata.setdefault(
+                        suite_case.name, suite_case.description
+                    )
+        for case_name, case_description in case_metadata.items():
             rows.extend(
                 (
                     "",
-                    f"### Case: {case}",
+                    f"### Case: {case_name}",
                     "",
                     case_description,
                     "",
-                    "| Model configuration | Score | Passed runs "
+                    "| Model configuration | Score | Passed repetitions "
                     "| Avg tool calls | Avg rounds | Avg tokens | Avg seconds "
                     "| Avg cost (USD) |",
                     "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
                 )
             )
             for benchmark in benchmarks:
-                case_runs = [
-                    run
-                    for run in benchmark.runs
-                    if run.suite == suite and run.case == case
-                ]
-                if case_runs:
-                    score = sum(run.score for run in case_runs) / len(case_runs)
-                    rows.append(_comparison_row(benchmark, case_runs, score))
+                benchmark_suite = _suite(benchmark, suite_name)
+                if benchmark_suite is None:
+                    continue
+                case_result = next(
+                    (
+                        item
+                        for item in benchmark_suite.cases
+                        if item.name == case_name
+                    ),
+                    None,
+                )
+                if case_result is not None:
+                    rows.append(
+                        _comparison_row(
+                            benchmark,
+                            list(case_result.repetitions),
+                            case_result.score,
+                        )
+                    )
     return "\n".join(rows) + "\n"
 
 
