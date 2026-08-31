@@ -8,6 +8,7 @@ from typing import Final
 
 from ethos.capability_config import CAPABILITIES_FILE
 from ethos.config import CONFIG_FILE
+from ethos.personas import PERSONAS_FILE
 from ethos.sessions import SESSIONS_DIR
 from ethos.storage import Storage
 from ethos.workspaces import WORKSPACES_DIR, WorkspaceManager
@@ -32,9 +33,14 @@ def _read_capabilities_template() -> str:
     return (files("ethos") / "templates" / CAPABILITIES_FILE).read_text()
 
 
+def _read_personas_template() -> str:
+    return (files("ethos") / "templates" / PERSONAS_FILE).read_text()
+
+
 _FILES: Final[tuple[tuple[Path, Callable[[], str]], ...]] = (
     (Path(CONFIG_FILE), _read_config_template),
     (Path(CAPABILITIES_FILE), _read_capabilities_template),
+    (Path(PERSONAS_FILE), _read_personas_template),
     (Path(TOOLS_CONFIG_FILE), _read_tools_template),
 )
 

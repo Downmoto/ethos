@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from ethos.capability_config import CAPABILITIES_FILE, CapabilityConfiguration
 from ethos.config import CONFIG_FILE, EthosSettings
 from ethos.home import initialise_home
+from ethos.personas import PERSONAS_FILE, PersonaConfiguration
 from ethos.workspaces import DEFAULT_WORKSPACE, WORKSPACES_DIR, WorkspaceManager
 
 
@@ -55,6 +56,7 @@ def test_initialise_home_restricts_config_access(tmp_path: Path) -> None:
     assert S_IMODE(home.stat().st_mode) == 0o700
     assert S_IMODE((home / CONFIG_FILE).stat().st_mode) == 0o600
     assert S_IMODE((home / CAPABILITIES_FILE).stat().st_mode) == 0o600
+    assert S_IMODE((home / PERSONAS_FILE).stat().st_mode) == 0o600
 
 
 def test_config_template_matches_settings_fields() -> None:
@@ -74,6 +76,19 @@ def test_capability_template_matches_configuration_fields() -> None:
     assert isinstance(config, dict)
     assert _config_field_paths(config) == _model_field_paths(  # pyright: ignore[reportUnknownArgumentType]
         CapabilityConfiguration
+    )
+
+
+def test_persona_template_matches_configuration_fields() -> None:
+    template = files("ethos") / "templates" / PERSONAS_FILE
+    config = yaml.safe_load(template.read_text())
+
+    assert isinstance(config, dict)
+    assert (
+        PersonaConfiguration.model_validate(config).model_dump(
+            by_alias=True, mode="json"
+        )
+        == config
     )
 
 

@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ethos.capabilities import Capability, RunContext
 from ethos.capabilities.filesystem import FilesystemCapability
@@ -25,11 +25,19 @@ from ethos.events.models import EventPayload
 from ethos.events.types import EventType
 from ethos.home import DB_PATH, LOGS_PATH, SKILLS_PATH
 from ethos.models import Message, Model, ReasoningEffort, Usage
+from ethos.personas import (
+    ETHOS_PERSONA_ID,
+    PERSONAS_FILE,
+    Persona,
+    PersonaManager,
+    PersonaResolution,
+)
 from ethos.provider import AIProvider, ProviderName
 from ethos.provider_config import ProviderManager
 from ethos.runtime import (
     AgentRuntime,
     ApprovalStreamEvent,
+    RuntimePersona,
     RuntimeStreamEvent,
     ToolOutputStreamEvent,
 )
@@ -54,10 +62,27 @@ class WorkspaceView(BaseModel):
 
     name: str
     path: str
+    assigned_persona: str = ETHOS_PERSONA_ID
+    effective_persona: str = ETHOS_PERSONA_ID
+    persona_fallback: bool = False
 
     @classmethod
-    def from_workspace(cls, workspace: Workspace) -> "WorkspaceView":
-        return cls(name=workspace.name, path=str(workspace.path))
+    def from_workspace(
+        cls,
+        workspace: Workspace,
+        resolution: PersonaResolution | None = None,
+    ) -> "WorkspaceView":
+        return cls(
+            name=workspace.name,
+            path=str(workspace.path),
+            assigned_persona=(
+                resolution.assigned_id if resolution else ETHOS_PERSONA_ID
+            ),
+            effective_persona=(
+                resolution.effective_id if resolution else ETHOS_PERSONA_ID
+            ),
+            persona_fallback=resolution.fallback if resolution else False,
+        )
 
 
 class CapabilityView(BaseModel):
@@ -84,6 +109,33 @@ class ProviderView(BaseModel):
     credential_configured: bool
 
 
+class PersonaView(BaseModel):
+    """Configured preferences and their effective runtime values."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: str
+    name: str
+    instructions: str
+    enabled: bool
+    workspace: str | None = None
+    model_name: str | None
+    effective_model_name: str | None
+    reasoning_effort: ReasoningEffort | None
+    effective_reasoning_effort: ReasoningEffort | None
+    capabilities: tuple[CapabilityName, ...] | None
+    effective_capabilities: tuple[CapabilityName, ...]
+
+
+class PersonaAssignmentView(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    workspace: str
+    assigned_persona: str
+    effective_persona: str
+    fallback: bool
+
+
 class SessionView(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -93,9 +145,16 @@ class SessionView(BaseModel):
     archived_at: str | None
     archived: bool
     message_count: int = Field(ge=0)
+    assigned_persona: str = ETHOS_PERSONA_ID
+    effective_persona: str = ETHOS_PERSONA_ID
+    persona_fallback: bool = False
 
     @classmethod
-    def from_session(cls, session: Session) -> "SessionView":
+    def from_session(
+        cls,
+        session: Session,
+        resolution: PersonaResolution | None = None,
+    ) -> "SessionView":
         return cls(
             id=str(session.id),
             workspace=session.workspace_name,
@@ -105,6 +164,13 @@ class SessionView(BaseModel):
             ),
             archived=session.archived,
             message_count=len(session.messages),
+            assigned_persona=(
+                resolution.assigned_id if resolution else ETHOS_PERSONA_ID
+            ),
+            effective_persona=(
+                resolution.effective_id if resolution else ETHOS_PERSONA_ID
+            ),
+            persona_fallback=resolution.fallback if resolution else False,
         )
 
 
@@ -166,6 +232,9 @@ class _SessionEventItem(BaseModel):
     id: str
     workspace: str
     archived: bool
+    assigned_persona: str
+    effective_persona: str
+    persona_fallback: bool
 
 
 class _WorkspaceEventPayload(EventPayload):
@@ -209,6 +278,20 @@ class _ProviderEventPayload(EventPayload):
     changed_fields: tuple[str, ...] = ()
 
 
+class _PersonaEventPayload(EventPayload):
+    """Persona operation metadata that deliberately excludes instructions."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    owner_id: str
+    external_context: dict[str, str]
+    persona_ids: tuple[str, ...]
+    workspace: str | None = None
+    effective_persona: str | None = None
+    fallback: bool = False
+    changed_fields: tuple[str, ...] = ()
+
+
 class Ethos:
     """One application lifetime shared by local and HTTP callers."""
 
@@ -225,6 +308,7 @@ class Ethos:
         self.workspaces = WorkspaceManager(home / WORKSPACES_DIR)
         self.sessions = SessionManager(self.workspaces, home / SESSIONS_DIR)
         self.capabilities = CapabilityManager(home / CAPABILITIES_FILE)
+        self.personas = PersonaManager(home / PERSONAS_FILE)
         self.providers = ProviderManager(home / CONFIG_FILE)
         self.events = create_event_emitter(self.storage)
         self._sandbox_provider_factory = (
@@ -253,6 +337,8 @@ class Ethos:
                     answer_only=True
                 ),
                 capability_resolver=self._resolve_capabilities,
+                persona_resolver=self._resolve_runtime_persona,
+                persona_identity_resolver=self._resolve_persona_identity,
                 events=self.events,
                 answer_now_after_seconds=(
                     settings.runtime.answer_now_after_seconds
@@ -264,6 +350,50 @@ class Ethos:
                 ),
             )
         return self._agent
+
+    def _resolve_persona_identity(
+        self, workspace: str
+    ) -> tuple[str, str, bool]:
+        """Resolve event identity without loading provider configuration."""
+        resolution = self.personas.resolve(workspace)
+        return (
+            resolution.assigned_id,
+            resolution.effective_id,
+            resolution.fallback,
+        )
+
+    def _resolve_runtime_persona(self, workspace: str) -> RuntimePersona:
+        """Freeze persona, provider, and capability choices for one turn."""
+        resolution = self.personas.resolve(workspace)
+        settings = self.providers.load()
+        provider = AIProvider.from_settings(settings)
+        model_name = (
+            resolution.effective.model_name or settings.provider.model_name
+        )
+        reasoning_effort = (
+            resolution.effective.reasoning_effort
+            or settings.provider.reasoning_effort
+        )
+        return RuntimePersona(
+            assigned_id=resolution.assigned_id,
+            effective_id=resolution.effective_id,
+            fallback=resolution.fallback,
+            instructions=(
+                "Persona identity: "
+                f"{resolution.effective.name} ({resolution.effective_id})\n"
+                "Persona instructions:\n"
+                f"{resolution.effective.instructions}"
+            ),
+            capability_ceiling=(
+                tuple(item.value for item in resolution.capability_ceiling)
+                if resolution.capability_ceiling is not None
+                else None
+            ),
+            model=provider.model(model_name, reasoning_effort),
+            answer_model_factory=lambda: provider.model(
+                model_name, ReasoningEffort.NONE
+            ),
+        )
 
     def _provider_model(self, *, answer_only: bool = False) -> Model:
         settings = self.providers.load()
@@ -303,15 +433,210 @@ class Ethos:
         )
         return view
 
+    async def create_persona(
+        self,
+        identifier: str,
+        settings: dict[str, object],
+        context: RequestContext,
+    ) -> PersonaView:
+        persona = self.personas.create(identifier, settings)
+        view = self._persona_view(identifier, persona)
+        await self._emit_personas(
+            context,
+            EventType.PERSONA_CREATE,
+            (identifier,),
+            changed_fields=tuple(sorted(settings)),
+        )
+        return view
+
+    async def list_personas(
+        self,
+        context: RequestContext,
+        workspace: str | None = None,
+    ) -> tuple[PersonaView, ...]:
+        if workspace is not None:
+            self.workspaces.get(workspace)
+        views = tuple(
+            self._persona_view(identifier, persona, workspace)
+            for identifier, persona in self.personas.list()
+        )
+        await self._emit_personas(
+            context,
+            EventType.PERSONA_LIST,
+            tuple(view.id for view in views),
+            workspace=workspace,
+        )
+        return views
+
+    async def show_persona(
+        self,
+        identifier: str,
+        context: RequestContext,
+        workspace: str | None = None,
+    ) -> PersonaView:
+        if workspace is not None:
+            self.workspaces.get(workspace)
+        persona = self.personas.get(identifier)
+        view = self._persona_view(identifier, persona, workspace)
+        await self._emit_personas(
+            context,
+            EventType.PERSONA_SHOW,
+            (identifier,),
+            workspace=workspace,
+        )
+        return view
+
+    async def configure_persona(
+        self,
+        identifier: str,
+        changes: dict[str, object],
+        context: RequestContext,
+    ) -> PersonaView:
+        persona = self.personas.update(identifier, changes)
+        view = self._persona_view(identifier, persona)
+        await self._emit_personas(
+            context,
+            EventType.PERSONA_CONFIGURE,
+            (identifier,),
+            changed_fields=tuple(sorted(changes)),
+        )
+        return view
+
+    async def remove_persona(
+        self,
+        identifier: str,
+        context: RequestContext,
+    ) -> None:
+        self.personas.remove(identifier)
+        await self._emit_personas(
+            context,
+            EventType.PERSONA_REMOVE,
+            (identifier,),
+        )
+
+    async def show_default_persona(
+        self, context: RequestContext
+    ) -> PersonaView:
+        identifier, persona = self.personas.default()
+        view = self._persona_view(identifier, persona)
+        await self._emit_personas(
+            context,
+            EventType.PERSONA_DEFAULT_SHOW,
+            (identifier,),
+        )
+        return view
+
+    async def configure_default_persona(
+        self,
+        identifier: str,
+        context: RequestContext,
+    ) -> PersonaView:
+        persona = self.personas.set_default(identifier)
+        view = self._persona_view(identifier, persona)
+        await self._emit_personas(
+            context,
+            EventType.PERSONA_DEFAULT_CONFIGURE,
+            (identifier,),
+        )
+        return view
+
+    async def show_workspace_persona(
+        self,
+        workspace: str,
+        context: RequestContext,
+    ) -> PersonaAssignmentView:
+        self.workspaces.get(workspace)
+        resolution = self.personas.resolve(workspace)
+        view = _persona_assignment_view(workspace, resolution)
+        await self._emit_personas(
+            context,
+            EventType.PERSONA_SHOW,
+            (resolution.assigned_id,),
+            workspace=workspace,
+            resolution=resolution,
+        )
+        return view
+
+    async def assign_workspace_persona(
+        self,
+        workspace: str,
+        identifier: str,
+        context: RequestContext,
+    ) -> PersonaAssignmentView:
+        self.workspaces.get(workspace)
+        resolution = self.personas.assign(workspace, identifier)
+        view = _persona_assignment_view(workspace, resolution)
+        await self._emit_personas(
+            context,
+            EventType.PERSONA_ASSIGN,
+            (identifier,),
+            workspace=workspace,
+            resolution=resolution,
+        )
+        return view
+
+    def _persona_view(
+        self,
+        identifier: str,
+        persona: Persona,
+        workspace: str | None = None,
+    ) -> PersonaView:
+        try:
+            provider = self.providers.load().provider
+        except ValidationError:
+            provider = None
+        return PersonaView(
+            id=identifier,
+            name=persona.name,
+            instructions=persona.instructions,
+            enabled=persona.enabled,
+            workspace=workspace,
+            model_name=persona.model_name,
+            effective_model_name=(
+                persona.model_name
+                or (provider.model_name if provider is not None else None)
+            ),
+            reasoning_effort=persona.reasoning_effort,
+            effective_reasoning_effort=(
+                persona.reasoning_effort
+                or (provider.reasoning_effort if provider is not None else None)
+            ),
+            capabilities=persona.capabilities,
+            effective_capabilities=self._effective_capability_names(
+                workspace, persona.capabilities
+            ),
+        )
+
+    def _effective_capability_names(
+        self,
+        workspace: str | None,
+        ceiling: tuple[CapabilityName, ...] | None,
+    ) -> tuple[CapabilityName, ...]:
+        settings = self.capabilities.effective(workspace)
+        enabled = {
+            CapabilityName.SKILLS: settings.skills.enabled,
+            CapabilityName.FILE_SYSTEM: settings.file_system.enabled,
+            CapabilityName.SHELL: settings.shell.enabled,
+        }
+        allowed = set(ceiling) if ceiling is not None else set(CapabilityName)
+        return tuple(
+            name for name in CapabilityName if enabled[name] and name in allowed
+        )
+
     def _resolve_capabilities(
         self, context: RunContext
     ) -> tuple[Capability, ...]:
         """Build enabled capabilities from fresh settings for one run."""
 
         settings = self.capabilities.effective(context.workspace_name)
+        allowed = (
+            set(context.persona_capabilities)
+            if context.persona_capabilities is not None
+            else {name.value for name in CapabilityName}
+        )
         capabilities: list[Capability] = []
         filesystem = settings.file_system
-        if filesystem.enabled:
+        if filesystem.enabled and CapabilityName.FILE_SYSTEM.value in allowed:
             capabilities.append(
                 FilesystemCapability(
                     max_read_file_bytes=filesystem.max_read_file_bytes,
@@ -326,7 +651,7 @@ class Ethos:
                 )
             )
         skills = settings.skills
-        if skills.enabled:
+        if skills.enabled and CapabilityName.SKILLS.value in allowed:
             capabilities.append(
                 SkillsCapability(
                     self.home / SKILLS_PATH,
@@ -339,7 +664,7 @@ class Ethos:
                 )
             )
         shell = settings.shell
-        if shell.enabled:
+        if shell.enabled and CapabilityName.SHELL.value in allowed:
             capabilities.append(
                 ShellCapability(
                     self._sandbox_provider_factory,
@@ -445,11 +770,11 @@ class Ethos:
         """Project persistence models without exposing internal model types."""
 
         effective = self.capabilities.effective(workspace)
-        settings = (
-            effective.skills
-            if name is CapabilityName.SKILLS
-            else effective.file_system
-        )
+        settings = {
+            CapabilityName.SKILLS: effective.skills,
+            CapabilityName.FILE_SYSTEM: effective.file_system,
+            CapabilityName.SHELL: effective.shell,
+        }[name]
         return CapabilityView(
             name=name,
             scope="workspace" if workspace is not None else "global",
@@ -459,13 +784,31 @@ class Ethos:
         )
 
     async def create_workspace(
-        self, name: str, context: RequestContext
+        self,
+        name: str,
+        context: RequestContext,
+        persona: str | None = None,
     ) -> WorkspaceView:
+        identifier, selected = (
+            (persona, self.personas.get(persona))
+            if persona is not None
+            else self.personas.default()
+        )
+        if not selected.enabled:
+            raise ValueError(f"persona is disabled: {identifier}")
         workspace = self.workspaces.create(name)
+        resolution = self.personas.assign(workspace.name, identifier)
         await self._emit_workspaces(
             context, EventType.WORKSPACE_CREATE, (workspace,)
         )
-        return WorkspaceView.from_workspace(workspace)
+        await self._emit_personas(
+            context,
+            EventType.PERSONA_ASSIGN,
+            (resolution.assigned_id,),
+            workspace=workspace.name,
+            resolution=resolution,
+        )
+        return WorkspaceView.from_workspace(workspace, resolution)
 
     async def list_workspaces(
         self, context: RequestContext
@@ -474,7 +817,10 @@ class Ethos:
         await self._emit_workspaces(
             context, EventType.WORKSPACE_LIST, workspaces
         )
-        return tuple(WorkspaceView.from_workspace(item) for item in workspaces)
+        return tuple(
+            WorkspaceView.from_workspace(item, self.personas.resolve(item.name))
+            for item in workspaces
+        )
 
     async def show_workspace(
         self, name: str, context: RequestContext
@@ -483,28 +829,37 @@ class Ethos:
         await self._emit_workspaces(
             context, EventType.WORKSPACE_SHOW, (workspace,)
         )
-        return WorkspaceView.from_workspace(workspace)
+        return WorkspaceView.from_workspace(
+            workspace, self.personas.resolve(workspace.name)
+        )
 
     async def create_session(
         self, workspace: str, context: RequestContext
     ) -> SessionView:
         session = self.sessions.create(workspace)
         await self._emit_sessions(context, EventType.SESSION_CREATE, (session,))
-        return SessionView.from_session(session)
+        return SessionView.from_session(
+            session, self.personas.resolve(session.workspace_name)
+        )
 
     async def list_sessions(
         self, workspace: str, context: RequestContext
     ) -> tuple[SessionView, ...]:
         sessions = self.sessions.list(workspace)
         await self._emit_sessions(context, EventType.SESSION_LIST, sessions)
-        return tuple(SessionView.from_session(item) for item in sessions)
+        resolution = self.personas.resolve(workspace)
+        return tuple(
+            SessionView.from_session(item, resolution) for item in sessions
+        )
 
     async def show_session(
         self, workspace: str, session_id: str, context: RequestContext
     ) -> SessionView:
         session = self.sessions.get(workspace, session_id)
         await self._emit_sessions(context, EventType.SESSION_SHOW, (session,))
-        return SessionView.from_session(session)
+        return SessionView.from_session(
+            session, self.personas.resolve(session.workspace_name)
+        )
 
     async def session_history(
         self, workspace: str, session_id: str, context: RequestContext
@@ -522,7 +877,9 @@ class Ethos:
         await self._emit_sessions(
             context, EventType.SESSION_ARCHIVE, (session,)
         )
-        return SessionView.from_session(session)
+        return SessionView.from_session(
+            session, self.personas.resolve(session.workspace_name)
+        )
 
     async def recover_session(
         self, workspace: str, session_id: str, context: RequestContext
@@ -535,7 +892,9 @@ class Ethos:
         await self._emit_sessions(
             context, EventType.SESSION_RECOVER, (session,)
         )
-        return SessionView.from_session(session)
+        return SessionView.from_session(
+            session, self.personas.resolve(session.workspace_name)
+        )
 
     async def chat(
         self,
@@ -677,13 +1036,40 @@ class Ethos:
                 owner_id=context.owner_id,
                 external_context=context.external_context,
                 sessions=tuple(
-                    _SessionEventItem(
-                        id=str(item.id),
-                        workspace=item.workspace_name,
-                        archived=item.archived,
+                    _session_event_item(
+                        item,
+                        self.personas.resolve(item.workspace_name),
                     )
                     for item in sessions
                 ),
+            ),
+        )
+
+    async def _emit_personas(
+        self,
+        context: RequestContext,
+        event_type: EventType,
+        identifiers: tuple[str, ...],
+        *,
+        workspace: str | None = None,
+        resolution: PersonaResolution | None = None,
+        changed_fields: tuple[str, ...] = (),
+    ) -> None:
+        await _emit(
+            self.events,
+            event_type,
+            context,
+            _PersonaEventPayload(
+                schema_name="persona.operation",
+                owner_id=context.owner_id,
+                external_context=context.external_context,
+                persona_ids=identifiers,
+                workspace=workspace,
+                effective_persona=(
+                    resolution.effective_id if resolution else None
+                ),
+                fallback=resolution.fallback if resolution else False,
+                changed_fields=changed_fields,
             ),
         )
 
@@ -768,4 +1154,30 @@ def _provider_view(settings: EthosSettings) -> ProviderView:
             else None
         ),
         credential_configured=key is not None,
+    )
+
+
+def _persona_assignment_view(
+    workspace: str,
+    resolution: PersonaResolution,
+) -> PersonaAssignmentView:
+    return PersonaAssignmentView(
+        workspace=workspace,
+        assigned_persona=resolution.assigned_id,
+        effective_persona=resolution.effective_id,
+        fallback=resolution.fallback,
+    )
+
+
+def _session_event_item(
+    session: Session,
+    resolution: PersonaResolution,
+) -> _SessionEventItem:
+    return _SessionEventItem(
+        id=str(session.id),
+        workspace=session.workspace_name,
+        archived=session.archived,
+        assigned_persona=resolution.assigned_id,
+        effective_persona=resolution.effective_id,
+        persona_fallback=resolution.fallback,
     )

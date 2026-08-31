@@ -178,8 +178,12 @@ def test_runtime_composes_capabilities_in_registration_order(
         for message in request.messages
         if message.role is Role.SYSTEM
         and isinstance(message.parts[0], TextPart)
-    ][-3:] == [
+    ][-4:] == [
         context_instruction,
+        (
+            "Persona identity: Ethos\n"
+            "Persona instructions: You are Ethos, a personal AI assistant."
+        ),
         "first instruction",
         "second instruction",
     ]

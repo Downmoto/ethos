@@ -21,6 +21,7 @@ workspace directories:
 ~/.ethos/
 ├── config.yaml
 ├── capabilities.yaml
+├── personas.yaml
 ├── tools.yaml
 ├── data/
 │   └── ethos.db
@@ -91,6 +92,32 @@ The runtime reloads and resolves this configuration once at the start of every
 turn. Changes therefore apply to subsequent runs without reconstructing the
 service, while an already-running turn retains its resolved capabilities.
 
+## Resolving personas
+
+`~/.ethos/personas.yaml` is the canonical store for persona definitions, the
+global default used when creating workspaces, removed-persona tombstones, and
+workspace assignments. Personas belong to workspaces, not sessions. Session
+records continue to persist only their workspace association.
+
+Workspace creation copies either its explicit persona or the current global
+default into a durable assignment. Changing the global default therefore does
+not affect existing workspaces. A workspace without an assignment, including
+one created before persona support, resolves to the built-in `ethos` persona.
+
+Each turn resolves the workspace assignment once. Persona edits or workspace
+reassignment affect the next turn across every session in that workspace but
+not a turn already running. Disabled, removed, or unexpectedly missing
+assignments use `ethos` as the effective persona. Views and lifecycle events
+expose both identifiers and the fallback state rather than rewriting the
+assignment.
+
+Persona model and reasoning preferences override those fields from the active
+global provider; personas cannot select providers or store credentials. A
+persona capability allowlist is intersected with effective global and
+workspace capability settings. Removed records retain that allowlist, and an
+unexpectedly missing record receives no capabilities, so fallback cannot
+broaden tool access.
+
 ## Session records
 
 Each session is an immutable Pydantic value containing:
@@ -150,19 +177,19 @@ For each turn it:
 2. reloads the session from disk;
 3. rejects an archived session;
 4. rejects stored tool calls without exactly one later result;
-5. resolves capability instructions and tools for the active workspace and
-   session;
-6. loads the application settings and constructs the selected model;
-7. appends one user text message to the stored history in memory;
-8. advertises the composed tools when the model supports them;
-9. streams and validates responses up to the configured round limit;
-10. checkpoints an assistant tool-call response;
-11. executes allowed calls sequentially through the mandatory tool policy and
+5. resolves the workspace's assigned and effective personas;
+6. resolves capability instructions and tools within the persona allowlist;
+7. constructs the persona-selected model through the active provider;
+8. appends one user text message to the stored history in memory;
+9. advertises the composed tools when the model supports them;
+10. streams and validates responses up to the configured round limit;
+11. checkpoints an assistant tool-call response;
+12. executes allowed calls sequentially through the mandatory tool policy and
     checkpoints each result;
-12. persists a write call as `pending` before emitting its approval event;
-13. resumes an approved or denied request without accepting a new user turn;
-14. atomically persists the final assistant response;
-15. yields aggregate usage in one final event with `done=True`.
+13. persists a write call as `pending` before emitting its approval event;
+14. resumes an approved or denied request without accepting a new user turn;
+15. atomically persists the final assistant response;
+16. yields aggregate usage in one final event with `done=True`.
 
 `AgentRuntime` accepts per-instance model-round and per-response tool-call
 limits. They default to eight rounds and sixteen calls respectively, and both
@@ -170,15 +197,15 @@ must be positive.
 
 Models do not hold conversation history. The complete history is supplied in
 an Ethos `ModelRequest` for every run. `ContextBuilder` constructs that request
-from its base Ethos system instruction, local date/time information, run-only
-workspace and session context, capability instructions, stored messages, and
-available tool definitions.
+from its authoritative Ethos system instruction, local date/time information,
+run-only workspace and session context, persona instructions, capability
+instructions, stored messages, and available tool definitions.
 Constructed instructions are never added to canonical session history. This
 keeps sessions isolated even when the same runtime object handles several
 conversations.
 
-Capabilities resolve once per turn in registration order. Each receives only
-the active workspace name and path plus the session ID, and contributes
+Capabilities resolve once per turn in registration order. Each receives the
+active workspace, session, and resolved persona context, and contributes
 run-only instructions and tools. Their tools form a fresh registry for that
 turn, so duplicate names fail before model or tool execution and one session's
 tool instances cannot leak into another.

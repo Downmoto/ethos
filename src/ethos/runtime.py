@@ -61,6 +61,8 @@ from ethos.tools import (
 
 type ModelFactory = Callable[[], Model]
 type CapabilityResolver = Callable[[RunContext], Iterable[Capability]]
+type PersonaResolver = Callable[[str], "RuntimePersona"]
+type PersonaIdentityResolver = Callable[[str], tuple[str, str, bool]]
 
 MAX_MODEL_ROUNDS = 8
 MAX_TOOL_CALLS_PER_RESPONSE = 16
@@ -110,6 +112,9 @@ class RuntimeEventPayload(EventPayload):
     workspace_name: NonEmptyString
     session_id: UUID
     round_number: Annotated[int, Field(ge=1)]
+    assigned_persona: NonEmptyString = "ethos"
+    effective_persona: NonEmptyString = "ethos"
+    persona_fallback: bool = False
 
     @field_validator("schema_name")
     @classmethod
@@ -198,6 +203,24 @@ class _RunProgress:
     round_number: int
 
 
+@dataclass(frozen=True)
+class RuntimePersona:
+    """One immutable persona resolution used throughout a runtime turn.
+
+    Resolving once prevents a mid-turn configuration write from changing the
+    model, instructions, or capability ceiling between tool rounds. The answer
+    model is lazy because most turns never need the reasoning fallback path.
+    """
+
+    assigned_id: str
+    effective_id: str
+    fallback: bool
+    instructions: str
+    capability_ceiling: tuple[str, ...] | None
+    model: Model
+    answer_model_factory: ModelFactory
+
+
 type RuntimeStreamEvent = (
     PromptStreamEvent | ApprovalStreamEvent | ToolOutputStreamEvent
 )
@@ -218,6 +241,8 @@ class AgentRuntime:
         tool_executor: ToolExecutor | None = None,
         capabilities: Iterable[Capability] = (),
         capability_resolver: CapabilityResolver | None = None,
+        persona_resolver: PersonaResolver | None = None,
+        persona_identity_resolver: PersonaIdentityResolver | None = None,
         *,
         events: EnvelopeEventEmitter,
         max_model_rounds: int = MAX_MODEL_ROUNDS,
@@ -257,11 +282,14 @@ class AgentRuntime:
         )
         self._capabilities = tuple(capabilities)
         self._capability_resolver = capability_resolver
+        self._persona_resolver = persona_resolver
+        self._persona_identity_resolver = persona_identity_resolver
         self._max_model_rounds = max_model_rounds
         self._max_tool_calls_per_response = max_tool_calls_per_response
         self._answer_now_after_seconds = answer_now_after_seconds
         self._context_diagnostic_path = context_diagnostic_path
         self._locks: dict[tuple[str, str], tuple[asyncio.Lock, int]] = {}
+        self._active_personas: dict[UUID, tuple[str, str, bool]] = {}
 
     @asynccontextmanager
     async def _session_lock(
@@ -315,26 +343,27 @@ class AgentRuntime:
                 _validate_tool_history(session.messages)
 
                 run_id = uuid4()
-                await self._emit(
-                    EventType.RUN_STARTED,
-                    RuntimeEventPayload(
-                        run_id=run_id,
-                        workspace_name=workspace_name,
-                        session_id=UUID(session_id),
-                        round_number=1,
-                    ),
-                    event_location,
-                )
-
-                user_message = Message(
-                    role=Role.USER,
-                    parts=(TextPart(text=prompt),),
-                )
-                messages: tuple[Message, ...] = session.messages + (
-                    user_message,
-                )
                 progress = _RunProgress(round_number=1)
+                persona = self._resolve_persona(workspace_name)
+                self._active_personas[run_id] = _persona_identity(persona)
                 try:
+                    await self._emit(
+                        EventType.RUN_STARTED,
+                        RuntimeEventPayload(
+                            run_id=run_id,
+                            workspace_name=workspace_name,
+                            session_id=UUID(session_id),
+                            round_number=1,
+                        ),
+                        event_location,
+                    )
+                    user_message = Message(
+                        role=Role.USER,
+                        parts=(TextPart(text=prompt),),
+                    )
+                    messages: tuple[Message, ...] = session.messages + (
+                        user_message,
+                    )
                     (
                         run_context,
                         instructions,
@@ -343,8 +372,9 @@ class AgentRuntime:
                     ) = await self._resolve_capabilities(
                         workspace_name,
                         session_id,
+                        persona,
                     )
-                    model = self._model_factory()
+                    model = persona.model
                     tools = registry.definitions if model.features.tools else ()
                     async for event in self._continue(
                         workspace_name,
@@ -360,6 +390,7 @@ class AgentRuntime:
                         event_location=event_location,
                         round_number=1,
                         progress=progress,
+                        answer_model_factory=persona.answer_model_factory,
                     ):
                         yield event
                 except (asyncio.CancelledError, RuntimeEventError):
@@ -374,6 +405,8 @@ class AgentRuntime:
                         error,
                     )
                     raise
+                finally:
+                    self._active_personas.pop(run_id, None)
 
     async def resolve_approval(
         self,
@@ -488,25 +521,28 @@ class AgentRuntime:
         call = _approval_call(session.messages, approval)
         messages = session.messages
         progress = _RunProgress(round_number=approval.round_number)
-
-        await self._emit(
-            EventType.RUN_RESUMED,
-            RuntimeEventPayload(
-                run_id=approval.run_id,
-                workspace_name=workspace_name,
-                session_id=UUID(session_id),
-                round_number=approval.round_number,
-            ),
-            event_location,
-        )
+        persona = self._resolve_persona(workspace_name)
+        self._active_personas[approval.run_id] = _persona_identity(persona)
 
         try:
+            await self._emit(
+                EventType.RUN_RESUMED,
+                RuntimeEventPayload(
+                    run_id=approval.run_id,
+                    workspace_name=workspace_name,
+                    session_id=UUID(session_id),
+                    round_number=approval.round_number,
+                ),
+                event_location,
+            )
             (
                 run_context,
                 instructions,
                 registry,
                 executor,
-            ) = await self._resolve_capabilities(workspace_name, session_id)
+            ) = await self._resolve_capabilities(
+                workspace_name, session_id, persona
+            )
             if approved:
                 prepared = _restore_prepared_call(registry, approval, call)
                 # Persist execution ownership before emitting or invoking the
@@ -634,9 +670,9 @@ class AgentRuntime:
                 )
 
             model = (
-                self._answer_model_factory()
+                persona.answer_model_factory()
                 if approval.answer_now
-                else self._model_factory()
+                else persona.model
             )
             tools = registry.definitions if model.features.tools else ()
             pending_calls = _unresolved_tool_calls(messages)
@@ -660,6 +696,7 @@ class AgentRuntime:
                 progress=progress,
                 pending_calls=pending_calls,
                 answer_now=approval.answer_now,
+                answer_model_factory=persona.answer_model_factory,
             ):
                 yield event
         except (asyncio.CancelledError, RuntimeEventError):
@@ -674,6 +711,8 @@ class AgentRuntime:
                 error,
             )
             raise
+        finally:
+            self._active_personas.pop(approval.run_id, None)
 
     async def _continue(
         self,
@@ -691,6 +730,7 @@ class AgentRuntime:
         event_location: str,
         round_number: int,
         progress: _RunProgress,
+        answer_model_factory: ModelFactory,
         pending_calls: tuple[ToolCallPart, ...] = (),
         answer_now: bool = False,
     ) -> AsyncIterator[RuntimeStreamEvent]:
@@ -974,7 +1014,7 @@ class AgentRuntime:
                     raise AgentLimitError(
                         "model did not produce a final answer"
                     ) from error
-                model = self._answer_model_factory()
+                model = answer_model_factory()
                 answer_now = True
                 round_number += 1
                 continue
@@ -999,7 +1039,7 @@ class AgentRuntime:
                     raise AgentLimitError(
                         "model did not produce a final answer"
                     )
-                model = self._answer_model_factory()
+                model = answer_model_factory()
                 answer_now = True
                 round_number += 1
                 continue
@@ -1066,6 +1106,7 @@ class AgentRuntime:
         self,
         workspace_name: str,
         session_id: str,
+        persona: RuntimePersona,
     ) -> tuple[RunContext, tuple[str, ...], ToolRegistry, ToolExecutor]:
         """Compose one run in registration order before contacting the model.
 
@@ -1079,8 +1120,12 @@ class AgentRuntime:
             workspace_name=workspace_name,
             workspace_path=self._sessions.workspaces.get(workspace_name).path,
             session_id=session_id,
+            assigned_persona=persona.assigned_id,
+            effective_persona=persona.effective_id,
+            persona_fallback=persona.fallback,
+            persona_capabilities=persona.capability_ceiling,
         )
-        instructions: list[str] = []
+        instructions = [persona.instructions]
         tools = list(self._tool_registry.tools)
         capabilities = self._capabilities
         if self._capability_resolver is not None:
@@ -1096,13 +1141,39 @@ class AgentRuntime:
             self._tool_executor.for_registry(registry),
         )
 
+    def _resolve_persona(self, workspace_name: str) -> RuntimePersona:
+        """Resolve the workspace persona or retain the standalone default.
+
+        The default keeps direct ``AgentRuntime`` users and focused unit tests
+        independent of the application-level persona manager.
+        """
+        if self._persona_resolver is not None:
+            return self._persona_resolver(workspace_name)
+        return RuntimePersona(
+            assigned_id="ethos",
+            effective_id="ethos",
+            fallback=False,
+            instructions=(
+                "Persona identity: Ethos\n"
+                "Persona instructions: You are Ethos, a personal AI assistant."
+            ),
+            capability_ceiling=None,
+            model=self._model_factory(),
+            answer_model_factory=self._answer_model_factory,
+        )
+
     async def _recover_executing_approvals(
         self,
         workspace_name: str,
         session_id: str,
         event_location: str,
     ) -> Session:
-        """Make interrupted writes non-replayable and emit trace events."""
+        """Make interrupted writes non-replayable and emit trace events.
+
+        Recovery must not require a working model provider. Its lightweight
+        identity resolver supplies event metadata without constructing a model
+        or persona instructions.
+        """
 
         session = self._sessions.get(workspace_name, session_id)
         interrupted = tuple(
@@ -1113,12 +1184,21 @@ class AgentRuntime:
         recovered = self._sessions.recover_executing_approvals(
             workspace_name, session_id
         )
+        identity = (
+            self._persona_identity_resolver(workspace_name)
+            if interrupted and self._persona_identity_resolver is not None
+            else ("ethos", "ethos", False)
+        )
         for approval in interrupted:
-            await self._emit(
-                EventType.TOOL_APPROVAL_INDETERMINATE,
-                _approval_payload(approval, workspace_name, session_id),
-                event_location,
-            )
+            self._active_personas[approval.run_id] = identity
+            try:
+                await self._emit(
+                    EventType.TOOL_APPROVAL_INDETERMINATE,
+                    _approval_payload(approval, workspace_name, session_id),
+                    event_location,
+                )
+            finally:
+                self._active_personas.pop(approval.run_id, None)
         return recovered
 
     async def _emit(
@@ -1127,6 +1207,16 @@ class AgentRuntime:
         payload: RuntimeEventPayload,
         event_location: str,
     ) -> None:
+        persona = self._active_personas.get(payload.run_id)
+        if persona is not None:
+            assigned, effective, fallback = persona
+            payload = payload.model_copy(
+                update={
+                    "assigned_persona": assigned,
+                    "effective_persona": effective,
+                    "persona_fallback": fallback,
+                }
+            )
         try:
             await self._events.emit(
                 event_factory(
@@ -1158,6 +1248,10 @@ class AgentRuntime:
             ),
             event_location,
         )
+
+
+def _persona_identity(persona: RuntimePersona) -> tuple[str, str, bool]:
+    return persona.assigned_id, persona.effective_id, persona.fallback
 
 
 def _model_from_settings() -> Model:

@@ -1,0 +1,18 @@
+# Ethos persona configuration
+
+default: ethos
+
+personas:
+  ethos:
+    name: Ethos
+    instructions: You are Ethos, a personal AI assistant.
+    enabled: true
+    model_name: null
+    reasoning_effort: null
+    capabilities: null
+
+removed: {}
+
+# Existing workspaces without an entry resolve to the built-in Ethos persona.
+workspaces:
+  default: ethos
