@@ -117,6 +117,25 @@ makes a minimal model request with candidate settings but does not save them.
 Responses expose whether the selected credential is configured, never its
 value.
 
+Persona management and workspace assignment use these routes:
+
+```text
+GET    /personas
+POST   /personas
+GET    /personas/default
+PUT    /personas/default
+GET    /personas/{persona}
+PUT    /personas/{persona}
+DELETE /personas/{persona}
+GET    /workspaces/{workspace}/persona
+PUT    /workspaces/{workspace}/persona
+```
+
+Workspace creation accepts an optional persona; otherwise it copies the
+current global default. Session creation has no persona parameter. Workspace
+and session resources expose assigned and effective persona identifiers plus
+fallback state.
+
 A bearer token is mandatory when Vox binds beyond loopback. The protocol does
 not own or implement the external consumer also named Vox.
 
@@ -147,6 +166,11 @@ operations. `set` and candidate `check` use the same field-value syntax as
 capabilities; `check` without fields checks the active provider. `api_key`
 targets the selected provider and is always redacted from output.
 
+`ethos persona create`, `list`, `show`, `set`, `remove`, and `default` expose
+persona management. `ethos workspace persona <workspace> [persona]` shows or
+changes a workspace assignment. Persona configuration uses the same repeatable
+field-value input convention as provider and capability configuration.
+
 For a write-tool approval it prints the exact tool name and validated JSON
 arguments, then asks once with denial as the default. If stdin is not a
 terminal, it denies without prompting and resumes the model with an error tool
@@ -163,22 +187,23 @@ Foreground servers are deliberately not affected by `ethos stop`.
 
 ## State and execution
 
-A workspace identifies a user-owned project directory. A session belongs
-permanently to one workspace, stores one conversation's model messages, and
-lives in the Ethos home. For each turn, `AgentRuntime` reloads the selected
-provider and effective capability settings, streams model output, and
-atomically replaces history before emitting its completion chunk. Provider
-changes therefore apply to subsequent runs without rebuilding the service.
+A workspace identifies a user-owned project directory and owns one persona
+assignment. A session belongs permanently to one workspace, stores one
+conversation's model messages, and lives in the Ethos home. For each turn,
+`AgentRuntime` resolves the workspace persona, selected provider, and effective
+capability settings, streams model output, and atomically replaces history
+before emitting its completion chunk. Configuration changes therefore apply
+to subsequent runs without rebuilding the service.
 
 The LiteLLM adapter builds complete and streamed final responses through the
 same normalisation path. In particular, a provider `stop` response containing
 native tool calls becomes Ethos `tool_call` in both modes.
 
 `ContextBuilder` is the boundary between that canonical stored history and a
-model request. It owns the base Ethos system instruction, appends run-only
-date, time, and timezone context, appends run-only system instructions, and
-attaches available tool definitions without mutating or persisting the
-constructed context.
+model request. It owns the authoritative Ethos system instruction, appends
+run-only date, time, timezone, workspace, and session context, then appends
+persona and capability instructions. It attaches available tool
+definitions without mutating or persisting the constructed context.
 
 Capabilities contribute only run-scoped instructions and tools. The runtime
 loads effective capability configuration and resolves registered capabilities
@@ -284,9 +309,9 @@ assistant response is persisted.
 
 ## Deferred AI design
 
-Personas, persona memory, cross-persona conversation, and additional
-capabilities are intentionally outside this base refactor. No placeholder
-persona abstractions exist until those behaviours are designed.
+Persona memory, cross-persona conversation, delegation, and additional
+capabilities remain deferred. Persona identity and configuration are present,
+but no placeholder memory or orchestration abstractions are included.
 
 ## Current limits
 

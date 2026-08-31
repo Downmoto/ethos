@@ -14,9 +14,9 @@ context.
 ## Current state
 
 The current repository is foundational. It contains an in-progress agent loop
-and enough provider, session, workspace, capability, CLI, and REST support to
-build and exercise that loop. These pieces are infrastructure, not the
-finished product or its defining feature set.
+and enough provider, session, workspace, persona, capability, CLI, and REST
+support to build and exercise that loop. These pieces are infrastructure, not
+the finished product or its defining feature set.
 
 Ethos can currently connect to OpenAI, Google, or Ollama models and run locally
 through its CLI or Vox REST interface. The implementation is still changing
@@ -37,8 +37,8 @@ uv run ethos ask "Hello"
 ```
 
 `ask` starts a fresh session and prints its ID with the response. Run
-`uv run ethos --help` to see the available workspace, provider, capability,
-session, and server commands.
+`uv run ethos --help` to see the available workspace, persona, provider,
+capability, session, and server commands.
 
 To run the Vox API:
 
@@ -51,7 +51,9 @@ uv run ethos start
 Ethos keeps its configuration, workspaces, sessions, skills, and local event
 data under `~/.ethos`. Provider and runtime settings live in
 `~/.ethos/config.yaml`; global capability settings and sparse workspace
-overrides live in `~/.ethos/capabilities.yaml`.
+overrides live in `~/.ethos/capabilities.yaml`. Personas, the global default
+for new workspaces, and workspace assignments live in
+`~/.ethos/personas.yaml`.
 
 For example, these commands lower the global skill limit, then disable skills
 and lower the resource limit in one workspace:
@@ -76,6 +78,18 @@ Provider output reports only whether a credential is configured. Credentials
 may instead be referenced through variables such as
 `ETHOS_KEYS__OPENAI_API_KEY`.
 
+Personas are assigned to workspaces rather than individual sessions:
+
+```sh
+uv run ethos persona create reviewer name Reviewer \
+  -f instructions "Review changes carefully." \
+  -f capabilities '["skills", "file_system"]'
+uv run ethos workspace persona my-project reviewer
+```
+
+Every session in `my-project` uses that assignment on its next turn. Disabled
+or removed assignments visibly fall back to the built-in `ethos` persona.
+
 Application state is stored locally, but model requests are sent to the
 provider you select. Session history can contain reasoning, tool arguments,
 tool results, and file contents, so treat it as sensitive data.
@@ -94,8 +108,8 @@ model configuration, and run instructions.
 
 ## Direction
 
-The immediate work is still completing and refining the agent loop. The
-broader roadmap includes workflows, hooks, personas, and the systems needed to
+The immediate work is still completing personalisation and refining the agent
+loop. The broader roadmap includes workflows, hooks, and the systems needed to
 compose them without turning Ethos into a collection of unrelated features.
 
 That direction will become more concrete as the underlying contracts settle.
