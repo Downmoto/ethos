@@ -9,7 +9,12 @@ from ethos.tools import Tool
 
 @dataclass(frozen=True)
 class RunContext:
-    """Trusted, run-scoped identity available to capability contributors."""
+    """Trusted, run-scoped identity available to capability contributors.
+
+    Persona fields support capability filtering and event correlation. The
+    context builder intentionally exposes only workspace and session fields to
+    the model; persona identity arrives through its dedicated instruction.
+    """
 
     workspace_name: str
     workspace_path: Path

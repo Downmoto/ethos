@@ -1,4 +1,9 @@
-"""Typed personas, workspace assignments, and atomic YAML persistence."""
+"""Typed personas, workspace assignments, and atomic YAML persistence.
+
+Personas belong to workspaces, never sessions. Session code deliberately has
+no persona field: resolving a workspace at the start of a turn makes an
+explicit reassignment apply consistently to every conversation it owns.
+"""
 
 import re
 from pathlib import Path
@@ -66,7 +71,12 @@ type ModelName = Annotated[
 
 
 class Persona(BaseModel):
-    """One configurable identity available for workspace assignment."""
+    """One configurable identity available for workspace assignment.
+
+    ``capabilities=None`` inherits every otherwise available capability, while
+    an empty tuple permits none. Numeric limits remain owned by global and
+    workspace capability configuration.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -90,7 +100,12 @@ class Persona(BaseModel):
 
 
 class RemovedPersona(BaseModel):
-    """Identity and security ceiling retained after persona removal."""
+    """Identity and security ceiling retained after persona removal.
+
+    Retaining a tombstone prevents an old workspace or future memory record
+    from acquiring the identity of a newly created persona with the same ID.
+    Its allowlist also prevents fallback to Ethos from broadening tool access.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -105,7 +120,11 @@ ETHOS_PERSONA: Final = Persona(
 
 
 class PersonaConfiguration(BaseModel):
-    """Canonical persona records, defaults, and workspace assignments."""
+    """Canonical persona records, defaults, and workspace assignments.
+
+    The global default is copied when a workspace is created. It is not a
+    dynamic fallback and changing it never changes an existing assignment.
+    """
 
     model_config = ConfigDict(
         frozen=True,
@@ -158,7 +177,12 @@ class PersonaConfiguration(BaseModel):
 
 
 class PersonaResolution(BaseModel):
-    """One workspace's assigned identity and effective runtime identity."""
+    """One workspace's assigned and effective runtime identities.
+
+    ``fallback`` is derived observability metadata, not a decision input. The
+    effective record and capability ceiling already contain the behaviour the
+    runtime must apply.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -179,6 +203,12 @@ class PersonaManager:
         self.path = path
 
     def load(self) -> PersonaConfiguration:
+        """Load current state without turning a legacy read into a write.
+
+        Homes created before persona support have no file. Treating that as
+        the built-in configuration preserves their Ethos behaviour while
+        leaving migration to the first explicit persona mutation.
+        """
         if not self.path.exists():
             return PersonaConfiguration()
         try:
@@ -234,6 +264,7 @@ class PersonaManager:
         return updated
 
     def remove(self, identifier: str) -> RemovedPersona:
+        """Replace an active persona with its non-reusable tombstone."""
         canonical = self._mutable_identifier(identifier)
         config = self.load()
         persona = self._active(config, canonical)
@@ -253,6 +284,7 @@ class PersonaManager:
         return removed
 
     def set_default(self, identifier: str) -> Persona:
+        """Set the persona copied into subsequently created workspaces."""
         canonical = _validate_identifier(identifier)
         config = self.load()
         persona = self._active(config, canonical)
@@ -266,6 +298,7 @@ class PersonaManager:
         return config.global_default, config.personas[config.global_default]
 
     def assign(self, workspace: str, identifier: str) -> PersonaResolution:
+        """Persist one active persona as a workspace's current assignment."""
         canonical = _validate_identifier(identifier)
         config = self.load()
         persona = self._active(config, canonical)
@@ -281,6 +314,12 @@ class PersonaManager:
         return self.assign(workspace, identifier)
 
     def resolve(self, workspace: str) -> PersonaResolution:
+        """Resolve runtime identity and the assignment's security ceiling.
+
+        Disabled and removed assignments run with Ethos behaviour but retain
+        their last allowlist. An unexpectedly missing record has no reliable
+        ceiling, so it fails closed with no capabilities.
+        """
         config = self.load()
         assigned = config.workspaces.get(workspace, ETHOS_PERSONA_ID)
         persona = config.personas.get(assigned)

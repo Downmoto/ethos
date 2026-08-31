@@ -354,6 +354,7 @@ class Ethos:
     def _resolve_persona_identity(
         self, workspace: str
     ) -> tuple[str, str, bool]:
+        """Resolve event identity without loading provider configuration."""
         resolution = self.personas.resolve(workspace)
         return (
             resolution.assigned_id,
@@ -362,6 +363,7 @@ class Ethos:
         )
 
     def _resolve_runtime_persona(self, workspace: str) -> RuntimePersona:
+        """Freeze persona, provider, and capability choices for one turn."""
         resolution = self.personas.resolve(workspace)
         settings = self.providers.load()
         provider = AIProvider.from_settings(settings)

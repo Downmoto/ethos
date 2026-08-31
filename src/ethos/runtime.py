@@ -205,7 +205,12 @@ class _RunProgress:
 
 @dataclass(frozen=True)
 class RuntimePersona:
-    """One immutable persona resolution used throughout a runtime turn."""
+    """One immutable persona resolution used throughout a runtime turn.
+
+    Resolving once prevents a mid-turn configuration write from changing the
+    model, instructions, or capability ceiling between tool rounds. The answer
+    model is lazy because most turns never need the reasoning fallback path.
+    """
 
     assigned_id: str
     effective_id: str
@@ -1137,6 +1142,11 @@ class AgentRuntime:
         )
 
     def _resolve_persona(self, workspace_name: str) -> RuntimePersona:
+        """Resolve the workspace persona or retain the standalone default.
+
+        The default keeps direct ``AgentRuntime`` users and focused unit tests
+        independent of the application-level persona manager.
+        """
         if self._persona_resolver is not None:
             return self._persona_resolver(workspace_name)
         return RuntimePersona(
@@ -1158,7 +1168,12 @@ class AgentRuntime:
         session_id: str,
         event_location: str,
     ) -> Session:
-        """Make interrupted writes non-replayable and emit trace events."""
+        """Make interrupted writes non-replayable and emit trace events.
+
+        Recovery must not require a working model provider. Its lightweight
+        identity resolver supplies event metadata without constructing a model
+        or persona instructions.
+        """
 
         session = self._sessions.get(workspace_name, session_id)
         interrupted = tuple(
