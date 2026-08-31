@@ -4,6 +4,10 @@ This document proposes the work required to complete the second milestone on
 the road to beta v0.1.0. It defines product scope and completion outcomes, not
 the final implementation design.
 
+The implementation sequence and agreed semantics for the first two sections
+are recorded in
+[`milestone-2-personas-execution-plan.md`](milestone-2-personas-execution-plan.md).
+
 ## Goal
 
 Give Ethos durable, user-controlled context and named identities that can work
@@ -26,7 +30,7 @@ already-populated memory store later.
 ### Outcome
 
 Users can create and manage named personas with clear, validated settings and
-choose which persona starts a session.
+assign one persona to each workspace.
 
 ### Scope
 
@@ -34,7 +38,7 @@ choose which persona starts a session.
 - Configure a persona's name and behavioural instructions.
 - Configure optional model and reasoning preferences.
 - Configure which capabilities a persona may use.
-- Choose a default persona and select a persona for a new session.
+- Choose the default for new workspaces and assign a persona to a workspace.
 - Show the effective persona configuration with credentials redacted.
 
 ### Safety boundaries
@@ -53,20 +57,20 @@ choose which persona starts a session.
 - Persona configuration has one canonical model and persistence path.
 - The service, CLI, and Vox protocol expose the same management behaviour.
 - Invalid changes fail without partially modifying the persona.
-- Selection precedence between explicit, workspace-default, and global-default
-  personas is documented and tested.
+- Workspace assignment, new-workspace defaults, and legacy fallback behaviour
+  are documented and tested.
 - Existing sessions remain readable when a persona is disabled or removed.
 
 ## Personas
 
 ### Outcome
 
-Each session runs with one stable persona that contributes its identity,
-behaviour, preferences, capabilities, and memory scope to every turn.
+Each workspace runs with one assigned persona that contributes its identity,
+behaviour, preferences, capabilities, and memory scope to every session turn.
 
 ### Scope
 
-- Bind a persona to a session when the session is created.
+- Assign a persona to each workspace and resolve it for every session turn.
 - Add persona identity and instructions to run context without persisting them
   as conversation messages.
 - Resolve persona model preferences through the provider configuration from
@@ -78,7 +82,7 @@ behaviour, preferences, capabilities, and memory scope to every turn.
 
 ### Safety boundaries
 
-- A session's persona does not change implicitly between turns.
+- A workspace's persona changes only through an explicit workspace assignment.
 - Persona instructions remain subordinate to Ethos security and tool-policy
   instructions.
 - Persona configuration cannot grant unavailable workspace or global
@@ -90,7 +94,7 @@ behaviour, preferences, capabilities, and memory scope to every turn.
 
 ### Complete when
 
-- New and resumed sessions resolve the same persona consistently.
+- New and resumed sessions resolve their workspace's persona consistently.
 - Provider, capability, and instruction precedence is deterministic and
   tested.
 - Missing, disabled, or removed personas produce defined session behaviour.
@@ -174,7 +178,7 @@ user in control of what is stored and recalled.
 
 ## Milestone completion
 
-Milestone 2 is complete when personas remain stable across session lifetimes,
-memory is durable and correctly isolated, users can inspect and correct all
-personalisation state, the developer documentation reflects the shipped
-behaviour, and the full verification suite passes.
+Milestone 2 is complete when workspace persona assignments apply consistently
+across their sessions, memory is durable and correctly isolated, users can
+inspect and correct all personalisation state, the developer documentation
+reflects the shipped behaviour, and the full verification suite passes.
