@@ -14,6 +14,10 @@ class RunContext:
     workspace_name: str
     workspace_path: Path
     session_id: str
+    assigned_persona: str = "ethos"
+    effective_persona: str = "ethos"
+    persona_fallback: bool = False
+    persona_capabilities: tuple[str, ...] | None = None
 
 
 class Capability(Protocol):

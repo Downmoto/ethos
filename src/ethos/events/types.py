@@ -25,6 +25,16 @@ class EventType(StrEnum):
     PROVIDER_CHECK = "provider.check"
     PROVIDER_CONFIGURE = "provider.configure"
 
+    # persona events
+    PERSONA_CREATE = "persona.create"
+    PERSONA_LIST = "persona.list"
+    PERSONA_SHOW = "persona.show"
+    PERSONA_CONFIGURE = "persona.configure"
+    PERSONA_REMOVE = "persona.remove"
+    PERSONA_DEFAULT_SHOW = "persona.default.show"
+    PERSONA_DEFAULT_CONFIGURE = "persona.default.configure"
+    PERSONA_ASSIGN = "persona.assign"
+
     # session events
     SESSION_CREATE = "session.create"
     SESSION_LIST = "session.list"

@@ -302,6 +302,7 @@ def test_runtime_completes_one_tool_round(tmp_path: Path) -> None:
         Role.SYSTEM,
         Role.SYSTEM,
         Role.SYSTEM,
+        Role.SYSTEM,
         Role.USER,
         Role.ASSISTANT,
         Role.TOOL,
@@ -313,7 +314,7 @@ def test_runtime_completes_one_tool_round(tmp_path: Path) -> None:
         content="echo: one",
     )
     assert sessions.get("my-project", str(session.id)).messages == (
-        *model.requests[1].messages[3:],
+        *model.requests[1].messages[4:],
         Message(
             role=Role.ASSISTANT,
             parts=(TextPart(text="It is one."),),
@@ -339,7 +340,7 @@ def test_runtime_completes_several_tool_rounds(tmp_path: Path) -> None:
 
     assert tool.values == ["one", "two"]
     assert len(model.requests) == 3
-    assert [len(request.messages) for request in model.requests] == [4, 6, 8]
+    assert [len(request.messages) for request in model.requests] == [5, 7, 9]
 
 
 def test_runtime_rejects_reused_call_id_before_checkpoint(
@@ -969,7 +970,7 @@ def test_runtime_executes_several_calls_sequentially(tmp_path: Path) -> None:
     assert tool.values == ["one", "two"]
     history = model.requests[1].messages
     call_ids: list[str] = []
-    for message in history[5:]:
+    for message in history[6:]:
         result = message.parts[0]
         assert isinstance(result, ToolResultPart)
         call_ids.append(result.call_id)

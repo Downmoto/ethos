@@ -12,6 +12,7 @@ from ethos.events.types import EventType
 from ethos.home import initialise_home
 from ethos.models import (
     Message,
+    ReasoningEffort,
     ReasoningPart,
     Role,
     TextPart,
@@ -66,6 +67,94 @@ def test_service_shares_workspace_and_session_behaviour(tmp_path: Path) -> None:
             assert archived.archived
 
     asyncio.run(exercise())
+
+
+def test_service_manages_workspace_personas_and_visible_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+
+    async def exercise() -> None:
+        with Ethos(home) as ethos:
+            events: list[EventEnvelope] = []
+
+            async def capture(event: EventEnvelope) -> EventEnvelope:
+                events.append(event)
+                return event
+
+            monkeypatch.setattr(ethos.events, "emit", capture)
+            created = await ethos.create_persona(
+                "reviewer",
+                {
+                    "name": "Reviewer",
+                    "instructions": "private reviewer instructions",
+                    "model_name": "review-model",
+                    "reasoning_effort": "low",
+                    "capabilities": ["skills"],
+                },
+                context(),
+            )
+            await ethos.configure_default_persona("reviewer", context())
+            workspace = await ethos.create_workspace("health", context())
+            session = await ethos.create_session("health", context())
+
+            assert created.effective_model_name == "review-model"
+            assert created.effective_reasoning_effort is ReasoningEffort.LOW
+            assert created.effective_capabilities == ("skills",)
+            assert workspace.assigned_persona == "reviewer"
+            assert session.assigned_persona == "reviewer"
+            assert session.effective_persona == "reviewer"
+
+            await ethos.configure_default_persona("ethos", context())
+            await ethos.configure_persona(
+                "reviewer", {"enabled": False}, context()
+            )
+            fallback = await ethos.show_session("health", session.id, context())
+
+            assert fallback.assigned_persona == "reviewer"
+            assert fallback.effective_persona == "ethos"
+            assert fallback.persona_fallback
+            serialised = "".join(event.model_dump_json() for event in events)
+            assert "private reviewer instructions" not in serialised
+
+    asyncio.run(exercise())
+
+
+def test_service_applies_persona_model_and_capability_preferences(
+    tmp_path: Path,
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+
+    with Ethos(home) as ethos:
+        ethos.providers.configure({"name": "ollama", "model_name": "global"})
+        ethos.personas.create(
+            "reviewer",
+            {
+                "name": "Reviewer",
+                "instructions": "Review carefully.",
+                "model_name": "persona-model",
+                "reasoning_effort": "medium",
+                "capabilities": ["skills"],
+            },
+        )
+        ethos.personas.assign("default", "reviewer")
+
+        persona = ethos._resolve_runtime_persona("default")
+        model = cast(LiteLLMModel, persona.model)
+        capabilities = ethos._resolve_capabilities(
+            RunContext(
+                "default",
+                ethos.workspaces.get("default").path,
+                "id",
+                persona_capabilities=persona.capability_ceiling,
+            )
+        )
+
+        assert model.model_name == "persona-model"
+        assert model.reasoning_effort is ReasoningEffort.MEDIUM
+        assert [type(item).__name__ for item in capabilities] == [
+            "SkillsCapability"
+        ]
 
 
 def test_service_recovers_session_through_runtime(

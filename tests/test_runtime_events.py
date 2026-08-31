@@ -27,6 +27,7 @@ from ethos.runtime import (
     ApprovalStreamEvent,
     RuntimeEventError,
     RuntimeEventPayload,
+    RuntimePersona,
     RuntimeStreamEvent,
 )
 from ethos.sessions import ApprovalStateError, Session, SessionManager
@@ -92,6 +93,7 @@ def setup_runtime(
     tool: RecordingTool | None = None,
     *,
     storage: Storage | None = None,
+    persona: RuntimePersona | None = None,
 ) -> tuple[AgentRuntime, Session, RecordingTool, list[EventEnvelope]]:
     workspaces = WorkspaceManager(tmp_path / "workspaces")
     workspaces.create("my-project")
@@ -111,6 +113,9 @@ def setup_runtime(
         lambda: model,
         ToolRegistry((registered,)),
         events=emitter,
+        persona_resolver=(
+            (lambda _workspace: persona) if persona is not None else None
+        ),
     )
     return runtime, session, registered, delivered
 
@@ -165,6 +170,48 @@ def test_text_run_emits_ordered_correlated_trace(tmp_path: Path) -> None:
     assert "private prompt" not in "".join(
         event.model_dump_json() for event in events
     )
+
+
+def test_runtime_uses_one_workspace_persona_without_persisting_instructions(
+    tmp_path: Path,
+) -> None:
+    model = FakeModel(
+        (text_response(),),
+        stream_chunks=(("done",),),
+        features=ModelFeatures(tools=True),
+    )
+    persona = RuntimePersona(
+        assigned_id="reviewer",
+        effective_id="ethos",
+        fallback=True,
+        instructions="Persona identity: Ethos\nprivate fallback instructions",
+        capability_ceiling=("file_system",),
+        model=model,
+        answer_model_factory=lambda: model,
+    )
+    runtime, session, _tool, events = setup_runtime(
+        tmp_path, model, persona=persona
+    )
+
+    asyncio.run(collect(runtime.run("hello", "my-project", str(session.id))))
+
+    request_text = "\n".join(
+        part.text
+        for message in model.requests[0].messages
+        for part in message.parts
+        if isinstance(part, TextPart)
+    )
+    stored = runtime._sessions.get("my-project", str(session.id))
+    assert "private fallback instructions" in request_text
+    assert "private fallback instructions" not in stored.model_dump_json()
+    assert {
+        (
+            payload.assigned_persona,
+            payload.effective_persona,
+            payload.persona_fallback,
+        )
+        for payload in runtime_payloads(events)
+    } == {("reviewer", "ethos", True)}
 
 
 def test_read_tool_trace_is_ordered_and_private(tmp_path: Path) -> None:

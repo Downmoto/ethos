@@ -316,7 +316,7 @@ def test_runtime_default_factory_resolves_settings_once_per_turn(
     asyncio.run(run_turns())
 
     assert calls == 2
-    assert [len(request.messages) for request in model.requests] == [4, 6]
+    assert [len(request.messages) for request in model.requests] == [5, 7]
 
 
 def test_runtime_default_answer_now_model_disables_reasoning(
@@ -647,7 +647,7 @@ def test_runtime_keeps_conversation_history_isolated(tmp_path: Path) -> None:
 
     asyncio.run(run_turns())
 
-    assert [len(request.messages) for request in model.requests] == [4, 6, 4]
+    assert [len(request.messages) for request in model.requests] == [5, 7, 5]
     prompts = [
         part.text
         for message in model.requests[1].messages
