@@ -211,7 +211,46 @@ def test_cli_uses_shared_service_for_resources(
 
     assert created.exit_code == 0
     assert created.output == "workspace created: health\n"
-    assert listed.output == "default\nhealth\n"
+    assert listed.output == "default\tethos\nhealth\tethos\n"
+
+
+def test_cli_manages_personas_and_workspace_assignment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    monkeypatch.setattr(app, "HOME_PATH", home)
+    runner = CliRunner()
+
+    created = runner.invoke(
+        app.main,
+        [
+            "persona",
+            "create",
+            "reviewer",
+            "name",
+            "Reviewer",
+            "-f",
+            "instructions",
+            "Review carefully.",
+            "-f",
+            "capabilities",
+            '["skills"]',
+        ],
+    )
+    defaulted = runner.invoke(app.main, ["persona", "default", "reviewer"])
+    workspace = runner.invoke(app.main, ["workspace", "create", "health"])
+    assignment = runner.invoke(app.main, ["workspace", "persona", "health"])
+    session = runner.invoke(app.main, ["session", "create", "health"])
+    sessions = runner.invoke(app.main, ["session", "list", "health"])
+
+    assert created.exit_code == 0
+    assert "Persona: reviewer" in created.output
+    assert "Effective capabilities: skills" in created.output
+    assert defaulted.exit_code == 0
+    assert workspace.exit_code == 0
+    assert assignment.output == "health\treviewer\n"
+    assert session.exit_code == 0
+    assert "\treviewer\n" in sessions.output
 
 
 def test_cli_manages_global_and_workspace_capabilities(

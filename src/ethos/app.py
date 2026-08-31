@@ -38,6 +38,8 @@ from ethos.service import (
     CapabilityView,
     ChatEvent,
     Ethos,
+    PersonaAssignmentView,
+    PersonaView,
     ProviderView,
     RequestContext,
     ToolOutputChunk,
@@ -371,10 +373,17 @@ def workspace() -> None:
 
 @workspace.command("create")
 @click.argument("name")
+@click.option(
+    "--persona",
+    metavar="ID",
+    help="Assign this persona instead of the current global default.",
+)
 @requires_home
-def workspace_create(name: str) -> None:
+def workspace_create(name: str, persona: str | None) -> None:
     """Create a workspace."""
-    view = _run(lambda ethos, context: ethos.create_workspace(name, context))
+    view = _run(
+        lambda ethos, context: ethos.create_workspace(name, context, persona)
+    )
     click.echo(f"workspace created: {view.name}")
 
 
@@ -383,7 +392,17 @@ def workspace_create(name: str) -> None:
 def workspace_list() -> None:
     """List all workspaces."""
     views = _run(lambda ethos, context: ethos.list_workspaces(context))
-    click.echo("\n".join(view.name for view in views))
+    click.echo(
+        "\n".join(
+            f"{view.name}\t{view.effective_persona}"
+            + (
+                f" (fallback from {view.assigned_persona})"
+                if view.persona_fallback
+                else ""
+            )
+            for view in views
+        )
+    )
 
 
 @workspace.command("show")
@@ -392,7 +411,210 @@ def workspace_list() -> None:
 def workspace_show(name: str) -> None:
     """Show a workspace and its path."""
     view = _run(lambda ethos, context: ethos.show_workspace(name, context))
-    click.echo(f"{view.name}\t{view.path}")
+    click.echo(
+        f"{view.name}\t{view.path}\t{view.effective_persona}"
+        + (
+            f" (fallback from {view.assigned_persona})"
+            if view.persona_fallback
+            else ""
+        )
+    )
+
+
+@workspace.command("persona")
+@click.argument("workspace_name", metavar="WORKSPACE")
+@click.argument("persona_id", metavar="PERSONA", required=False)
+@requires_home
+def workspace_persona(
+    workspace_name: str,
+    persona_id: str | None,
+) -> None:
+    """Show or assign the persona for WORKSPACE."""
+    view = _run(
+        (
+            lambda ethos, context: ethos.show_workspace_persona(
+                workspace_name, context
+            )
+        )
+        if persona_id is None
+        else (
+            lambda ethos, context: ethos.assign_workspace_persona(
+                workspace_name, persona_id, context
+            )
+        )
+    )
+    click.echo(_format_persona_assignment(view))
+
+
+@main.group()
+def persona() -> None:
+    """Manage personas and the default for new workspaces."""
+
+
+@persona.command("create")
+@click.argument("persona_id", metavar="ID")
+@click.argument("field", metavar="FIELD")
+@click.argument("value", metavar="VALUE")
+@click.option(
+    "-f",
+    "--field",
+    "additional_fields",
+    nargs=2,
+    multiple=True,
+    metavar="FIELD VALUE",
+    help="Apply an additional persona field.",
+)
+@requires_home
+def persona_create(
+    persona_id: str,
+    field: str,
+    value: str,
+    additional_fields: tuple[tuple[str, str], ...],
+) -> None:
+    """Create ID with required FIELD VALUE settings."""
+    settings = _decode_fields((field, value), *additional_fields)
+    view = _run(
+        lambda ethos, context: ethos.create_persona(
+            persona_id, settings, context
+        )
+    )
+    click.echo(_format_persona(view))
+
+
+@persona.command("list")
+@click.option(
+    "--workspace",
+    metavar="NAME",
+    help="Resolve effective capabilities for this workspace.",
+)
+@requires_home
+def persona_list(workspace: str | None) -> None:
+    """List active personas."""
+    views = _run(lambda ethos, context: ethos.list_personas(context, workspace))
+    click.echo(
+        "\n".join(
+            f"{view.id}\t{view.name}\t"
+            f"{'enabled' if view.enabled else 'disabled'}"
+            for view in views
+        )
+    )
+
+
+@persona.command("show")
+@click.argument("persona_id", metavar="ID")
+@click.option(
+    "--workspace",
+    metavar="NAME",
+    help="Resolve effective capabilities for this workspace.",
+)
+@requires_home
+def persona_show(persona_id: str, workspace: str | None) -> None:
+    """Show configured and effective settings for ID."""
+    view = _run(
+        lambda ethos, context: ethos.show_persona(
+            persona_id, context, workspace
+        )
+    )
+    click.echo(_format_persona(view))
+
+
+@persona.command("set")
+@click.argument("persona_id", metavar="ID")
+@click.argument("field", metavar="FIELD")
+@click.argument("value", metavar="VALUE")
+@click.option(
+    "-f",
+    "--field",
+    "additional_fields",
+    nargs=2,
+    multiple=True,
+    metavar="FIELD VALUE",
+    help="Apply an additional persona field.",
+)
+@requires_home
+def persona_set(
+    persona_id: str,
+    field: str,
+    value: str,
+    additional_fields: tuple[tuple[str, str], ...],
+) -> None:
+    """Apply FIELD VALUE changes to ID."""
+    changes = _decode_fields((field, value), *additional_fields)
+    view = _run(
+        lambda ethos, context: ethos.configure_persona(
+            persona_id, changes, context
+        )
+    )
+    click.echo(_format_persona(view))
+
+
+@persona.command("remove")
+@click.argument("persona_id", metavar="ID")
+@requires_home
+def persona_remove(persona_id: str) -> None:
+    """Remove ID while retaining its identity tombstone."""
+    _run(lambda ethos, context: ethos.remove_persona(persona_id, context))
+    click.echo(f"persona removed: {persona_id}")
+
+
+@persona.command("default")
+@click.argument("persona_id", metavar="ID", required=False)
+@requires_home
+def persona_default(persona_id: str | None) -> None:
+    """Show or set the persona assigned to newly created workspaces."""
+    view = _run(
+        (lambda ethos, context: ethos.show_default_persona(context))
+        if persona_id is None
+        else (
+            lambda ethos, context: ethos.configure_default_persona(
+                persona_id, context
+            )
+        )
+    )
+    click.echo(_format_persona(view))
+
+
+def _format_persona(view: PersonaView) -> str:
+    configured_capabilities = (
+        "all"
+        if view.capabilities is None
+        else ", ".join(item.value for item in view.capabilities) or "none"
+    )
+    effective_capabilities = (
+        ", ".join(item.value for item in view.effective_capabilities) or "none"
+    )
+    lines = [
+        f"Persona: {view.id}",
+        f"Name: {view.name}",
+        f"Status: {'enabled' if view.enabled else 'disabled'}",
+        f"Instructions: {view.instructions}",
+        f"Model: {view.model_name or '(inherited)'}",
+        f"Effective model: {view.effective_model_name or '(not configured)'}",
+        "Reasoning effort: "
+        + (
+            view.reasoning_effort.value
+            if view.reasoning_effort
+            else "(inherited)"
+        ),
+        "Effective reasoning effort: "
+        + (
+            view.effective_reasoning_effort.value
+            if view.effective_reasoning_effort
+            else "(not configured)"
+        ),
+        f"Capabilities: {configured_capabilities}",
+        f"Effective capabilities: {effective_capabilities}",
+    ]
+    if view.workspace is not None:
+        lines.insert(1, f"Workspace: {view.workspace}")
+    return "\n".join(lines)
+
+
+def _format_persona_assignment(view: PersonaAssignmentView) -> str:
+    result = f"{view.workspace}\t{view.effective_persona}"
+    if view.fallback:
+        result += f" (fallback from {view.assigned_persona})"
+    return result
 
 
 @main.group()
@@ -668,7 +890,13 @@ def session_list(workspace_name: str) -> None:
     )
     click.echo(
         "\n".join(
-            f"{view.id}\t{'archived' if view.archived else 'active'}"
+            f"{view.id}\t{'archived' if view.archived else 'active'}\t"
+            f"{view.effective_persona}"
+            + (
+                f" (fallback from {view.assigned_persona})"
+                if view.persona_fallback
+                else ""
+            )
             for view in views
         )
     )
@@ -686,7 +914,14 @@ def session_show(workspace_name: str, session_id: str) -> None:
         )
     )
     status = "archived" if view.archived else "active"
-    click.echo(f"{view.id}\t{view.workspace}\t{status}")
+    click.echo(
+        f"{view.id}\t{view.workspace}\t{status}\t{view.effective_persona}"
+        + (
+            f" (fallback from {view.assigned_persona})"
+            if view.persona_fallback
+            else ""
+        )
+    )
 
 
 @session.command("history")

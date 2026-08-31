@@ -26,6 +26,8 @@ from ethos.service import (
     ChatChunk,
     ChatEvent,
     Ethos,
+    PersonaAssignmentView,
+    PersonaView,
     ProviderView,
     RequestContext,
     SessionView,
@@ -64,6 +66,24 @@ SESSION = SessionView(
     archived=False,
     message_count=0,
 )
+PERSONA = PersonaView(
+    id="reviewer",
+    name="Reviewer",
+    instructions="Review carefully.",
+    enabled=True,
+    model_name=None,
+    effective_model_name="gpt-5-mini",
+    reasoning_effort=None,
+    effective_reasoning_effort=ReasoningEffort.MEDIUM,
+    capabilities=(CapabilityName.SKILLS,),
+    effective_capabilities=(CapabilityName.SKILLS,),
+)
+ASSIGNMENT = PersonaAssignmentView(
+    workspace="my-project",
+    assigned_persona="reviewer",
+    effective_persona="reviewer",
+    fallback=False,
+)
 HISTORY = (
     Message(
         role=Role.ASSISTANT,
@@ -96,9 +116,12 @@ class FakeEthos:
         self.calls.append((name, arguments))
 
     async def create_workspace(
-        self, name: str, context: RequestContext
+        self,
+        name: str,
+        context: RequestContext,
+        persona: str | None = None,
     ) -> WorkspaceView:
-        self.record("create_workspace", name, context)
+        self.record("create_workspace", name, context, persona)
         return WORKSPACE
 
     async def list_workspaces(
@@ -112,6 +135,73 @@ class FakeEthos:
     ) -> WorkspaceView:
         self.record("show_workspace", name, context)
         return WORKSPACE
+
+    async def create_persona(
+        self,
+        identifier: str,
+        settings: dict[str, object],
+        context: RequestContext,
+    ) -> PersonaView:
+        self.record("create_persona", identifier, settings, context)
+        return PERSONA
+
+    async def list_personas(
+        self,
+        context: RequestContext,
+        workspace: str | None = None,
+    ) -> tuple[PersonaView, ...]:
+        self.record("list_personas", context, workspace)
+        return (PERSONA,)
+
+    async def show_persona(
+        self,
+        identifier: str,
+        context: RequestContext,
+        workspace: str | None = None,
+    ) -> PersonaView:
+        self.record("show_persona", identifier, context, workspace)
+        return PERSONA
+
+    async def configure_persona(
+        self,
+        identifier: str,
+        changes: dict[str, object],
+        context: RequestContext,
+    ) -> PersonaView:
+        self.record("configure_persona", identifier, changes, context)
+        return PERSONA
+
+    async def remove_persona(
+        self, identifier: str, context: RequestContext
+    ) -> None:
+        self.record("remove_persona", identifier, context)
+
+    async def show_default_persona(
+        self, context: RequestContext
+    ) -> PersonaView:
+        self.record("show_default_persona", context)
+        return PERSONA
+
+    async def configure_default_persona(
+        self, identifier: str, context: RequestContext
+    ) -> PersonaView:
+        self.record("configure_default_persona", identifier, context)
+        return PERSONA
+
+    async def show_workspace_persona(
+        self, workspace: str, context: RequestContext
+    ) -> PersonaAssignmentView:
+        self.record("show_workspace_persona", workspace, context)
+        return ASSIGNMENT
+
+    async def assign_workspace_persona(
+        self,
+        workspace: str,
+        identifier: str,
+        context: RequestContext,
+    ) -> PersonaAssignmentView:
+        self.record("assign_workspace_persona", workspace, identifier, context)
+        return ASSIGNMENT
 
     async def show_provider(self, context: RequestContext) -> ProviderView:
         self.record("show_provider", context)
@@ -440,6 +530,108 @@ def test_vox_preserves_resource_endpoints(
     assert context.source == "vox"
     assert context.owner_id
     assert context.external_context == {"client_host": "testclient"}
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body", "call", "status_code", "data"),
+    (
+        (
+            "POST",
+            "/personas",
+            {
+                "id": "reviewer",
+                "settings": {
+                    "name": "Reviewer",
+                    "instructions": "Review carefully.",
+                },
+            },
+            "create_persona",
+            201,
+            PERSONA.model_dump(mode="json"),
+        ),
+        (
+            "GET",
+            "/personas",
+            None,
+            "list_personas",
+            200,
+            [PERSONA.model_dump(mode="json")],
+        ),
+        (
+            "GET",
+            "/personas/reviewer?workspace=my-project",
+            None,
+            "show_persona",
+            200,
+            PERSONA.model_dump(mode="json"),
+        ),
+        (
+            "PUT",
+            "/personas/reviewer",
+            {"settings": {"enabled": False}},
+            "configure_persona",
+            200,
+            PERSONA.model_dump(mode="json"),
+        ),
+        (
+            "DELETE",
+            "/personas/reviewer",
+            None,
+            "remove_persona",
+            204,
+            None,
+        ),
+        (
+            "GET",
+            "/personas/default",
+            None,
+            "show_default_persona",
+            200,
+            PERSONA.model_dump(mode="json"),
+        ),
+        (
+            "PUT",
+            "/personas/default",
+            {"persona": "reviewer"},
+            "configure_default_persona",
+            200,
+            PERSONA.model_dump(mode="json"),
+        ),
+        (
+            "GET",
+            "/workspaces/my-project/persona",
+            None,
+            "show_workspace_persona",
+            200,
+            ASSIGNMENT.model_dump(mode="json"),
+        ),
+        (
+            "PUT",
+            "/workspaces/my-project/persona",
+            {"persona": "reviewer"},
+            "assign_workspace_persona",
+            200,
+            ASSIGNMENT.model_dump(mode="json"),
+        ),
+    ),
+)
+def test_vox_exposes_persona_management(
+    method: str,
+    path: str,
+    body: dict[str, object] | None,
+    call: str,
+    status_code: int,
+    data: object,
+) -> None:
+    ethos = FakeEthos()
+    app = VoxServer(VoxConfig()).create_app(cast(Ethos, ethos))
+
+    response = TestClient(app).request(method, path, json=body)
+
+    assert response.status_code == status_code
+    if data is not None:
+        assert response.json() == data
+    assert ethos.calls[0][0] == call
 
 
 def test_vox_streams_chat_as_server_sent_events() -> None:

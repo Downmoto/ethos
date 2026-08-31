@@ -10,7 +10,7 @@ from ipaddress import ip_address
 from typing import Annotated
 
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
@@ -21,6 +21,8 @@ from ethos.service import (
     CapabilityView,
     ChatEvent,
     Ethos,
+    PersonaAssignmentView,
+    PersonaView,
     ProviderView,
     RequestContext,
     SessionView,
@@ -40,6 +42,7 @@ class _WorkspaceBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str
+    persona: str | None = None
 
 
 class _ChatBody(BaseModel):
@@ -58,6 +61,25 @@ class _ProviderBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     settings: dict[str, object]
+
+
+class _PersonaCreateBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    settings: dict[str, object]
+
+
+class _PersonaBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    settings: dict[str, object] = Field(min_length=1)
+
+
+class _PersonaAssignmentBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    persona: str
 
 
 def _is_loopback(host: str) -> bool:
@@ -160,7 +182,9 @@ class VoxServer:
         async def create_workspace(
             body: _WorkspaceBody, request: Request
         ) -> WorkspaceView:
-            return await ethos.create_workspace(body.name, context(request))
+            return await ethos.create_workspace(
+                body.name, context(request), body.persona
+            )
 
         @app.get("/workspaces")
         async def list_workspaces(
@@ -173,6 +197,84 @@ class VoxServer:
             workspace: str, request: Request
         ) -> WorkspaceView:
             return await ethos.show_workspace(workspace, context(request))
+
+        @app.get("/personas/default")
+        async def show_default_persona(request: Request) -> PersonaView:
+            return await ethos.show_default_persona(context(request))
+
+        @app.put("/personas/default")
+        async def configure_default_persona(
+            body: _PersonaAssignmentBody,
+            request: Request,
+        ) -> PersonaView:
+            return await ethos.configure_default_persona(
+                body.persona, context(request)
+            )
+
+        @app.post("/personas", status_code=status.HTTP_201_CREATED)
+        async def create_persona(
+            body: _PersonaCreateBody,
+            request: Request,
+        ) -> PersonaView:
+            return await ethos.create_persona(
+                body.id, body.settings, context(request)
+            )
+
+        @app.get("/personas")
+        async def list_personas(
+            request: Request,
+            workspace: str | None = None,
+        ) -> tuple[PersonaView, ...]:
+            return await ethos.list_personas(context(request), workspace)
+
+        @app.get("/personas/{persona}")
+        async def show_persona(
+            persona: str,
+            request: Request,
+            workspace: str | None = None,
+        ) -> PersonaView:
+            return await ethos.show_persona(
+                persona, context(request), workspace
+            )
+
+        @app.put("/personas/{persona}")
+        async def configure_persona(
+            persona: str,
+            body: _PersonaBody,
+            request: Request,
+        ) -> PersonaView:
+            return await ethos.configure_persona(
+                persona, body.settings, context(request)
+            )
+
+        @app.delete(
+            "/personas/{persona}", status_code=status.HTTP_204_NO_CONTENT
+        )
+        async def remove_persona(
+            persona: str,
+            request: Request,
+        ) -> Response:
+            await ethos.remove_persona(persona, context(request))
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+        @app.get("/workspaces/{workspace}/persona")
+        async def show_workspace_persona(
+            workspace: str,
+            request: Request,
+        ) -> PersonaAssignmentView:
+            return await ethos.show_workspace_persona(
+                workspace, context(request)
+            )
+
+        @app.put("/workspaces/{workspace}/persona")
+        async def assign_workspace_persona(
+            workspace: str,
+            body: _PersonaAssignmentBody,
+            request: Request,
+        ) -> PersonaAssignmentView:
+            return await ethos.assign_workspace_persona(
+                workspace, body.persona, context(request)
+            )
 
         @app.get("/provider")
         async def show_provider(request: Request) -> ProviderView:
