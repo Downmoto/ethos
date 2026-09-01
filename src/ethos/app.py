@@ -553,8 +553,10 @@ def persona_set(
 @requires_home
 def persona_remove(persona_id: str) -> None:
     """Remove ID while retaining its identity tombstone."""
-    _run(lambda ethos, context: ethos.remove_persona(persona_id, context))
-    click.echo(f"persona removed: {persona_id}")
+    view = _run(
+        lambda ethos, context: ethos.remove_persona(persona_id, context)
+    )
+    click.echo(_format_persona(view))
 
 
 @persona.command("default")
