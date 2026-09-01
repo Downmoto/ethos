@@ -506,13 +506,15 @@ class Ethos:
         self,
         identifier: str,
         context: RequestContext,
-    ) -> None:
+    ) -> PersonaView:
+        view = self._persona_view(identifier, self.personas.get(identifier))
         self.personas.remove(identifier)
         await self._emit_personas(
             context,
             EventType.PERSONA_REMOVE,
             (identifier,),
         )
+        return view
 
     async def show_default_persona(
         self, context: RequestContext

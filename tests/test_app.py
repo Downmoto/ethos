@@ -253,6 +253,33 @@ def test_cli_manages_personas_and_workspace_assignment(
     assert "\treviewer\n" in sessions.output
 
 
+def test_cli_remove_persona_prints_removed_view(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = initialise_home(tmp_path / ".ethos")
+    monkeypatch.setattr(app, "HOME_PATH", home)
+    runner = CliRunner()
+    runner.invoke(
+        app.main,
+        [
+            "persona",
+            "create",
+            "reviewer",
+            "name",
+            "Reviewer",
+            "-f",
+            "instructions",
+            "Review carefully.",
+        ],
+    )
+
+    removed = runner.invoke(app.main, ["persona", "remove", "reviewer"])
+
+    assert removed.exit_code == 0
+    assert "Persona: reviewer" in removed.output
+    assert "Name: Reviewer" in removed.output
+
+
 def test_cli_manages_global_and_workspace_capabilities(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

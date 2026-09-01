@@ -173,8 +173,9 @@ class FakeEthos:
 
     async def remove_persona(
         self, identifier: str, context: RequestContext
-    ) -> None:
+    ) -> PersonaView:
         self.record("remove_persona", identifier, context)
+        return PERSONA
 
     async def show_default_persona(
         self, context: RequestContext
@@ -578,8 +579,8 @@ def test_vox_preserves_resource_endpoints(
             "/personas/reviewer",
             None,
             "remove_persona",
-            204,
-            None,
+            200,
+            PERSONA.model_dump(mode="json"),
         ),
         (
             "GET",

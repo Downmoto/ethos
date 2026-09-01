@@ -10,7 +10,7 @@ from ipaddress import ip_address
 from typing import Annotated
 
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
@@ -247,15 +247,12 @@ class VoxServer:
                 persona, body.settings, context(request)
             )
 
-        @app.delete(
-            "/personas/{persona}", status_code=status.HTTP_204_NO_CONTENT
-        )
+        @app.delete("/personas/{persona}")
         async def remove_persona(
             persona: str,
             request: Request,
-        ) -> Response:
-            await ethos.remove_persona(persona, context(request))
-            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        ) -> PersonaView:
+            return await ethos.remove_persona(persona, context(request))
 
         @app.get("/workspaces/{workspace}/persona")
         async def show_workspace_persona(

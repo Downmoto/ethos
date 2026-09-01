@@ -114,6 +114,8 @@ def test_service_manages_workspace_personas_and_visible_fallback(
             assert fallback.assigned_persona == "reviewer"
             assert fallback.effective_persona == "ethos"
             assert fallback.persona_fallback
+            removed = await ethos.remove_persona("reviewer", context())
+            assert removed == created.model_copy(update={"enabled": False})
             serialised = "".join(event.model_dump_json() for event in events)
             assert "private reviewer instructions" not in serialised
 
