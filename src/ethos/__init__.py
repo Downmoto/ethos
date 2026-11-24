@@ -1,1 +1,0 @@
-"""ethos human rewrite."""
