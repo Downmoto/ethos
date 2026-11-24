@@ -19,12 +19,39 @@ Versions after 0.1.0 may change as detailed plans are written. Each version clos
 | 0.13.0 | Release hardening | Fault injection, migration, backup and restore, operational diagnostics, security testing, and a sustained unattended pilot pass on Linux. |
 | 1.0 | Release gate | All accepted requirements and the coding, research, and email reference workloads pass through the public interface. Vox is usable for personal launch; Ethos remains client-independent. |
 
+## Accepted product decisions
+
+The owner accepted D001–D019 in the product baseline on 2026-11-21. These IDs remain stable as their detailed contracts are assigned to milestones. A milestone may refine a decision, but changing one requires an explicit owner decision.
+
+| ID | Accepted commitment | Primary milestone |
+|---|---|---|
+| D001 | Implement in Rust and support Linux only for 1.0. | 0.1.0 |
+| D002 | Run a persistent, headless, single-owner service for external clients. | 0.1.0–0.2.0 |
+| D003 | Keep the CLI for configuration, administration, and daemon lifecycle; user conversation belongs in external applications. | 0.1.0–0.3.0 |
+| D004 | Own agent, workflow, capability, permission, context, session, and event semantics; use established infrastructure for commodity concerns. | All milestones |
+| D005 | Define an agent by its model, options, and explicitly configured capabilities; support ordinary conversation and history with no capabilities. | 0.2.0–0.3.0 |
+| D006 | Capabilities contribute instructions, tools, and optional configuration; optional functionality requires explicit enablement. | 0.4.0 onward |
+| D007 | Load independently compiled, trusted native libraries through an Ethos-owned, versioned C-compatible ABI and safe Rust SDK. Installation is a host-trust action. | 0.6.0 |
+| D008 | Allow third-party prompt, tool, and output middleware without bypassing mandatory validation or authorisation. | 0.12.0 |
+| D009 | Let plugins provide workflow actions and triggers as well as capabilities and middleware. | 0.12.0 |
+| D010 | Keep the agent runtime and graph automation engine separate and interoperable; workflows can run without a model. | 0.8.0 |
+| D011 | Make workspaces explicit boundaries for agents, automations, memory, files, tools, and permissions, with no implicit cross-workspace access. | 0.2.0 onward |
+| D012 | Nest projects in workspaces to organise and further isolate sessions, automations, and files. | 0.2.0 onward |
+| D013 | Support reusable agent definitions and disposable subagents or inline workflow agents. | 0.7.0–0.8.0 |
+| D014 | Keep human-editable definitions and user files in workspace directories, with transactional runtime state and history in databases. | 0.2.0 onward |
+| D015 | Make agent and workflow execution durable, with checkpoints, suspension, recovery, and approval waits across restarts. Do not assume arbitrary external effects execute exactly once. | 0.3.0–0.8.0 |
+| D016 | Enforce permissions and human approvals in code, and communicate relevant restrictions through instructions. | 0.4.0 onward |
+| D017 | Support MCP as an integration mechanism distinct from native extensions. | 0.10.0 |
+| D018 | Keep Vox on a separate roadmap and Ethos client-independent; Vox catches up at integration milestones. | 0.3.0 onward |
+| D019 | Let users and authorised agents author graph workflows. | 0.8.0 |
+
 ## Cross-cutting rules
 
 - Rust and Linux only for 1.0. Own Ethos semantics; use established infrastructure for commodity concerns.
 - Remote clients are a 1.0 requirement. Tailscale is one deployment path, not a required Ethos dependency; an authenticated API behind a standard HTTPS proxy is sufficient for 1.0. Direct public exposure and built-in TLS are outside the initial scope.
 - One instance-wide API credential is sufficient for ordinary remote access in 1.0; high-trust host operations remain host-only. Agent and AAE runs continue after a client disconnects, with status and history available after reconnecting. Vox's backend holds the credential and relays requests to Ethos.
 - Native plugins are trusted code. Agent, MCP, browser, and workflow operations still pass application policy; workspace and project boundaries remain explicit.
+- A native plugin runs with daemon privileges, so workspace isolation does not protect against malicious in-process plugin code. MCP and separately executed processes have different trust boundaries; process separation alone is not a sandbox.
 - Store human-editable definitions and user files in workspace directories, and transactional execution state in databases. 0.2.0 fixes the first workspace layout and per-workspace SQLite foundation; later storage needs are resolved in their milestones.
 - A workspace directory must be portable with its projects, agents, memory, sessions, automations, and history. One instance owns it at a time; the instance must coordinate concurrent clients. Credentials remain instance-wide. Filesystem permissions and disk encryption cover data at rest for 1.0.
 - Backups may pause new work until active writes finish or suspend. A concurrent turn on one session returns `session busy`. File mutations reject stale content rather than silently overwriting a newer edit.
