@@ -1,5 +1,7 @@
 # Ethos 0.1.0–1.0 milestone map
 
+Ethos is a free, open-source, self-hosted agent and automation platform.
+
 Versions after 0.1.0 may change as detailed plans are written. Each version closes only when its exit gate passes; there are no target dates.
 
 | Version | Milestone | Exit gate |
