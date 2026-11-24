@@ -50,7 +50,7 @@ ADRs 0009–0011 contain the architectural rationale.
 
 An instance progresses through these conceptual states:
 
-`uninitialized → starting → ready/degraded → maintenance → stopping → stopped`
+`uninitialised → starting → ready/degraded → maintenance → stopping → stopped`
 
 A critical startup failure moves the attempted start to `failed` without reporting readiness. An unexpected process or host failure may occur from any running state; the next start performs recovery before admitting new work.
 

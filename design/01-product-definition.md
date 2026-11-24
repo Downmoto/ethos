@@ -1,19 +1,19 @@
 # Ethos — Stage 1: Product baseline
 
-Status: Accepted product direction, 2026-11-21. Detailed subsystem design remains open. This document is the durable baseline for subsequent planning, not an implementation specification.
+Status: Accepted product direction, 2026-11-21. This is the durable product baseline. The [milestone map](../plan.md) and its linked plans contain the current implementation contracts; the planning sequence and continuation checkpoint below record the state at the time of acceptance.
 
 ## Product and release scope
 
 Ethos is a free, open-source, self-hosted, headless agent and automation platform written in Rust. A persistent instance provides shared agents, workspaces, projects, sessions and automations to external applications. An instance has a single owner. Linux is the only supported host OS for 1.0. Keep platform-specific boundaries clean. The CLI is exclusively for configuration, administration and daemon lifecycle. User interaction occurs through external applications.
 
-Dependency policy: minimal abstraction, maximum ownership. Own platform semantics (agent loop, provider abstraction, workflows, capabilities, permissions, context, sessions and events); use established infrastructure for async execution, HTTP/TLS, cryptography, serialization and database engines. Specific dependencies are not selected yet.
+Dependency policy: minimal abstraction, maximum ownership. Own platform semantics (agent loop, provider abstraction, workflows, capabilities, permissions, context, sessions and events); use established infrastructure for async execution, HTTP/TLS, cryptography, serialisation and database engines. Specific dependencies were not selected at this stage.
 
 Ethos 1.0 must be complete, reliable and usable by its owner, not a throwaway MVP. Vox is developed alongside Ethos at integration milestones, with its own roadmap. Ethos requirements and architectural decisions must remain client-independent; Vox adapts to the public Ethos interface. Personal launch readiness includes a working Vox, but Ethos completion is independently verifiable.
 
 ## Reference workloads
 
 - Scheduled research: cron-triggered web research, delegation, compilation and persistence of reports.
-- Email triage: retrieve emails, rank by importance, identify replies needed and create drafts. Sending is a distinct operation governed by authorization.
+- Email triage: retrieve emails, rank by importance, identify replies needed and create drafts. Sending is a distinct operation governed by authorisation.
 - Coding: long-running agents, project files, skills, sandboxed shell execution and subagents.
 
 These workloads are end-to-end acceptance scenarios. Exact integrations, providers and credentials remain to be specified.
@@ -33,20 +33,20 @@ These workloads are end-to-end acceptance scenarios. Exact integrations, provide
 | D009 | Automation extensibility | Plugins can provide workflow actions and triggers in addition to capabilities and middleware. |
 | D010 | Separate execution engines | Agent runtime and graph automation engine are distinct but interoperable. Workflows may run without a model. |
 | D011 | Workspace boundary | Workspaces own their agents, automations, memory, files, tools and permissions. No implicit cross-workspace access. |
-| D012 | Projects | Nested in workspaces to organize and further isolate sessions, automations and files. |
+| D012 | Projects | Nested in workspaces to organise and further isolate sessions, automations and files. |
 | D013 | Persistent and dynamic agents | Reusable definitions coexist with disposable subagents and inline agents for workflows. |
 | D014 | Hybrid persistence | Human-editable definitions and user files reside in workspace directories; databases manage execution history and transactional runtime state. |
 | D015 | Durable execution | Agent and workflow executions support recovery policies, durable checkpoints, suspension and resumption, including approval waits across restarts. |
 | D016 | Security ring | Permissions and human approvals are enforced programmatically, and relevant restrictions are communicated through system instructions. |
 | D017 | MCP support | MCP is a supported integration mechanism distinct from native extensions. |
 | D018 | Vox independence | Separate roadmap; Vox catches up at Ethos milestones without driving Ethos architecture. |
-| D019 | Graph workflow authoring | Users and authorized agents can author workflows. |
+| D019 | Graph workflow authoring | Users and authorised agents can author workflows. |
 
 ## Agent and extension semantics
 
 Agent definitions and executions are distinct; a session is persistent conversational state. Dynamic agent definitions may be disposable; retaining execution history is the proposed audit approach. Runtime mechanisms (model communication, session management, tool dispatch, context assembly and policy enforcement) are infrastructure, not optional grants to agents. Delegation, memory, skills, filesystem, shell, web, automation management, and project management are agent-facing capabilities requiring explicit enablement. A capability is not a plugin: a plugin is a distribution and registration mechanism and can export multiple extension types.
 
-First-party and third-party extensions should use the same public extension contracts. Shared underlying operations may be exposed both as model tools and deterministic workflow actions; the exact operation abstraction is pending. Middleware must not override mandatory policy checks; transformed requests require validation and authorization. Ordering, failure policies, data access and interception points need specification.
+First-party and third-party extensions should use the same public extension contracts. Shared underlying operations may be exposed both as model tools and deterministic workflow actions; the exact operation abstraction is pending. Middleware must not override mandatory policy checks; transformed requests require validation and authorisation. Ordering, failure policies, data access and interception points need specification.
 
 Native plugins execute with daemon privileges. Workspace isolation cannot be guaranteed against malicious in-process native code. Treat plugin installation as trusting executable software; runtime capability permissions constrain legitimate invocation, not arbitrary native code. MCP and separately executed processes are distinct trust boundaries; process separation alone does not provide sandboxing.
 
@@ -63,7 +63,7 @@ Reliability requirements to specify: retries, timeouts, concurrency limits, canc
 ## Proposed implementation directions (not locked)
 
 - Per-workspace database rather than one global runtime database; consistent live backup and portable workspace handling need design.
-- Instance-level plugin installation with workspace-level enablement and configuration; inheritance rules must prevent unauthorized expansion of privileges.
+- Instance-level plugin installation with workspace-level enablement and configuration; inheritance rules must prevent unauthorised expansion of privileges.
 - Native plugin discovery through local manifests and precompiled libraries; startup loading, restart for updates and no hot unloading for 1.0. ABI lifecycle, compatibility, ownership, async bridging and distribution are to be specified. Early proof of concept should test separately compiled capability, middleware and async operation.
 - Shared dispatch/policy enforcement for underlying operations, exposed via tools or workflow nodes where appropriate.
 - Unified execution machinery for saved and inline agent definitions; persist dynamic execution history and constrain delegation by parent authority and budgets.

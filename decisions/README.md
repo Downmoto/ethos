@@ -1,6 +1,6 @@
 # Architecture decision index
 
-These records summarize accepted Stage 1 and Part A decisions; illustrative implementation details remain proposals. Baseline IDs remain stable. Detailed subsystem specifications are still pending review.
+These records summarise accepted Stage 1 and Part A decisions; illustrative implementation details remain proposals. Baseline IDs remain stable. The [Part A specification](../design/02-subsystems/A-instance-lifecycle.md) is accepted; later implementation contracts are in the [milestone map](../plan.md) and its linked plans.
 
 | ADR | Status | Baseline |
 |---|---|---|
